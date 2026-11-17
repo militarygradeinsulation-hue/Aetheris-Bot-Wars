@@ -1,6 +1,6 @@
 {
-  "name": "ForgeClash: 3D BattleBots Arena",
-  "description": "Real-time 3D BattleBots combat arena with customizable armor and weaponry, physics-based destruction, multiplayer tournaments, social clans, offline solo play, and mobile touch controls.",
+  "name": "Aetheris Bot Wars: 3D Combat Robotics Arena",
+  "description": "Aetheris Bot Wars: 3D combat robotics arena with customizable armor and weaponry, physics-based destruction, multiplayer tournaments, social clans, offline solo play, and mobile touch controls.",
   "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
