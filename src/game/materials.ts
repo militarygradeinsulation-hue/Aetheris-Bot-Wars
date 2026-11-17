@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import type { ArenaId, ArmorId } from '../shared/types';
-import { ARMOR_CATALOG } from '../shared/types';
+import type { ArenaId, ArmorId, FinishStyleId } from '../shared/types';
+import { ARMOR_CATALOG, ARENA_CATALOG, FINISH_CATALOG } from '../shared/types';
 
 export interface ProceduralTexturePack {
   arenaFloor: THREE.CanvasTexture;
@@ -77,32 +77,26 @@ export function createProceduralTextures(
   maxAnisotropy: number,
   arenaId: ArenaId,
 ): ProceduralTexturePack {
-  // 1. Arena Floor Texture (Machined Steel / Ice / Reactor / Colosseum)
+  const spec = ARENA_CATALOG[arenaId] || ARENA_CATALOG.foundry;
   const [floorCanvas, fCtx] = makeCanvas(512);
-  const bg =
-    arenaId === 'cryo'
-      ? '#16283a'
-      : arenaId === 'reactor'
-        ? '#191529'
-        : arenaId === 'colosseum'
-          ? '#202630'
-          : '#1b2028';
+  const bg = spec.floorHex;
+  const accent = spec.accentHex;
   const line =
     arenaId === 'cryo'
       ? '#34587a'
       : arenaId === 'reactor'
         ? '#3b2e5e'
-        : arenaId === 'colosseum'
-          ? '#3b4454'
-          : '#2e3745';
-  const accent =
-    arenaId === 'cryo'
-      ? '#38bdf8'
-      : arenaId === 'reactor'
-        ? '#a855f7'
-        : arenaId === 'colosseum'
-          ? '#ef4444'
-          : '#f59e0b';
+        : arenaId === 'aether_nexus'
+          ? '#1e3a5f'
+          : arenaId === 'toxic_scrapyard'
+            ? '#234233'
+            : arenaId === 'volcano_caldera'
+              ? '#4a2419'
+              : arenaId === 'cyber_grid'
+                ? '#4c1d6e'
+                : arenaId === 'colosseum'
+                  ? '#3b4454'
+                  : '#2e3745';
 
   fCtx.fillStyle = bg;
   fCtx.fillRect(0, 0, 512, 512);
@@ -123,6 +117,17 @@ export function createProceduralTextures(
   fCtx.lineTo(512, 256);
   fCtx.stroke();
 
+  if (arenaId === 'cyber_grid' || arenaId === 'aether_nexus') {
+    fCtx.strokeStyle = accent;
+    fCtx.globalAlpha = 0.22;
+    fCtx.lineWidth = 2;
+    fCtx.strokeRect(24, 24, 464, 464);
+    fCtx.beginPath();
+    fCtx.arc(256, 256, 92, 0, Math.PI * 2);
+    fCtx.stroke();
+    fCtx.globalAlpha = 1;
+  }
+
   fCtx.fillStyle = 'rgba(255,255,255,0.075)';
   for (let gx = 32; gx < 512; gx += 64) {
     for (let gy = 32; gy < 512; gy += 64) {
@@ -134,11 +139,11 @@ export function createProceduralTextures(
     }
   }
   fCtx.fillStyle = accent;
-  fCtx.globalAlpha = 0.28;
-  fCtx.fillRect(16, 16, 10, 10);
-  fCtx.fillRect(486, 16, 10, 10);
-  fCtx.fillRect(16, 486, 10, 10);
-  fCtx.fillRect(486, 486, 10, 10);
+  fCtx.globalAlpha = 0.34;
+  fCtx.fillRect(16, 16, 12, 12);
+  fCtx.fillRect(484, 16, 12, 12);
+  fCtx.fillRect(16, 484, 12, 12);
+  fCtx.fillRect(484, 484, 12, 12);
   fCtx.globalAlpha = 1;
 
   const arenaFloor = new THREE.CanvasTexture(floorCanvas);
@@ -239,18 +244,27 @@ export function createArmorMaterial(
   colorHex: string,
   weaveMap: THREE.Texture,
   bumpMap?: THREE.Texture,
+  finishStyle: FinishStyleId = 'standard',
 ): THREE.MeshPhysicalMaterial {
   const spec = ARMOR_CATALOG[armorId] || ARMOR_CATALOG.titanium;
+  const fin = FINISH_CATALOG[finishStyle] || FINISH_CATALOG.standard;
+  const isIridescentArmor = armorId === 'aetherium' || finishStyle === 'iridescent';
+
   return new THREE.MeshPhysicalMaterial({
     color: new THREE.Color(colorHex),
     map: weaveMap,
     bumpMap,
-    bumpScale: 0.014,
-    roughness: Math.max(0.14, spec.roughness * 0.78),
-    metalness: Math.min(0.96, spec.metalness + 0.06),
-    envMapIntensity: 1.55,
-    clearcoat: armorId === 'kevlar' ? 0.35 : 0.85,
-    clearcoatRoughness: 0.14,
-    anisotropy: armorId === 'titanium' || armorId === 'steel' ? 0.85 : 0.25,
+    bumpScale: armorId === 'reactive_era' ? 0.022 : 0.014,
+    roughness: THREE.MathUtils.clamp(spec.roughness * 0.78 * fin.roughnessMult, 0.08, 0.88),
+    metalness: THREE.MathUtils.clamp(spec.metalness + 0.06 + fin.metalnessAdd, 0.1, 0.99),
+    envMapIntensity: finishStyle === 'chrome' || isIridescentArmor ? 1.9 : 1.55,
+    clearcoat: armorId === 'kevlar' && finishStyle === 'standard' ? 0.35 : fin.clearcoat,
+    clearcoatRoughness: finishStyle === 'matte' ? 0.45 : 0.12,
+    iridescence: isIridescentArmor ? 0.95 : fin.iridescence,
+    iridescenceIOR: 1.45,
+    anisotropy:
+      armorId === 'titanium' || armorId === 'steel' || armorId === 'tungsten' || finishStyle === 'chrome'
+        ? 0.85
+        : 0.25,
   });
 }

@@ -115,6 +115,10 @@ class SoundEngine {
         cryo: 1,
         reactor: 2,
         colosseum: 3,
+        aether_nexus: 2,
+        toxic_scrapyard: 4,
+        volcano_caldera: 0,
+        cyber_grid: 5,
       };
       this.battleTrackIndex = startMap[arenaId] ?? 0;
     } else {
@@ -300,9 +304,10 @@ class SoundEngine {
     this.driveGain?.gain.setTargetAtTime(0.014 + speedRatio * 0.032 + boostAdd * 0.016, now, 0.06);
 
     const activeWeapons = params.weapons && params.weapons.length > 0 ? params.weapons : [params.weapon];
-    const hasFlame = activeWeapons.includes('flame');
+    const hasFlame = activeWeapons.includes('flame') || activeWeapons.includes('cryo_jet');
     const hasSaw = activeWeapons.includes('sawblade');
-    const hasRotor = activeWeapons.includes('vspinner') || activeWeapons.includes('hbar');
+    const hasRotor =
+      activeWeapons.includes('vspinner') || activeWeapons.includes('hbar') || activeWeapons.includes('drum');
 
     // Modulate continuous weapon motor / torch roar
     if (hasFlame && params.weaponActive) {
@@ -513,7 +518,7 @@ class SoundEngine {
   }
 
   public playImpact(intensity = 1, isCrit = false, weaponId?: WeaponId) {
-    if (weaponId === 'hammer') {
+    if (weaponId === 'hammer' || weaponId === 'crush_jaw') {
       this.playHammerStrike(intensity);
       return;
     }
@@ -521,12 +526,16 @@ class SoundEngine {
       this.playSawGrind(intensity);
       return;
     }
-    if (weaponId === 'vspinner' || weaponId === 'hbar') {
+    if (weaponId === 'vspinner' || weaponId === 'hbar' || weaponId === 'drum' || weaponId === 'tesla') {
       this.playSpinnerSlash(intensity);
       return;
     }
-    if (weaponId === 'flame') {
+    if (weaponId === 'flame' || weaponId === 'cryo_jet') {
       this.playFlameBurst();
+      return;
+    }
+    if (weaponId === 'railgun' || weaponId === 'mortar') {
+      this.playExplosion();
       return;
     }
 

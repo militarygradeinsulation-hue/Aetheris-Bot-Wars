@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import {
+  Award,
   BatteryCharging,
   Calendar,
+  Play,
   Send,
   Shield,
   Sliders,
@@ -10,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import type {
+  ArenaId,
   BatteryMode,
   ClanInfo,
   LeaderboardEntry,
@@ -34,16 +37,20 @@ interface SocialAndRankingsPanelProps {
   onCreateClan: (name: string, tag: string, motto: string) => void;
   onJoinClan: (clanId: string) => void;
   onSendClanChat: (clanId: string, text: string) => void;
-  onStartClanWarMatch: () => void;
+  onStartClanWarMatch: (teamMode?: boolean) => void;
+  onDeployEventArena?: (arenaId: ArenaId) => void;
   onClaimEventReward: (event: SeasonalEvent) => void;
 }
 
 const SKILL_META: Array<{ key: keyof SkillTree; label: string; effect: string }> = [
-  { key: 'chassisReinforcement', label: 'Chassis Reinforcement', effect: '+8% Max Hull HP per rank' },
-  { key: 'weaponTorque', label: 'Weapon Torque Drive', effect: '+9% Damage & faster weapon cycling' },
+  { key: 'chassisReinforcement', label: 'Chassis Reinforcement', effect: '+9% Max Hull HP per rank' },
+  { key: 'weaponTorque', label: 'Weapon Torque Drive', effect: '+7.5% Damage & faster rotor spin' },
   { key: 'gyroStabilizer', label: 'Gyroscopic Stabilizer', effect: '+8% Knockback & flip resistance' },
-  { key: 'kineticArmor', label: 'Kinetic Armor Plating', effect: '+12% Zone Armor & frontal deflection' },
-  { key: 'batteryCore', label: 'Solid-State Power Core', effect: '+14 Energy capacity & faster regen' },
+  { key: 'kineticArmor', label: 'Kinetic Armor Plating', effect: '+14% Zone Armor & frontal deflection' },
+  { key: 'batteryCore', label: 'Solid-State Power Core', effect: '+14 Energy capacity & +2.4/s regen' },
+  { key: 'coolingSystem', label: 'Cryo-Loop Heat Sinks', effect: '-4.5% Weapon cooldowns & faster boost' },
+  { key: 'naniteRepair', label: 'Nanite Hull Reconstructor', effect: 'Passive HP & Armor Zone regen in combat' },
+  { key: 'overclockCore', label: 'Quantum Overclock Core', effect: 'Longer Overdrive duration & +3% speed' },
 ];
 
 export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
@@ -60,6 +67,7 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
   onJoinClan,
   onSendClanChat,
   onStartClanWarMatch,
+  onDeployEventArena,
   onClaimEventReward,
 }) => {
   const [newClanName, setNewClanName] = useState('');
@@ -73,16 +81,16 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/75 p-3 sm:p-6">
-      <div className="flex max-h-[88vh] w-full max-w-4xl flex-col rounded-2xl border border-slate-700 bg-[#141920] shadow-2xl overflow-hidden">
+      <div className="flex max-h-[88vh] w-full max-w-5xl flex-col rounded-2xl border border-slate-700 bg-[#141920] shadow-2xl overflow-hidden">
         {/* Header Tabs */}
         <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-1.5 overflow-x-auto">
             {(
               [
-                { id: 'rankings', label: 'Rankings', Icon: Trophy },
-                { id: 'clans', label: 'Clans & Wars', Icon: Users },
-                { id: 'events', label: 'Season 04', Icon: Calendar },
-                { id: 'skills', label: 'Skills & Device', Icon: Sliders },
+                { id: 'rankings', label: 'Global Rankings', Icon: Trophy },
+                { id: 'clans', label: 'Clans & Team Wars', Icon: Users },
+                { id: 'events', label: 'Season 05 Events', Icon: Calendar },
+                { id: 'skills', label: 'Engineering & Pilot', Icon: Sliders },
               ] as const
             ).map(({ id, label, Icon }) => (
               <button
@@ -117,10 +125,14 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
             <div>
               <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <div>
-                  <h3 className="font-display text-lg font-bold text-white">Global Arena Standings</h3>
+                  <h3 className="font-display text-lg font-bold text-white">
+                    Aetheris Global Arena Standings
+                  </h3>
                   <p className="text-xs text-slate-400">
-                    Your Rating: <span className="font-mono-tabular text-amber-400 font-semibold">{profile.rating}</span>
-                    {' · '}Record {profile.wins}W - {profile.losses}L · {profile.kos} KOs
+                    Your Rating:{' '}
+                    <span className="font-mono-tabular text-amber-400 font-semibold">{profile.rating}</span>
+                    {' · '}Record {profile.wins}W - {profile.losses}L · {profile.kos} KOs · Gauntlet Stage{' '}
+                    {profile.gauntletStage}
                   </p>
                 </div>
                 {!isOnline && (
@@ -135,7 +147,7 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
                       <th className="py-2.5 px-3 font-medium">Rank</th>
                       <th className="py-2.5 px-3 font-medium">Pilot</th>
                       <th className="py-2.5 px-3 font-medium">Bot Build</th>
-                      <th className="py-2.5 px-3 font-medium text-right">W / L</th>
+                      <th className="py-2.5 px-3 font-medium text-right">W / L · KOs</th>
                       <th className="py-2.5 px-3 font-medium text-right">Power</th>
                       <th className="py-2.5 px-3 font-medium text-right">Rating</th>
                     </tr>
@@ -149,13 +161,18 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
                             #{idx + 1}
                           </td>
                           <td className="py-2.5 px-3">
-                            <span className="font-semibold text-white">[{row.clanTag}] {row.name}</span>
+                            <span className="font-semibold text-white">
+                              [{row.clanTag}] {row.name}
+                            </span>
                           </td>
                           <td className="py-2.5 px-3 text-slate-300">
-                            {row.botName} · <span className="text-slate-400">{row.weapon} / {row.armor}</span>
+                            {row.botName} ·{' '}
+                            <span className="text-slate-400">
+                              {row.weapon} / {row.armor}
+                            </span>
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono-tabular text-slate-300">
-                            {row.wins} / {row.losses}
+                            {row.wins}W / {row.losses}L · {row.kos} KO
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono-tabular text-slate-400">
                             {row.powerScore}
@@ -176,21 +193,34 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               {/* Clan Bracket & Roster */}
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div>
-                    <h3 className="font-display text-lg font-bold text-white">Clan Tournament Bracket</h3>
-                    <p className="text-xs text-slate-400">Team-based Clan Wars & Seed Standings</p>
+                    <h3 className="font-display text-lg font-bold text-white">
+                      Syndicate Clan War Bracket
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Pledge to a faction and fight 1v1 or 2v2 Clan Wars for War Points
+                    </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={onStartClanWarMatch}
-                    className="rounded-xl bg-amber-500 px-3.5 py-2 min-h-[40px] text-xs font-bold text-slate-950 hover:bg-amber-400 transition whitespace-nowrap"
-                  >
-                    Fight Clan War
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => onStartClanWarMatch(false)}
+                      className="rounded-xl border border-amber-500/60 bg-amber-500/15 px-3 py-2 min-h-[38px] text-xs font-bold text-amber-300 hover:bg-amber-500/25 transition whitespace-nowrap"
+                    >
+                      1v1 Clan Duel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onStartClanWarMatch(true)}
+                      className="rounded-xl bg-amber-500 px-3.5 py-2 min-h-[38px] text-xs font-bold text-slate-950 hover:bg-amber-400 transition whitespace-nowrap"
+                    >
+                      2v2 Clan Team War
+                    </button>
+                  </div>
                 </div>
 
-                <div className="space-y-2.5">
+                <div className="space-y-2.5 max-h-[360px] overflow-y-auto pr-1">
                   {clans.map((clan) => {
                     const isMember = clan.id === profile.clanId;
                     return (
@@ -207,23 +237,29 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
                             <div className="text-sm font-bold text-white">
                               Seed #{clan.tournamentSeed} · [{clan.tag}] {clan.name}
                             </div>
+                            {clan.perkLabel && (
+                              <div className="text-[11px] font-semibold text-emerald-400 mt-0.5">
+                                Faction Doctrine: {clan.perkLabel}
+                              </div>
+                            )}
                             <div className="text-xs text-slate-400 mt-0.5">{clan.motto}</div>
                           </div>
                           {!isMember ? (
                             <button
                               type="button"
-                              disabled={!isOnline}
                               onClick={() => onJoinClan(clan.id)}
-                              className="rounded-lg border border-slate-600 px-3 py-1.5 min-h-[36px] text-xs font-semibold text-slate-200 hover:border-amber-400 disabled:opacity-40"
+                              className="rounded-lg border border-slate-600 px-3 py-1.5 min-h-[36px] text-xs font-semibold text-slate-200 hover:border-amber-400"
                             >
-                              Join
+                              Pledge
                             </button>
                           ) : (
-                            <span className="text-xs font-semibold text-amber-400">Active Clan</span>
+                            <span className="rounded-md bg-amber-500/20 px-2 py-1 text-xs font-bold text-amber-300">
+                              Active Faction
+                            </span>
                           )}
                         </div>
                         <div className="mt-2 flex items-center gap-3 text-xs text-slate-400 font-mono-tabular">
-                          <span>{clan.warPoints} War Pts</span>
+                          <span className="text-amber-400 font-semibold">{clan.warPoints} War Pts</span>
                           <span aria-hidden="true">·</span>
                           <span>{clan.wins} Team Wins</span>
                           <span aria-hidden="true">·</span>
@@ -246,7 +282,7 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
                   }}
                   className="mt-4 rounded-xl border border-slate-800 bg-[#0D1014] p-3.5"
                 >
-                  <div className="text-xs font-semibold text-slate-200 mb-2">Found a New Clan</div>
+                  <div className="text-xs font-semibold text-slate-200 mb-2">Found a Custom Syndicate</div>
                   <div className="grid grid-cols-3 gap-2">
                     <input
                       type="text"
@@ -274,8 +310,7 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
                     />
                     <button
                       type="submit"
-                      disabled={!isOnline}
-                      className="rounded-lg bg-slate-200 px-3.5 py-2 min-h-[38px] text-xs font-bold text-slate-950 hover:bg-white disabled:opacity-40"
+                      className="rounded-lg bg-slate-200 px-3.5 py-2 min-h-[38px] text-xs font-bold text-slate-950 hover:bg-white"
                     >
                       Create
                     </button>
@@ -295,7 +330,7 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
                   <Shield className="h-4 w-4 text-amber-400" />
                 </div>
 
-                <div className="flex-1 overflow-y-auto py-3 space-y-2.5 max-h-[280px]">
+                <div className="flex-1 overflow-y-auto py-3 space-y-2.5 max-h-[320px]">
                   {myClan && myClan.chat.length > 0 ? (
                     myClan.chat.map((m) => (
                       <div key={m.id} className="rounded-lg bg-[#161B22] px-3 py-2 text-xs">
@@ -321,15 +356,15 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
                 >
                   <input
                     type="text"
-                    placeholder={isOnline ? 'Message clan mates...' : 'Offline — connect to chat'}
-                    disabled={!isOnline || !myClan}
+                    placeholder={isOnline ? 'Message clan mates...' : 'Post tactical note...'}
+                    disabled={!myClan}
                     value={chatText}
                     onChange={(e) => setChatText(e.target.value)}
                     className="flex-1 rounded-lg border border-slate-700 bg-[#161B22] px-3 py-2 text-xs text-white focus:border-amber-500 focus:outline-none disabled:opacity-50"
                   />
                   <button
                     type="submit"
-                    disabled={!isOnline || !myClan}
+                    disabled={!myClan}
                     className="flex items-center justify-center rounded-lg bg-amber-500 px-3.5 min-h-[40px] text-slate-950 hover:bg-amber-400 disabled:opacity-40"
                     aria-label="Send message"
                   >
@@ -342,16 +377,26 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
 
           {activeTab === 'events' && (
             <div>
-              <div className="mb-4">
-                <h3 className="font-display text-lg font-bold text-white">
-                  Season 04 · Molten Foundry Community Events
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Complete seasonal arena objectives to unlock Scrap and Skill Cores. Current Wins: {profile.wins}
-                </p>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-display text-lg font-bold text-white">
+                    Season 05 · Aetheris Ascension Operations
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Complete seasonal arena campaigns to earn Alloy Scrap, Skill Cores, and Pilot Titles.
+                    Current Wins: <span className="text-amber-400 font-bold">{profile.wins}</span> · KOs:{' '}
+                    <span className="text-emerald-400 font-bold">{profile.kos}</span>
+                  </p>
+                </div>
+                {profile.pilotTitle && (
+                  <div className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300">
+                    <Award className="h-4 w-4" />
+                    Active Title: {profile.pilotTitle}
+                  </div>
+                )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {seasonalEvents.map((ev) => {
                   const claimed = profile.claimedEvents.includes(ev.id);
                   const progress = Math.min(ev.targetWins, profile.wins);
@@ -363,14 +408,21 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
                       className="flex flex-col justify-between rounded-xl border border-slate-800 bg-[#161B22] p-4"
                     >
                       <div>
-                        <div className="text-xs font-semibold text-amber-400">{ev.modifierLabel}</div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-amber-400">{ev.modifierLabel}</span>
+                          {ev.badgeTitle && (
+                            <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] font-bold text-purple-300">
+                              Title: {ev.badgeTitle}
+                            </span>
+                          )}
+                        </div>
                         <h4 className="mt-1 font-display text-base font-bold text-white">{ev.title}</h4>
-                        <p className="mt-1.5 text-xs text-slate-400 leading-relaxed">{ev.description}</p>
+                        <p className="mt-1 text-xs text-slate-400 leading-relaxed">{ev.description}</p>
                       </div>
 
                       <div className="mt-4">
                         <div className="flex justify-between text-xs font-mono-tabular text-slate-300 mb-1">
-                          <span>Progress</span>
+                          <span>Objective Progress</span>
                           <span>
                             {progress} / {ev.targetWins} Wins
                           </span>
@@ -378,27 +430,39 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
                         <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
                           <div
                             className="h-full bg-amber-500"
-                            style={{ width: `${(progress / ev.targetWins) * 100}%` }}
+                            style={{ width: `${Math.min(100, (progress / ev.targetWins) * 100)}%` }}
                           />
                         </div>
-                        <div className="mt-3 flex items-center justify-between text-xs">
+                        <div className="mt-3 flex items-center justify-between gap-2 text-xs">
                           <span className="text-slate-300 font-mono-tabular">
                             +{ev.rewardScrap} Scrap · +{ev.rewardSkillPoints} SP
                           </span>
-                          <button
-                            type="button"
-                            disabled={!ready}
-                            onClick={() => onClaimEventReward(ev)}
-                            className={`rounded-lg px-3 py-1.5 min-h-[36px] text-xs font-bold transition ${
-                              claimed
-                                ? 'bg-slate-800 text-slate-500'
-                                : ready
-                                  ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
-                                  : 'bg-slate-800 text-slate-400'
-                            }`}
-                          >
-                            {claimed ? 'Claimed' : ready ? 'Claim' : 'In Progress'}
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            {onDeployEventArena && !claimed && (
+                              <button
+                                type="button"
+                                onClick={() => onDeployEventArena(ev.arenaId)}
+                                className="flex items-center gap-1 rounded-lg border border-slate-700 bg-[#0D1014] px-2.5 py-1.5 min-h-[34px] text-xs font-semibold text-slate-200 hover:border-amber-400"
+                              >
+                                <Play className="h-3 w-3 text-amber-400" />
+                                Deploy
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              disabled={!ready}
+                              onClick={() => onClaimEventReward(ev)}
+                              className={`rounded-lg px-3 py-1.5 min-h-[34px] text-xs font-bold transition ${
+                                claimed
+                                  ? 'bg-slate-800 text-slate-500'
+                                  : ready
+                                    ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
+                                    : 'bg-slate-800 text-slate-400'
+                              }`}
+                            >
+                              {claimed ? 'Claimed' : ready ? 'Claim' : 'Locked'}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -410,22 +474,27 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
 
           {activeTab === 'skills' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Skill Tree */}
+              {/* 8-Node Engineering Skill Tree */}
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <div>
-                    <h3 className="font-display text-lg font-bold text-white">Engineering Skill Tree</h3>
+                    <h3 className="font-display text-lg font-bold text-white">
+                      Aetheris Engineering Skill Tree (8 Systems)
+                    </h3>
                     <p className="text-xs text-slate-400">
-                      Available: <span className="font-mono-tabular text-amber-400 font-bold">{profile.skillPoints} Skill Points</span>
+                      Available:{' '}
+                      <span className="font-mono-tabular text-amber-400 font-bold">
+                        {profile.skillPoints} Skill Points
+                      </span>
                       {' · '}
                       <span className="font-mono-tabular text-slate-200">{profile.scrap} Scrap</span>
                     </p>
                   </div>
                 </div>
 
-                <div className="space-y-2.5">
+                <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
                   {SKILL_META.map(({ key, label, effect }) => {
-                    const rank = profile.skills[key];
+                    const rank = profile.skills[key] ?? 0;
                     const maxed = rank >= 5;
                     const scrapCost = 100 + rank * 60;
                     const canUpgrade = !maxed && (profile.skillPoints >= 1 || profile.scrap >= scrapCost);
@@ -447,7 +516,7 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
                           type="button"
                           disabled={!canUpgrade}
                           onClick={() => onUpgradeSkill(key)}
-                          className="rounded-lg bg-amber-500 px-3 py-2 min-h-[40px] text-xs font-bold text-slate-950 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 transition whitespace-nowrap shrink-0"
+                          className="rounded-lg bg-amber-500 px-3 py-2 min-h-[38px] text-xs font-bold text-slate-950 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-500 transition whitespace-nowrap shrink-0"
                         >
                           {maxed
                             ? 'Maxed'
@@ -464,24 +533,40 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
               {/* Mobile, Battery Saver & Profile Settings */}
               <div className="space-y-4">
                 <div>
-                  <h3 className="font-display text-lg font-bold text-white">Pilot & Device Optimization</h3>
+                  <h3 className="font-display text-lg font-bold text-white">
+                    Pilot Identity & Device Optimization
+                  </h3>
                   <p className="text-xs text-slate-400">
-                    Tune battery usage, touch controls, and offline PWA installation
+                    Customize callsign, title, frame rate profile, and touch controls
                   </p>
                 </div>
 
                 <div className="rounded-xl border border-slate-800 bg-[#161B22] p-4 space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                      Pilot Callsign
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={20}
-                      value={profile.callsign}
-                      onChange={(e) => onUpdateProfile({ callsign: e.target.value })}
-                      className="w-full rounded-lg border border-slate-700 bg-[#0D1014] px-3 py-2 text-sm text-white focus:border-amber-500 focus:outline-none"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                        Pilot Callsign
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={20}
+                        value={profile.callsign}
+                        onChange={(e) => onUpdateProfile({ callsign: e.target.value })}
+                        className="w-full rounded-lg border border-slate-700 bg-[#0D1014] px-3 py-2 text-sm text-white focus:border-amber-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                        Pilot Combat Title
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={24}
+                        value={profile.pilotTitle || 'Aetheris Vanguard'}
+                        onChange={(e) => onUpdateProfile({ pilotTitle: e.target.value })}
+                        className="w-full rounded-lg border border-slate-700 bg-[#0D1014] px-3 py-2 text-sm text-amber-400 focus:border-amber-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
 
                   <div>

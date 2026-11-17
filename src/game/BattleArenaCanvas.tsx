@@ -385,6 +385,55 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           impactFlashLight.intensity = Math.max(impactFlashLight.intensity, 6);
           applyEventDecal(ev);
           soundEngine.playFlameBurst();
+        } else if (ev.type === 'cryo_blast') {
+          effects.spawnSparks(ev.x, ev.y, ev.z, 14, 0x38bdf8, 8);
+          effects.spawnSmoke(ev.x, ev.y + 0.25, ev.z, 5, 0.95, 0.72);
+          effects.spawnShockwave(ev.x, ev.y, ev.z, 2.6, 0x38bdf8);
+          impactFlashLight.position.set(ev.x, ev.y + 0.6, ev.z);
+          impactFlashLight.color.setHex(0x38bdf8);
+          impactFlashLight.intensity = Math.max(impactFlashLight.intensity, 6);
+          soundEngine.playFlameBurst();
+        } else if (ev.type === 'tesla_arc') {
+          const tx = ev.targetX ?? ev.x;
+          const tz = ev.targetZ ?? ev.z;
+          effects.spawnSparks(ev.x, ev.y, ev.z, 18, 0xc084fc, 11);
+          effects.spawnSparks(tx, ev.y, tz, 22, 0x38bdf8, 12);
+          effects.spawnShockwave(tx, ev.y, tz, 3.4, 0xa855f7);
+          impactFlashLight.position.set(tx, ev.y + 0.8, tz);
+          impactFlashLight.color.setHex(0xa855f7);
+          impactFlashLight.intensity = 12;
+          applyEventDecal(ev);
+          soundEngine.playImpact(1.2, true, 'tesla');
+        } else if (ev.type === 'rail_shot') {
+          const tx = ev.targetX ?? ev.x;
+          const tz = ev.targetZ ?? ev.z;
+          for (let s = 0; s <= 6; s++) {
+            const frac = s / 6;
+            const lx = ev.x + (tx - ev.x) * frac;
+            const lz = ev.z + (tz - ev.z) * frac;
+            effects.spawnSparks(lx, ev.y, lz, 6, 0x38bdf8, 7);
+          }
+          effects.spawnShockwave(tx, ev.y, tz, 4.8, 0x38bdf8);
+          effects.spawnSparks(tx, ev.y, tz, 28, 0xfbbf24, 15);
+          impactFlashLight.position.set(tx, ev.y + 0.8, tz);
+          impactFlashLight.color.setHex(0x38bdf8);
+          impactFlashLight.intensity = 15;
+          screenShake = Math.min(0.85, screenShake + 0.35);
+          soundEngine.playImpact(1.5, true, 'railgun');
+        } else if (ev.type === 'mortar_blast' || ev.type === 'era_blast') {
+          const isEra = ev.type === 'era_blast';
+          effects.spawnShockwave(ev.x, ev.y, ev.z, isEra ? 4.2 : 5.6, isEra ? 0xf59e0b : 0xf97316);
+          effects.spawnFlames(ev.x, ev.y, ev.z, isEra ? 10 : 14, 0, 0, 5.2, 1.2);
+          effects.spawnSparks(ev.x, ev.y, ev.z, 26, 0xfbbf24, 14);
+          effects.spawnSmoke(ev.x, ev.y + 0.3, ev.z, 8, 1.2, 0.2);
+          impactFlashLight.position.set(ev.x, ev.y + 1.0, ev.z);
+          impactFlashLight.color.setHex(0xf97316);
+          impactFlashLight.intensity = 14;
+          screenShake = Math.min(0.85, screenShake + 0.38);
+          soundEngine.playExplosion();
+        } else if (ev.type === 'shield_hit') {
+          effects.spawnShockwave(ev.x, ev.y, ev.z, 2.5, 0x38bdf8);
+          effects.spawnSparks(ev.x, ev.y, ev.z, 10, 0x38bdf8, 8);
         } else if (ev.type === 'flip') {
           effects.spawnShockwave(ev.x, ev.y, ev.z, 4.2, 0x38bdf8);
           effects.spawnSparks(ev.x, ev.y, ev.z, 12, 0x38bdf8, 9);
@@ -509,13 +558,22 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           workshopWeaponAngle += dt * 7.5;
           for (const entry of workshopBotRig.weaponEntries) {
             const wType = entry.weaponId;
-            if (wType === 'vspinner') entry.pivot.rotation.x = workshopWeaponAngle;
+            if (wType === 'vspinner' || wType === 'drum') entry.pivot.rotation.x = workshopWeaponAngle;
             else if (wType === 'hbar') entry.pivot.rotation.y = workshopWeaponAngle;
             else if (wType === 'sawblade') {
               entry.secondarySpinners.forEach((s, idx) => {
                 s.rotation.y = idx === 0 ? workshopWeaponAngle : -workshopWeaponAngle;
               });
-            } else if (wType === 'flame') {
+            } else if (wType === 'crush_jaw') {
+              const jawClamp = Math.max(0, Math.sin(elapsed * 2.8)) * 0.45;
+              entry.secondarySpinners.forEach((jaw, idx) => {
+                jaw.rotation.y = (idx === 0 ? -1 : 1) * jawClamp;
+              });
+            } else if (wType === 'tesla') {
+              entry.secondarySpinners.forEach((c) => {
+                c.rotation.y = workshopWeaponAngle * 0.6;
+              });
+            } else if (wType === 'flame' || wType === 'cryo_jet') {
               const showFlame = Math.sin(elapsed * 2.5) > -0.25;
               for (const jet of entry.flameJets) {
                 jet.visible = showFlame;
@@ -526,9 +584,17 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
               }
             } else if (wType === 'flipper') {
               entry.pivot.rotation.x = -Math.max(0, Math.sin(elapsed * 2.2)) * 0.6;
+            } else if (wType === 'railgun' || wType === 'mortar') {
+              entry.pivot.rotation.x = Math.sin(elapsed * 1.8) * 0.08;
             } else {
               entry.pivot.rotation.x = Math.sin(elapsed * 2.6) * 0.45 - 0.35;
             }
+          }
+          if (workshopBotRig.accessoryPivot) {
+            workshopBotRig.accessoryPivot.rotation.y += dt * 1.4;
+          }
+          if (workshopBotRig.shieldBubble) {
+            workshopBotRig.shieldBubble.rotation.y += dt * 0.7;
           }
         }
         orbit.update();
@@ -556,7 +622,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
 
             const botWeapons = getBotWeapons(b.config);
             const botStyles = getBotChassisStyles(b.config);
-            const cfgKey = `${b.config.name}_${botStyles.join('+')}_${b.config.armor}_${botWeapons.join('+')}_${b.config.wheelLayout}_${b.config.drive}_${b.config.primaryColor}_${b.config.accentColor}`;
+            const cfgKey = `${b.config.name}_${botStyles.join('+')}_${b.config.armor}_${botWeapons.join('+')}_${b.config.wheelLayout}_${b.config.drive}_${b.config.primaryColor}_${b.config.accentColor}_${b.config.finishStyle || 'standard'}_${b.config.accessory || 'none'}_${b.config.underglowColor || 'none'}`;
             let entry = combatBotRigs.get(b.id);
             if (!entry || entry.configKey !== cfgKey) {
               if (entry) {

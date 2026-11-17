@@ -346,8 +346,8 @@ export function buildArenaEnvironment(
       crystal.position.set(sx, 3.5, sz);
       group.add(crystal);
     }
-  } else if (arenaId === 'reactor') {
-    // High-voltage capacitor coils at corners
+  } else if (arenaId === 'reactor' || arenaId === 'aether_nexus') {
+    // High-voltage capacitor coils & quantum pylons at corners
     const coilGeo = new THREE.TorusGeometry(2.0, 0.32, 10, 24);
     coilGeo.rotateX(Math.PI / 2);
     const coreColGeo = new THREE.CylinderGeometry(0.9, 1.1, 7.5, 12);
@@ -364,8 +364,46 @@ export function buildArenaEnvironment(
         group.add(coil);
       });
     }
+  } else if (arenaId === 'toxic_scrapyard') {
+    // Acid reclamation vats & industrial gantry pipes
+    const vatGeo = new THREE.CylinderGeometry(2.2, 2.2, 5.2, 16);
+    const vatTopGeo = new THREE.CircleGeometry(2.05, 16);
+    vatTopGeo.rotateX(-Math.PI / 2);
+    geometries.push(vatGeo, vatTopGeo);
+    for (let i = 0; i < 4; i++) {
+      const sx = i % 2 === 0 ? -half - 10.5 : half + 10.5;
+      const sz = i < 2 ? -half - 10.5 : half + 10.5;
+      const vat = new THREE.Mesh(vatGeo, wallMat);
+      vat.position.set(sx, 2.6, sz);
+      const pool = new THREE.Mesh(vatTopGeo, accentGlowMat);
+      pool.position.set(sx, 5.22, sz);
+      group.add(vat, pool);
+    }
+  } else if (arenaId === 'volcano_caldera') {
+    // Volcanic basalt spires & magma moat
+    const troughGeo = new THREE.BoxGeometry(half * 2 + 4, 0.18, 1.8);
+    const spireGeo = new THREE.ConeGeometry(2.4, 8.5, 7);
+    geometries.push(troughGeo, spireGeo);
+    [
+      [0, -half - 2.2, 0],
+      [0, half + 2.2, 0],
+      [-half - 2.2, 0, Math.PI / 2],
+      [half + 2.2, 0, Math.PI / 2],
+    ].forEach(([tx, tz, ry]) => {
+      const t = new THREE.Mesh(troughGeo, accentGlowMat);
+      t.position.set(tx, 0.04, tz);
+      t.rotation.y = ry;
+      group.add(t);
+    });
+    for (let i = 0; i < 4; i++) {
+      const sx = i % 2 === 0 ? -half - 11 : half + 11;
+      const sz = i < 2 ? -half - 11 : half + 11;
+      const sp = new THREE.Mesh(spireGeo, wallMat);
+      sp.position.set(sx, 4.25, sz);
+      group.add(sp);
+    }
   } else {
-    // Apex Colosseum: Stadium floodlight towers & championship scoreboards
+    // Apex Colosseum & Cyber Grid: Stadium floodlight towers & neon arches
     const towerGeo = new THREE.BoxGeometry(1.4, 11, 1.4);
     const lightBarGeo = new THREE.BoxGeometry(4.2, 1.3, 0.6);
     geometries.push(towerGeo, lightBarGeo);
@@ -885,6 +923,20 @@ export function buildArenaEnvironment(
     roughness: 0.2,
     metalness: 0.4,
   });
+  const overchargeMat = new THREE.MeshStandardMaterial({
+    color: 0xf97316,
+    emissive: 0xf97316,
+    emissiveIntensity: 1.7,
+    roughness: 0.18,
+    metalness: 0.5,
+  });
+  const shieldPickupMat = new THREE.MeshStandardMaterial({
+    color: 0xa855f7,
+    emissive: 0xa855f7,
+    emissiveIntensity: 1.6,
+    roughness: 0.18,
+    metalness: 0.5,
+  });
 
   geometries.push(
     crateGeo,
@@ -896,7 +948,7 @@ export function buildArenaEnvironment(
     pickupCoreGeo,
     pickupRingGeo,
   );
-  materials.push(crateMat, crateTrimMat, barrelMat, pillarMat, repairMat, energyMat);
+  materials.push(crateMat, crateTrimMat, barrelMat, pillarMat, repairMat, energyMat, overchargeMat, shieldPickupMat);
 
   const sawBladeGeo = new THREE.CylinderGeometry(1.35, 1.35, 0.1, 18);
   const sawBaseGeo = new THREE.CylinderGeometry(1.5, 1.5, 0.06, 20);
@@ -1020,8 +1072,20 @@ export function buildArenaEnvironment(
       const base = new THREE.Mesh(pillarCapGeo, crateTrimMat);
       base.position.y = 0.11;
       pGroup.add(col, cap, base);
-    } else if (prop.kind === 'pickup_repair' || prop.kind === 'pickup_energy') {
-      const mat = prop.kind === 'pickup_repair' ? repairMat : energyMat;
+    } else if (
+      prop.kind === 'pickup_repair' ||
+      prop.kind === 'pickup_energy' ||
+      prop.kind === 'pickup_overcharge' ||
+      prop.kind === 'pickup_shield'
+    ) {
+      const mat =
+        prop.kind === 'pickup_repair'
+          ? repairMat
+          : prop.kind === 'pickup_energy'
+            ? energyMat
+            : prop.kind === 'pickup_overcharge'
+              ? overchargeMat
+              : shieldPickupMat;
       const core = new THREE.Mesh(pickupCoreGeo, mat);
       core.position.y = 0.72;
       const ring = new THREE.Mesh(pickupRingGeo, mat);
@@ -1214,7 +1278,13 @@ export function buildArenaEnvironment(
       for (const prop of props) {
         const mesh = ensurePropMesh(prop);
         mesh.visible = !prop.destroyed;
-        if (!prop.destroyed && (prop.kind === 'pickup_repair' || prop.kind === 'pickup_energy')) {
+        if (
+          !prop.destroyed &&
+          (prop.kind === 'pickup_repair' ||
+            prop.kind === 'pickup_energy' ||
+            prop.kind === 'pickup_overcharge' ||
+            prop.kind === 'pickup_shield')
+        ) {
           mesh.children[0].rotation.y = time * 2.4;
           mesh.children[0].position.y = 0.72 + Math.sin(time * 3.5) * 0.14;
         }
@@ -1229,9 +1299,10 @@ export function buildArenaEnvironment(
           entry.movingPart.position.y = h.active ? 0.16 : h.warning ? 0.03 : -0.05;
         } else if (h.kind === 'flipper_pad') {
           entry.movingPart.position.y = h.active ? 0.36 : h.warning ? 0.12 : 0.07;
-        } else if (h.kind === 'emp_ring' && entry.ringMat) {
+        } else if ((h.kind === 'emp_ring' || h.kind === 'lava_vent' || h.kind === 'acid_pool') && entry.ringMat) {
+          const baseColor = h.kind === 'lava_vent' ? 0xf97316 : h.kind === 'acid_pool' ? 0x10b981 : 0xa855f7;
           if (h.active) {
-            entry.ringMat.color.setHex(0xa855f7);
+            entry.ringMat.color.setHex(baseColor);
             entry.ringMat.opacity = 0.88;
             entry.movingPart.scale.setScalar(1.06);
           } else if (h.warning) {
@@ -1239,8 +1310,8 @@ export function buildArenaEnvironment(
             entry.ringMat.opacity = 0.45 + Math.abs(Math.sin(nowSec * 10)) * 0.35;
             entry.movingPart.scale.setScalar(1.0);
           } else {
-            entry.ringMat.color.setHex(0xa855f7);
-            entry.ringMat.opacity = 0.2;
+            entry.ringMat.color.setHex(baseColor);
+            entry.ringMat.opacity = 0.22;
             entry.movingPart.scale.setScalar(0.96);
           }
         } else if (h.kind === 'crusher') {

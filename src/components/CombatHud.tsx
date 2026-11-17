@@ -1,6 +1,12 @@
-import React from 'react';
-import { Camera, LogOut, Volume2, VolumeX, Trophy, RotateCcw, Swords } from 'lucide-react';
-import { getBotWeapons, WEAPON_CATALOG, type ArenaSnapshot, type BotPhysicsState } from '../shared/types';
+import React, { useEffect, useState } from 'react';
+import { Camera, LogOut, Volume2, VolumeX, Trophy, RotateCcw, Swords, Shield } from 'lucide-react';
+import {
+  ARENA_CATALOG,
+  getBotWeapons,
+  WEAPON_CATALOG,
+  type ArenaSnapshot,
+  type BotPhysicsState,
+} from '../shared/types';
 
 interface CombatHudProps {
   snapshot: ArenaSnapshot;
@@ -47,6 +53,74 @@ function ArmorMiniIndicator({ bot }: { bot: BotPhysicsState }) {
   );
 }
 
+function ArenaMiniRadar({ snapshot, playerId }: { snapshot: ArenaSnapshot; playerId: string }) {
+  const half = ARENA_CATALOG[snapshot.arenaId]?.halfSize || 18;
+  const player = snapshot.bots.find((b) => b.id === playerId) || snapshot.bots[0];
+  const toPct = (coord: number) => Math.max(4, Math.min(96, ((coord + half) / (half * 2)) * 100));
+
+  return (
+    <div className="pointer-events-none hidden md:block fixed bottom-4 left-4 z-20 h-28 w-28 rounded-xl border border-slate-700/80 bg-[#0D1014]/88 p-1.5 shadow-xl">
+      <div className="relative h-full w-full rounded-lg border border-slate-800 bg-[#121720] overflow-hidden">
+        <div className="absolute inset-x-0 top-1/2 h-px bg-slate-800/80" />
+        <div className="absolute inset-y-0 left-1/2 w-px bg-slate-800/80" />
+
+        {/* Hazards */}
+        {snapshot.hazards.map((h) => (
+          <span
+            key={h.id}
+            style={{ left: `${toPct(h.x)}%`, top: `${toPct(h.z)}%` }}
+            className={`-translate-x-1/2 -translate-y-1/2 absolute h-2 w-2 rounded-full ${
+              h.active
+                ? 'bg-red-500/80'
+                : h.warning
+                  ? 'bg-amber-400/75'
+                  : 'bg-slate-600/40'
+            }`}
+          />
+        ))}
+
+        {/* Active Pickups */}
+        {snapshot.props
+          .filter(
+            (p) =>
+              !p.destroyed &&
+              (p.kind === 'pickup_repair' ||
+                p.kind === 'pickup_energy' ||
+                p.kind === 'pickup_overcharge' ||
+                p.kind === 'pickup_shield'),
+          )
+          .map((p) => (
+            <span
+              key={p.id}
+              style={{ left: `${toPct(p.x)}%`, top: `${toPct(p.z)}%` }}
+              className="-translate-x-1/2 -translate-y-1/2 absolute h-2 w-2 rounded-sm bg-emerald-400 animate-pulse"
+            />
+          ))}
+
+        {/* Bots */}
+        {snapshot.bots.map((b) => {
+          if (b.isDead) return null;
+          const isSelf = b.id === player?.id;
+          const isAlly = !isSelf && player && b.team === player.team;
+          return (
+            <span
+              key={b.id}
+              style={{ left: `${toPct(b.x)}%`, top: `${toPct(b.z)}%` }}
+              className={`-translate-x-1/2 -translate-y-1/2 absolute rounded-full border border-slate-950 ${
+                isSelf
+                  ? 'h-3 w-3 bg-amber-400 z-10'
+                  : isAlly
+                    ? 'h-2.5 w-2.5 bg-emerald-400'
+                    : 'h-2.5 w-2.5 bg-red-500'
+              }`}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export const CombatHud: React.FC<CombatHudProps> = ({
   snapshot,
   playerId,
@@ -60,8 +134,21 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   onWeaponTrigger,
   showKeyboardHint,
 }) => {
+  const [calloutText, setCalloutText] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!snapshot.events || snapshot.events.length === 0) return;
+    const withCallout = [...snapshot.events].reverse().find((e) => e.callout);
+    if (withCallout?.callout) {
+      setCalloutText(withCallout.callout);
+      const t = window.setTimeout(() => setCalloutText(null), 2200);
+      return () => clearTimeout(t);
+    }
+  }, [snapshot.events]);
+
   const player = snapshot.bots.find((b) => b.id === playerId) || snapshot.bots[0];
-  const rivals = snapshot.bots.filter((b) => b.id !== player?.id);
+  const allies = snapshot.bots.filter((b) => b.id !== player?.id && b.team === player?.team);
+  const rivals = snapshot.bots.filter((b) => b.id !== player?.id && b.team !== player?.team);
   const playerWeapons = player ? getBotWeapons(player.config) : [];
 
   const secs = Math.ceil(snapshot.timeRemaining);
@@ -78,6 +165,8 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   const bladeWarning = snapshot.hazards.some((h) => h.kind === 'spinner_blade' && h.warning);
   const bladeActive = snapshot.hazards.some((h) => h.kind === 'spinner_blade' && h.active);
 
+  const arenaSpec = ARENA_CATALOG[snapshot.arenaId];
+
   const hazardAlertText = crusherActive
     ? 'Crusher Impact'
     : crusherWarning
@@ -87,10 +176,10 @@ export const CombatHud: React.FC<CombatHudProps> = ({
         : bladeWarning
           ? 'Floor Blades Arming'
           : escalationStage >= 3
-            ? 'Hazard Tier 3 · All Traps'
+            ? `${arenaSpec?.name || 'Arena'} · Tier 3 All Traps`
             : escalationStage === 2
-              ? 'Hazard Tier 2 · Crushers'
-              : 'Hazard Tier 1';
+              ? `${arenaSpec?.name || 'Arena'} · Tier 2 Crushers`
+              : `${arenaSpec?.name || 'Arena'} · Tier 1`;
 
   const hazardAlertTone =
     crusherActive || bladeActive
@@ -100,7 +189,12 @@ export const CombatHud: React.FC<CombatHudProps> = ({
         : 'border-slate-700/80 bg-[#12161C]/90 text-slate-300';
 
   const winner = snapshot.winnerId ? snapshot.bots.find((b) => b.id === snapshot.winnerId) : null;
-  const playerWon = winner?.id === player?.id;
+  const playerWon =
+    winner?.id === player?.id ||
+    (snapshot.winningTeam !== null &&
+      snapshot.winningTeam !== undefined &&
+      player &&
+      snapshot.winningTeam === player.team);
   const endedByTime = snapshot.finishReason === 'time';
   const sortedStandings = [...snapshot.bots].sort((a, b) => {
     if (a.isDead !== b.isDead) return a.isDead ? 1 : -1;
@@ -113,37 +207,109 @@ export const CombatHud: React.FC<CombatHudProps> = ({
     <>
       {/* Top Compact Combat Telemetry Bar */}
       <div className="pointer-events-none fixed inset-x-0 top-0 z-20 flex items-start justify-between gap-2 p-3 sm:px-6 pt-safe">
-        {/* Player Status */}
-        {player && (
-          <div className="pointer-events-auto flex items-center gap-3 rounded-xl border border-slate-700/80 bg-[#12161C]/90 px-3 py-2 min-w-[168px] sm:min-w-[248px]">
-            <div className="flex-1 min-w-0">
+        {/* Player + Wingman Ally Status Column */}
+        <div className="pointer-events-auto flex flex-col gap-1.5 min-w-[172px] sm:min-w-[260px]">
+          {player && (
+            <div className="flex items-center gap-3 rounded-xl border border-slate-700/80 bg-[#12161C]/92 px-3 py-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-bold text-white truncate">{player.config.name}</span>
+                  <span className="font-mono-tabular text-amber-400 font-semibold shrink-0">
+                    {Math.max(0, Math.round(player.hp))}/{player.maxHp}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400 mt-0.5">
+                  <span>{player.weightClass}</span>
+                  {(player.shieldHp ?? 0) > 0 && (
+                    <span className="flex items-center gap-0.5 text-sky-400 font-semibold">
+                      <Shield className="h-2.5 w-2.5" /> {Math.round(player.shieldHp!)}
+                    </span>
+                  )}
+                  {(player.eraBlocksRemaining ?? 0) > 0 && (
+                    <span className="rounded bg-amber-500/20 px-1 text-[9px] font-bold text-amber-300">
+                      ERA×{player.eraBlocksRemaining}
+                    </span>
+                  )}
+                  {player.overdriveTimer > 0 && (
+                    <span className="rounded bg-sky-500/25 px-1 text-[9px] font-bold text-sky-300">
+                      OVERDRIVE
+                    </span>
+                  )}
+                  {(player.damageBoostTimer ?? 0) > 0 && (
+                    <span className="rounded bg-orange-500/25 px-1 text-[9px] font-bold text-orange-300">
+                      +35% DMG
+                    </span>
+                  )}
+                  {(player.freezeTimer ?? 0) > 0 && (
+                    <span className="rounded bg-cyan-500/25 px-1 text-[9px] font-bold text-cyan-300">
+                      FROZEN
+                    </span>
+                  )}
+                  {(player.shockTimer ?? 0) > 0 && (
+                    <span className="rounded bg-purple-500/25 px-1 text-[9px] font-bold text-purple-300">
+                      EMP SHOCK
+                    </span>
+                  )}
+                </div>
+
+                {/* Shield Bar (if equipped) */}
+                {(player.maxShieldHp ?? 0) > 0 && (
+                  <div className="mt-1 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-cyan-400 transition-all duration-100"
+                      style={{
+                        width: `${Math.max(0, ((player.shieldHp ?? 0) / Math.max(1, player.maxShieldHp!)) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Hull HP Bar */}
+                <div className="mt-1 h-2 w-full rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full bg-amber-500 transition-all duration-100"
+                    style={{ width: `${Math.max(0, (player.hp / player.maxHp) * 100)}%` }}
+                  />
+                </div>
+                {/* Energy Bar */}
+                <div className="mt-1 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full bg-sky-400 transition-all duration-100"
+                    style={{ width: `${Math.max(0, (player.energy / player.maxEnergy) * 100)}%` }}
+                  />
+                </div>
+              </div>
+              <ArmorMiniIndicator bot={player} />
+            </div>
+          )}
+
+          {/* Wingman / Teammate Card in 2v2 or Raid */}
+          {allies.map((ally) => (
+            <div
+              key={ally.id}
+              className={`rounded-xl border px-3 py-1.5 bg-[#12161C]/90 ${
+                ally.isDead ? 'border-slate-800 opacity-55' : 'border-emerald-500/60'
+              }`}
+            >
               <div className="flex items-center justify-between gap-2 text-xs">
-                <span className="font-bold text-white truncate">{player.config.name}</span>
-                <span className="font-mono-tabular text-amber-400 font-semibold shrink-0">
-                  {Math.max(0, Math.round(player.hp))}/{player.maxHp}
+                <span className="font-semibold text-emerald-300 truncate">
+                  ALLY · [{ally.clanTag}] {ally.config.name}
                 </span>
-              </div>
-              <div className="text-[10px] text-slate-400 truncate">
-                {player.weightClass}
-              </div>
-              <div className="mt-1 h-2 w-full rounded-full bg-slate-800 overflow-hidden">
-                <div
-                  className="h-full bg-amber-500 transition-all duration-100"
-                  style={{ width: `${Math.max(0, (player.hp / player.maxHp) * 100)}%` }}
-                />
+                <span className="font-mono-tabular text-emerald-400 font-semibold shrink-0">
+                  {ally.isDead ? 'KO' : `${Math.round(ally.hp)}/${ally.maxHp}`}
+                </span>
               </div>
               <div className="mt-1 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
                 <div
-                  className="h-full bg-sky-400 transition-all duration-100"
-                  style={{ width: `${Math.max(0, (player.energy / player.maxEnergy) * 100)}%` }}
+                  className="h-full bg-emerald-400 transition-all duration-100"
+                  style={{ width: `${Math.max(0, (ally.hp / ally.maxHp) * 100)}%` }}
                 />
               </div>
             </div>
-            <ArmorMiniIndicator bot={player} />
-          </div>
-        )}
+          ))}
+        </div>
 
-        {/* Center Match Timer + Controls + Timed Hazard Escalation */}
+        {/* Center Match Timer + Controls + Timed Hazard Escalation + Callout Banner */}
         <div className="pointer-events-none flex flex-col items-center gap-1.5">
           <div
             className={`pointer-events-auto flex items-center gap-1.5 rounded-xl border bg-[#12161C]/90 px-2.5 py-1.5 ${
@@ -159,7 +325,17 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                 {snapshot.mode === 'practice' ? 'FREE' : `${mins}:${remSecs}`}
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5 whitespace-nowrap">
-                {isFinalTen ? 'FINAL SEC' : isMultiplayer ? 'Timed PvP' : snapshot.mode === 'practice' ? 'Test Range' : 'Timed Battle'}
+                {isFinalTen
+                  ? 'FINAL SEC'
+                  : isMultiplayer
+                    ? 'Timed PvP'
+                    : snapshot.mode === 'team_2v2'
+                      ? '2v2 Clash'
+                      : snapshot.mode === 'boss_raid'
+                        ? 'Boss Raid'
+                        : snapshot.mode === 'practice'
+                          ? 'Test Range'
+                          : 'Timed Battle'}
               </div>
               {snapshot.mode !== 'practice' && (
                 <div className="mt-1 h-1 w-full rounded-full bg-slate-800 overflow-hidden">
@@ -205,6 +381,12 @@ export const CombatHud: React.FC<CombatHudProps> = ({
               {hazardAlertText}
             </div>
           )}
+
+          {calloutText && snapshot.phase === 'active' && (
+            <div className="rounded-xl border border-amber-400/80 bg-amber-500/20 px-3.5 py-1 text-xs font-extrabold tracking-wider text-amber-300 shadow-lg">
+              {calloutText}
+            </div>
+          )}
         </div>
 
         {/* Rivals Status */}
@@ -224,8 +406,11 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                   {r.isDead ? 'KO' : `${Math.round(r.hp)}/${r.maxHp}`}
                 </span>
               </div>
-              <div className="text-[10px] text-slate-400 font-mono-tabular">
-                Lv {r.botLevel} · {r.weightClass}
+              <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono-tabular">
+                <span>Lv {r.botLevel} · {r.weightClass}</span>
+                {(r.shieldHp ?? 0) > 0 && (
+                  <span className="text-sky-400">· SHD {Math.round(r.shieldHp!)}</span>
+                )}
               </div>
               <div className="mt-1 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
                 <div
@@ -238,7 +423,10 @@ export const CombatHud: React.FC<CombatHudProps> = ({
         </div>
       </div>
 
-      {/* Dedicated Desktop Weapon Action Bar (1 individual clickable/holdable button per weapon) */}
+      {/* Tactical Arena Mini-Radar */}
+      {snapshot.phase === 'active' && <ArenaMiniRadar snapshot={snapshot} playerId={playerId} />}
+
+      {/* Dedicated Desktop Weapon Action Bar */}
       {showKeyboardHint && snapshot.phase === 'active' && player && !player.isDead && (
         <div className="pointer-events-none fixed bottom-12 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2">
           {playerWeapons.map((wId, idx) => {
@@ -291,7 +479,7 @@ export const CombatHud: React.FC<CombatHudProps> = ({
           <span aria-hidden="true">·</span>
           <span>Boost: Shift</span>
           <span aria-hidden="true">·</span>
-          <span>Repair Overdrive: E</span>
+          <span>Overdrive & Purge: E</span>
         </div>
       )}
 
@@ -302,7 +490,9 @@ export const CombatHud: React.FC<CombatHudProps> = ({
             <div className="font-display text-5xl font-bold text-amber-400">
               {Math.max(1, Math.ceil(snapshot.countdown))}
             </div>
-            <div className="mt-1 text-xs font-semibold text-slate-300">Systems Primed</div>
+            <div className="mt-1 text-xs font-semibold text-slate-300">
+              {arenaSpec?.name || 'BattleBox'} · Systems Primed
+            </div>
           </div>
         </div>
       )}
@@ -331,7 +521,7 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                 </h2>
                 <p className="text-xs text-slate-400">
                   {endedByTime ? 'Time Expired · ' : 'KO Finish · '}
-                  Winner: {winner ? `${winner.config.name} (${winner.name})` : 'Draw'}
+                  Winner: {winner ? `[${winner.clanTag}] ${winner.config.name}` : 'Draw'}
                 </p>
               </div>
             </div>
@@ -374,7 +564,7 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                     }`}
                   >
                     <span className="truncate font-semibold">
-                      #{idx + 1} {b.config.name}
+                      #{idx + 1} [{b.clanTag}] {b.config.name}
                     </span>
                     <span className="font-mono-tabular text-[11px] shrink-0 text-slate-400">
                       {b.isDead ? 'KO' : `${hpPct}% HP`} · {Math.round(b.damageDealt)} DMG

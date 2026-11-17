@@ -5,11 +5,15 @@ import {
   CircleDot,
   Gauge,
   Palette,
+  Shuffle,
   Shield,
+  Sparkles,
   Swords,
   Wrench,
 } from 'lucide-react';
 import {
+  ACCESSORY_CATALOG,
+  type AccessoryId,
   ARMOR_CATALOG,
   type ArmorId,
   type BotConfig,
@@ -18,10 +22,13 @@ import {
   computeBotStats,
   DRIVE_CATALOG,
   type DriveId,
+  FINISH_CATALOG,
+  type FinishStyleId,
   getBotChassisStyles,
   getBotWeapons,
   PAINT_PRESETS,
   type SkillTree,
+  UNDERGLOW_OPTIONS,
   WEAPON_CATALOG,
   type WeaponId,
   WHEEL_LAYOUT_CATALOG,
@@ -31,15 +38,21 @@ import {
 interface WorkshopDockProps {
   config: BotConfig;
   skills: SkillTree;
+  savedLoadouts?: BotConfig[];
+  activeLoadoutSlot?: number;
+  onSelectLoadoutSlot?: (slotIdx: number) => void;
   onChange: (next: BotConfig) => void;
   onStartFight: () => void;
 }
 
-type CustomTab = 'weapon' | 'armor' | 'chassis' | 'wheels' | 'drive' | 'paint';
+type CustomTab = 'weapon' | 'chassis' | 'armor' | 'wheels' | 'drive' | 'cosmetics' | 'paint';
 
 export const WorkshopDock: React.FC<WorkshopDockProps> = ({
   config,
   skills,
+  savedLoadouts,
+  activeLoadoutSlot = 0,
+  onSelectLoadoutSlot,
   onChange,
   onStartFight,
 }) => {
@@ -77,10 +90,79 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
     onChange({ ...config, chassis: next[0], chassisStyles: next });
   };
 
+  const handleRandomize = () => {
+    const allChassis = Object.keys(CHASSIS_CATALOG) as ChassisId[];
+    const allWeapons = Object.keys(WEAPON_CATALOG) as WeaponId[];
+    const allArmors = Object.keys(ARMOR_CATALOG) as ArmorId[];
+    const allWheels = Object.keys(WHEEL_LAYOUT_CATALOG) as WheelLayoutId[];
+    const allDrives = Object.keys(DRIVE_CATALOG) as DriveId[];
+    const allFinishes = Object.keys(FINISH_CATALOG) as FinishStyleId[];
+    const allAccessories = Object.keys(ACCESSORY_CATALOG) as AccessoryId[];
+
+    const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+    const c1 = pick(allChassis);
+    const c2 = pick(allChassis.filter((c) => c !== c1));
+    const w1 = pick(allWeapons);
+    const w2 = pick(allWeapons.filter((w) => w !== w1));
+    const paint = pick(PAINT_PRESETS);
+
+    onChange({
+      ...config,
+      chassis: c1,
+      chassisStyles: Math.random() < 0.7 ? [c1, c2] : [c1],
+      armor: pick(allArmors),
+      weapon: w1,
+      weapons: Math.random() < 0.75 ? [w1, w2] : [w1],
+      wheelLayout: pick(allWheels),
+      drive: pick(allDrives),
+      primaryColor: paint.primary,
+      accentColor: paint.accent,
+      finishStyle: pick(allFinishes),
+      accessory: pick(allAccessories),
+      underglowColor: paint.underglow,
+    });
+  };
+
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-3 z-20 flex flex-col items-center px-3 pb-safe">
-      {/* Collapse / Expand Handle */}
-      <div className="pointer-events-auto mb-1.5 flex items-center gap-2">
+      {/* Collapse / Expand Handle + Garage Loadout Bay Switcher */}
+      <div className="pointer-events-auto mb-1.5 flex flex-wrap items-center justify-center gap-1.5">
+        {savedLoadouts && onSelectLoadoutSlot && (
+          <div className="flex items-center gap-1 rounded-t-xl border border-b-0 border-slate-700/90 bg-[#12161C]/95 px-2.5 py-1 min-h-[36px]">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
+              Garage Bay:
+            </span>
+            {[0, 1, 2].map((slotIdx) => {
+              const slotBot = savedLoadouts[slotIdx];
+              const isCurrent = activeLoadoutSlot === slotIdx;
+              return (
+                <button
+                  key={slotIdx}
+                  type="button"
+                  onClick={() => onSelectLoadoutSlot(slotIdx)}
+                  className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
+                    isCurrent
+                      ? 'bg-amber-500 text-slate-950'
+                      : 'bg-[#19202A] text-slate-300 hover:text-white'
+                  }`}
+                >
+                  Bay {slotIdx + 1} · {slotBot?.name?.slice(0, 10) || `Slot ${slotIdx + 1}`}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={handleRandomize}
+          title="Generate a random hybrid bot build"
+          className="flex items-center gap-1.5 rounded-t-xl border border-b-0 border-slate-700/90 bg-[#12161C]/95 px-3 py-1.5 min-h-[36px] text-xs font-semibold text-sky-300 hover:text-sky-200 transition whitespace-nowrap"
+        >
+          <Shuffle className="h-3.5 w-3.5" />
+          Randomize
+        </button>
+
         <button
           type="button"
           onClick={() => setCollapsed((v) => !v)}
@@ -92,7 +174,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
       </div>
 
       {!collapsed && (
-        <div className="pointer-events-auto w-full max-w-[980px] rounded-2xl border border-slate-700/80 bg-[#12161C]/94 p-3 sm:p-4 shadow-2xl">
+        <div className="pointer-events-auto w-full max-w-[1040px] rounded-2xl border border-slate-700/80 bg-[#12161C]/94 p-3 sm:p-4 shadow-2xl">
           {/* Top Row: Hull Name Input, Weight Class & Core Telemetry, Primary Fight CTA */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-800 pb-3">
             <div className="flex flex-wrap items-center gap-2.5 min-w-0">
@@ -111,37 +193,42 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                 />
               </label>
 
-              <div className="flex items-center gap-2 text-xs text-slate-400 font-mono-tabular">
-                <span className="font-sans font-semibold text-slate-200">{stats.weightClass}</span>
-                <span aria-hidden="true">·</span>
-                <span>{stats.bodyScale}×</span>
-                <span aria-hidden="true">·</span>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 font-mono-tabular">
+                <span className="rounded bg-slate-800 px-1.5 py-0.5 font-sans font-semibold text-slate-200">
+                  {stats.weightClass} ({stats.bodyScale}×)
+                </span>
                 <span>HP {stats.maxHp}</span>
-                <span aria-hidden="true">·</span>
+                {stats.maxShieldHp > 0 && (
+                  <span className="text-sky-400 font-semibold">SHD +{stats.maxShieldHp}</span>
+                )}
+                <span>·</span>
+                <span>ARM {stats.armorZoneHp}</span>
+                <span>·</span>
                 <span>DMG {stats.weaponDamage}</span>
-                <span className="hidden sm:inline" aria-hidden="true">·</span>
+                <span className="hidden sm:inline">·</span>
                 <span className="hidden sm:inline">SPD {stats.maxSpeed}</span>
-                <span className="hidden md:inline" aria-hidden="true">·</span>
+                <span className="hidden md:inline">·</span>
                 <span className="hidden md:inline text-amber-400 font-semibold">PWR {stats.powerScore}</span>
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full">
+            <div className="flex items-center gap-1 overflow-x-auto max-w-full">
               {(
                 [
-                  { id: 'weapon', label: `Weapons (${activeWeapons.length})`, Icon: Swords },
-                  { id: 'chassis', label: `Styles (${activeStyles.length})`, Icon: Wrench },
+                  { id: 'weapon', label: `Weapons (${activeWeapons.length}/3)`, Icon: Swords },
+                  { id: 'chassis', label: `Chassis (${activeStyles.length}/3)`, Icon: Wrench },
                   { id: 'armor', label: 'Armor', Icon: Shield },
                   { id: 'wheels', label: 'Wheels', Icon: CircleDot },
                   { id: 'drive', label: 'Drive', Icon: Gauge },
-                  { id: 'paint', label: 'Finish', Icon: Palette },
+                  { id: 'cosmetics', label: 'FX & Mods', Icon: Sparkles },
+                  { id: 'paint', label: 'Paint', Icon: Palette },
                 ] as const
               ).map(({ id, label, Icon }) => (
                 <button
                   key={id}
                   type="button"
                   onClick={() => setTab(id)}
-                  className={`flex items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-2 min-h-[40px] text-xs font-semibold transition whitespace-nowrap shrink-0 ${
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-2 min-h-[38px] text-xs font-semibold transition whitespace-nowrap shrink-0 ${
                     tab === id
                       ? 'bg-amber-500 text-slate-950'
                       : 'bg-[#19202A] text-slate-300 hover:bg-slate-800 hover:text-white'
@@ -154,7 +241,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
               <button
                 type="button"
                 onClick={onStartFight}
-                className="ml-1 rounded-lg bg-emerald-500 px-3.5 sm:px-4 py-2 min-h-[40px] text-xs font-bold text-slate-950 hover:bg-emerald-400 transition whitespace-nowrap shrink-0"
+                className="ml-1 rounded-lg bg-emerald-500 px-3.5 sm:px-4 py-2 min-h-[38px] text-xs font-bold text-slate-950 hover:bg-emerald-400 transition whitespace-nowrap shrink-0"
               >
                 Enter Arena
               </button>
@@ -165,7 +252,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
           {tab === 'weapon' && (
             <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
               <span>
-                Combine up to 3 weapons on one chassis — click cards below to mount or remove
+                Mount up to 3 independent weapons (Fire with Keys 1, 2, 3 or Space) — click cards to mount or unmount:
               </span>
               <div className="flex flex-wrap items-center gap-1.5">
                 {activeWeapons.map((wId, idx) => (
@@ -176,7 +263,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                     title={activeWeapons.length > 1 ? 'Click to unmount weapon' : 'Primary weapon'}
                     className="rounded-md border border-amber-500/50 bg-amber-500/12 px-2 py-0.5 text-[11px] font-semibold text-amber-300 hover:bg-amber-500/20"
                   >
-                    {idx + 1}. {WEAPON_CATALOG[wId].label}
+                    #{idx + 1} {WEAPON_CATALOG[wId].label}
                     {activeWeapons.length > 1 ? ' ×' : ''}
                   </button>
                 ))}
@@ -187,7 +274,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
           {tab === 'chassis' && (
             <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
               <span>
-                Fuse up to 3 body styles into one hybrid hull — click cards below to layer or remove
+                Fuse up to 3 chassis silhouettes into one custom hybrid hull — click cards below to layer or remove:
               </span>
               <div className="flex flex-wrap items-center gap-1.5">
                 {activeStyles.map((cId, idx) => (
@@ -208,7 +295,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
           )}
 
           {/* Selection Strip */}
-          <div className="mt-2.5 grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[30vh] sm:max-h-[215px] overflow-y-auto pr-0.5">
+          <div className="mt-2.5 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-[32vh] sm:max-h-[225px] overflow-y-auto pr-0.5">
             {tab === 'weapon' &&
               (Object.keys(WEAPON_CATALOG) as WeaponId[]).map((wId) => {
                 const item = WEAPON_CATALOG[wId];
@@ -225,11 +312,18 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                         : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center justify-between gap-1.5">
                       <span className="text-xs font-bold text-white truncate">{item.label}</span>
-                      <span className="font-mono-tabular text-[11px] text-amber-400 shrink-0">
-                        {active ? `Slot ${slotIdx + 1}` : `+ ${item.damage} DMG`}
+                      <span className="font-mono-tabular text-[10px] rounded bg-slate-900/90 px-1.5 py-0.5 text-amber-400 shrink-0">
+                        {active ? `Slot #${slotIdx + 1}` : `${item.damage} DMG`}
                       </span>
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-2 text-[10px] text-sky-400 font-mono-tabular">
+                      <span>{item.category}</span>
+                      <span>·</span>
+                      <span>RNG {item.range}m</span>
+                      <span>·</span>
+                      <span>CD {item.cooldown}s</span>
                     </div>
                     <p className="mt-1 text-[11px] text-slate-400 line-clamp-2">{item.subtitle}</p>
                   </button>
@@ -254,10 +348,13 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-bold text-white truncate">{item.label}</span>
                       <span className="font-mono-tabular text-[11px] text-amber-400 shrink-0">
-                        +{item.hpBonus} HP
+                        +{item.hpBonus} HP · {item.zoneHp} ZN
                       </span>
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-400 line-clamp-2">{item.subtitle}</p>
+                    <div className="mt-0.5 text-[10px] font-semibold text-emerald-400 truncate">
+                      {item.specialPerk}
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-slate-400 line-clamp-2">{item.subtitle}</p>
                   </button>
                 );
               })}
@@ -280,11 +377,14 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-bold text-white truncate">{item.label}</span>
-                      <span className="font-mono-tabular text-[11px] text-amber-400 shrink-0">
+                      <span className="font-mono-tabular text-[10px] text-amber-400 shrink-0">
                         {slotIdx === 0 ? 'Core' : active ? `Hybrid #${slotIdx + 1}` : item.sizeTag}
                       </span>
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-400 line-clamp-2">{item.subtitle}</p>
+                    <div className="mt-0.5 text-[10px] text-slate-300 font-mono-tabular">
+                      {item.baseHp} HP · {Math.round(item.speedMult * 100)}% SPD · {Math.round(item.frontDeflect * 100)}% DEF
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-slate-400 line-clamp-2">{item.subtitle}</p>
                   </button>
                 );
               })}
@@ -341,30 +441,140 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                 );
               })}
 
-            {tab === 'paint' &&
-              PAINT_PRESETS.map((p) => {
-                const active = config.primaryColor === p.primary;
-                return (
-                  <button
-                    key={p.label}
-                    type="button"
-                    onClick={() =>
-                      onChange({ ...config, primaryColor: p.primary, accentColor: p.accent })
-                    }
-                    className={`flex items-center gap-3 rounded-xl border p-2.5 transition ${
-                      active
-                        ? 'border-amber-500 bg-amber-500/12'
-                        : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
-                    }`}
-                  >
-                    <span
-                      className="h-6 w-6 rounded-lg border border-white/20 shrink-0"
-                      style={{ backgroundColor: p.primary }}
+            {tab === 'cosmetics' && (
+              <>
+                <div className="col-span-full text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Armor Surface Shader Finish
+                </div>
+                {(Object.keys(FINISH_CATALOG) as FinishStyleId[]).map((fId) => {
+                  const item = FINISH_CATALOG[fId];
+                  const active = (config.finishStyle || 'standard') === fId;
+                  return (
+                    <button
+                      key={fId}
+                      type="button"
+                      onClick={() => onChange({ ...config, finishStyle: fId })}
+                      className={`text-left rounded-xl border p-2.5 transition ${
+                        active
+                          ? 'border-amber-500 bg-amber-500/12'
+                          : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="text-xs font-bold text-white">{item.label}</div>
+                      <p className="mt-0.5 text-[11px] text-slate-400">{item.subtitle}</p>
+                    </button>
+                  );
+                })}
+
+                <div className="col-span-full mt-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Dorsal Hull Topper / Accessory
+                </div>
+                {(Object.keys(ACCESSORY_CATALOG) as AccessoryId[]).map((accId) => {
+                  const item = ACCESSORY_CATALOG[accId];
+                  const active = (config.accessory || 'none') === accId;
+                  return (
+                    <button
+                      key={accId}
+                      type="button"
+                      onClick={() => onChange({ ...config, accessory: accId })}
+                      className={`text-left rounded-xl border p-2.5 transition ${
+                        active
+                          ? 'border-amber-500 bg-amber-500/12'
+                          : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="text-xs font-bold text-white">{item.label}</div>
+                      <p className="mt-0.5 text-[11px] text-slate-400">{item.subtitle}</p>
+                    </button>
+                  );
+                })}
+
+                <div className="col-span-full mt-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Chassis Neon Underglow Ring
+                </div>
+                {UNDERGLOW_OPTIONS.map((ug) => {
+                  const active = (config.underglowColor || 'none') === ug.value;
+                  return (
+                    <button
+                      key={ug.label}
+                      type="button"
+                      onClick={() => onChange({ ...config, underglowColor: ug.value })}
+                      className={`flex items-center gap-2.5 rounded-xl border p-2.5 transition ${
+                        active
+                          ? 'border-amber-500 bg-amber-500/12'
+                          : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
+                      }`}
+                    >
+                      <span
+                        className="h-4 w-4 rounded-full border border-white/30 shrink-0"
+                        style={{ backgroundColor: ug.value === 'none' ? '#1e293b' : ug.value }}
+                      />
+                      <span className="text-xs font-semibold text-white">{ug.label}</span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
+
+            {tab === 'paint' && (
+              <>
+                <div className="col-span-full flex flex-wrap items-center gap-4 rounded-xl border border-slate-800 bg-[#0D1014] px-3 py-2">
+                  <label className="flex items-center gap-2 text-xs text-slate-300 font-semibold">
+                    <span>Custom Primary:</span>
+                    <input
+                      type="color"
+                      value={config.primaryColor}
+                      onChange={(e) => onChange({ ...config, primaryColor: e.target.value })}
+                      className="h-7 w-10 cursor-pointer rounded border border-slate-700 bg-transparent"
                     />
-                    <span className="text-xs font-semibold text-white truncate">{p.label}</span>
-                  </button>
-                );
-              })}
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-slate-300 font-semibold">
+                    <span>Custom Accent / Visor:</span>
+                    <input
+                      type="color"
+                      value={config.accentColor}
+                      onChange={(e) => onChange({ ...config, accentColor: e.target.value })}
+                      className="h-7 w-10 cursor-pointer rounded border border-slate-700 bg-transparent"
+                    />
+                  </label>
+                </div>
+
+                {PAINT_PRESETS.map((p) => {
+                  const active = config.primaryColor === p.primary && config.accentColor === p.accent;
+                  return (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() =>
+                        onChange({
+                          ...config,
+                          primaryColor: p.primary,
+                          accentColor: p.accent,
+                          underglowColor: p.underglow,
+                        })
+                      }
+                      className={`flex items-center gap-3 rounded-xl border p-2.5 transition ${
+                        active
+                          ? 'border-amber-500 bg-amber-500/12'
+                          : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="flex items-center -space-x-1.5 shrink-0">
+                        <span
+                          className="h-6 w-6 rounded-lg border border-white/20"
+                          style={{ backgroundColor: p.primary }}
+                        />
+                        <span
+                          className="h-5 w-5 rounded-full border border-white/30"
+                          style={{ backgroundColor: p.accent }}
+                        />
+                      </div>
+                      <span className="text-xs font-semibold text-white truncate">{p.label}</span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
           </div>
         </div>
       )}
