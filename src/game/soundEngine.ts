@@ -115,8 +115,11 @@ class SoundEngine {
         cryo: 1,
         reactor: 2,
         colosseum: 3,
+        skyforge: 4,
+        junkyard: 5,
+        storm: 6,
       };
-      this.battleTrackIndex = startMap[arenaId] ?? 0;
+      this.battleTrackIndex = (startMap[arenaId] ?? 0) % BATTLE_TRACKS.length;
     } else {
       this.battleTrackIndex = (this.battleTrackIndex + 1) % BATTLE_TRACKS.length;
     }
@@ -300,9 +303,9 @@ class SoundEngine {
     this.driveGain?.gain.setTargetAtTime(0.014 + speedRatio * 0.032 + boostAdd * 0.016, now, 0.06);
 
     const activeWeapons = params.weapons && params.weapons.length > 0 ? params.weapons : [params.weapon];
-    const hasFlame = activeWeapons.includes('flame');
+    const hasFlame = activeWeapons.includes('flame') || activeWeapons.includes('tesla');
     const hasSaw = activeWeapons.includes('sawblade');
-    const hasRotor = activeWeapons.includes('vspinner') || activeWeapons.includes('hbar');
+    const hasRotor = activeWeapons.includes('vspinner') || activeWeapons.includes('hbar') || activeWeapons.includes('drum');
 
     // Modulate continuous weapon motor / torch roar
     if (hasFlame && params.weaponActive) {
@@ -521,8 +524,16 @@ class SoundEngine {
       this.playSawGrind(intensity);
       return;
     }
-    if (weaponId === 'vspinner' || weaponId === 'hbar') {
+    if (weaponId === 'vspinner' || weaponId === 'hbar' || weaponId === 'drum') {
       this.playSpinnerSlash(intensity);
+      return;
+    }
+    if (weaponId === 'jaws' || weaponId === 'lance') {
+      this.playHammerStrike(intensity * 0.9);
+      return;
+    }
+    if (weaponId === 'tesla') {
+      this.playZap(intensity);
       return;
     }
     if (weaponId === 'flame') {
@@ -707,6 +718,82 @@ class SoundEngine {
       gain.connect(ctx.destination);
       osc.start(now + offset);
       osc.stop(now + offset + 0.1);
+    });
+  }
+
+  public playZap(intensity = 1.0) {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const vol = Math.min(0.22, 0.08 + intensity * 0.08);
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(1800 + Math.random() * 900, now);
+    osc.frequency.exponentialRampToValueAtTime(120, now + 0.16);
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+    const noise = ctx.createBufferSource();
+    noise.buffer = this.getNoiseBuffer(ctx);
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.setValueAtTime(2600, now);
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(vol * 0.9, now);
+    nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    noise.connect(hp);
+    hp.connect(nGain);
+    nGain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.2);
+    noise.start(now);
+    noise.stop(now + 0.24);
+  }
+
+  public playThunder() {
+    this.playZap(1.6);
+    this.playExplosion();
+  }
+
+  public playMissileLaunch() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const noise = ctx.createBufferSource();
+    noise.buffer = this.getNoiseBuffer(ctx);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(600, now);
+    bp.frequency.exponentialRampToValueAtTime(2400, now + 0.35);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.16, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    noise.connect(bp);
+    bp.connect(gain);
+    gain.connect(ctx.destination);
+    noise.start(now);
+    noise.stop(now + 0.5);
+  }
+
+  public playAnnouncerSting() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [523.25, 659.25, 783.99].forEach((f, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f, now + i * 0.09);
+      gain.gain.setValueAtTime(0.001, now + i * 0.09);
+      gain.gain.linearRampToValueAtTime(0.07, now + i * 0.09 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.09 + 0.3);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + i * 0.09);
+      osc.stop(now + i * 0.09 + 0.32);
     });
   }
 

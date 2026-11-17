@@ -210,6 +210,164 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     impactFlashLight.position.set(0, 2, 0);
     scene.add(impactFlashLight);
 
+    // Light rig references for the Blackout arena event
+    const baseLightLevels = { hemi: hemiLight.intensity, key: keyLight.intensity, rim: rimLight.intensity };
+    const softboxes: THREE.RectAreaLight[] = [];
+    scene.traverse((o) => {
+      if ((o as THREE.RectAreaLight).isRectAreaLight) softboxes.push(o as THREE.RectAreaLight);
+    });
+    const softboxBase = softboxes.map((l) => l.intensity);
+    let blackoutLevel = 0;
+
+    // ---- Electric arcs / beams (tesla chains, magnet tethers, lance thrusts, lightning) ----
+    const ARC_SEGMENTS = 14;
+    interface ArcSlot {
+      line: THREE.Line;
+      mat: THREE.LineBasicMaterial;
+      life: number;
+      maxLife: number;
+      a: THREE.Vector3;
+      b: THREE.Vector3;
+      jitter: number;
+    }
+    const arcPool: ArcSlot[] = [];
+    const writeArc = (slot: ArcSlot) => {
+      const pos = slot.line.geometry.getAttribute('position') as THREE.BufferAttribute;
+      for (let i = 0; i <= ARC_SEGMENTS; i++) {
+        const t = i / ARC_SEGMENTS;
+        const edge = i === 0 || i === ARC_SEGMENTS ? 0 : 1;
+        const j = slot.jitter * edge * Math.sin(t * Math.PI);
+        pos.setXYZ(
+          i,
+          slot.a.x + (slot.b.x - slot.a.x) * t + (Math.random() - 0.5) * j,
+          slot.a.y + (slot.b.y - slot.a.y) * t + (Math.random() - 0.5) * j,
+          slot.a.z + (slot.b.z - slot.a.z) * t + (Math.random() - 0.5) * j,
+        );
+      }
+      pos.needsUpdate = true;
+    };
+    const spawnArc = (
+      x1: number, y1: number, z1: number,
+      x2: number, y2: number, z2: number,
+      color: number, life = 0.16, jitter = 0.45,
+    ) => {
+      let slot = arcPool.find((a) => a.life <= 0);
+      if (!slot) {
+        if (arcPool.length >= 32) {
+          slot = arcPool[0];
+        } else {
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((ARC_SEGMENTS + 1) * 3), 3));
+          const mat = new THREE.LineBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 1,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          });
+          const line = new THREE.Line(geo, mat);
+          line.frustumCulled = false;
+          scene.add(line);
+          slot = { line, mat, life: 0, maxLife: 1, a: new THREE.Vector3(), b: new THREE.Vector3(), jitter };
+          arcPool.push(slot);
+        }
+      }
+      slot.a.set(x1, y1, z1);
+      slot.b.set(x2, y2, z2);
+      slot.jitter = jitter;
+      slot.mat.color.setHex(color);
+      slot.life = life;
+      slot.maxLife = life;
+      slot.line.visible = true;
+      writeArc(slot);
+    };
+    const updateArcs = (dt: number) => {
+      for (const slot of arcPool) {
+        if (slot.life <= 0) {
+          slot.line.visible = false;
+          continue;
+        }
+        slot.life -= dt;
+        slot.mat.opacity = Math.max(0, slot.life / slot.maxLife);
+        if (slot.jitter > 0.05) writeArc(slot);
+      }
+    };
+
+    // ---- Missiles ----
+    const missileBodyGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.46, 8);
+    missileBodyGeo.rotateX(Math.PI / 2);
+    const missileNoseGeo = new THREE.ConeGeometry(0.07, 0.16, 8);
+    missileNoseGeo.rotateX(Math.PI / 2);
+    missileNoseGeo.translate(0, 0, 0.31);
+    const missileFinGeo = new THREE.BoxGeometry(0.26, 0.02, 0.1);
+    missileFinGeo.translate(0, 0, -0.2);
+    const missileBodyMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.3, metalness: 0.7 });
+    const missileNoseMat = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xb91c1c, emissiveIntensity: 0.6 });
+    const missileGlowMat = new THREE.MeshBasicMaterial({ color: 0xfdba74, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+    const missileGlowGeo = new THREE.SphereGeometry(0.11, 8, 6);
+    missileGlowGeo.translate(0, 0, -0.28);
+    const missileMeshes = new Map<string, THREE.Group>();
+    const ensureMissileMesh = (id: string) => {
+      let m = missileMeshes.get(id);
+      if (m) return m;
+      m = new THREE.Group();
+      const finA = new THREE.Mesh(missileFinGeo, missileBodyMat);
+      const finB = new THREE.Mesh(missileFinGeo, missileBodyMat);
+      finB.rotation.z = Math.PI / 2;
+      m.add(
+        new THREE.Mesh(missileBodyGeo, missileBodyMat),
+        new THREE.Mesh(missileNoseGeo, missileNoseMat),
+        new THREE.Mesh(missileGlowGeo, missileGlowMat),
+        finA,
+        finB,
+      );
+      scene.add(m);
+      missileMeshes.set(id, m);
+      return m;
+    };
+    const clearMissiles = () => {
+      missileMeshes.forEach((m) => scene.remove(m));
+      missileMeshes.clear();
+    };
+
+    // ---- Team rings, bounty markers & King of the Hill zone ----
+    const teamRingGeo = new THREE.RingGeometry(1.22, 1.4, 40);
+    teamRingGeo.rotateX(-Math.PI / 2);
+    const makeRingMat = (hex: number) =>
+      new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide });
+    const ringPlayerMat = makeRingMat(0xf59e0b);
+    const ringAllyMat = makeRingMat(0x34d399);
+    const ringEnemyMat = makeRingMat(0xef4444);
+    const bountyGeo = new THREE.ConeGeometry(0.28, 0.6, 4);
+    bountyGeo.rotateX(Math.PI);
+    const bountyMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xeab308, emissiveIntensity: 1.8 });
+    const bossCrownGeo = new THREE.TorusGeometry(0.42, 0.06, 6, 5);
+    bossCrownGeo.rotateX(Math.PI / 2);
+
+    const hillGroup = new THREE.Group();
+    const hillRingGeo = new THREE.RingGeometry(0.93, 1.0, 64);
+    hillRingGeo.rotateX(-Math.PI / 2);
+    const hillDiscGeo = new THREE.CircleGeometry(0.93, 48);
+    hillDiscGeo.rotateX(-Math.PI / 2);
+    const hillBeamGeo = new THREE.CylinderGeometry(1, 1, 6, 48, 1, true);
+    const hillRingMat = new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide });
+    const hillDiscMat = new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0.12, depthWrite: false });
+    const hillBeamMat = new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+    const hillRing = new THREE.Mesh(hillRingGeo, hillRingMat);
+    hillRing.position.y = 0.04;
+    const hillDisc = new THREE.Mesh(hillDiscGeo, hillDiscMat);
+    hillDisc.position.y = 0.035;
+    const hillBeam = new THREE.Mesh(hillBeamGeo, hillBeamMat);
+    hillBeam.position.y = 3;
+    hillGroup.add(hillRing, hillDisc, hillBeam);
+    hillGroup.visible = false;
+    scene.add(hillGroup);
+    const overlayDisposables: Array<{ dispose: () => void }> = [
+      missileBodyGeo, missileNoseGeo, missileFinGeo, missileBodyMat, missileNoseMat, missileGlowMat, missileGlowGeo,
+      teamRingGeo, ringPlayerMat, ringAllyMat, ringEnemyMat, bountyGeo, bountyMat, bossCrownGeo,
+      hillRingGeo, hillDiscGeo, hillBeamGeo, hillRingMat, hillDiscMat, hillBeamMat,
+    ];
+
     // OrbitControls for Workshop showcase
     const orbit = new OrbitControls(camera, renderer.domElement);
     orbit.enableDamping = !isSoftwareGl;
@@ -248,7 +406,14 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     scene.add(turntableGroup);
 
     let workshopBotRig: BuiltBotRig | null = null;
-    const combatBotRigs = new Map<string, { rig: BuiltBotRig; configKey: string }>();
+    interface CombatRigEntry {
+      rig: BuiltBotRig;
+      configKey: string;
+      teamRing: THREE.Mesh;
+      bountyMarker: THREE.Mesh;
+      bossCrown?: THREE.Mesh;
+    }
+    const combatBotRigs = new Map<string, CombatRigEntry>();
 
     const rebuildArena = () => {
       const aSpec = ARENA_CATALOG[arenaIdRef.current];
@@ -283,6 +448,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
         entry.rig.dispose();
       });
       combatBotRigs.clear();
+      clearMissiles();
+      hillGroup.visible = false;
     };
 
     const rebuildWorkshopBot = () => {
@@ -361,6 +528,80 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
         if (ev.id <= lastProcessedEventId) continue;
         lastProcessedEventId = ev.id;
 
+        if (ev.type === 'arc') {
+          spawnArc(ev.x, ev.y, ev.z, ev.x2 ?? ev.x, ev.y2 ?? ev.y, ev.z2 ?? ev.z, 0x93c5fd, 0.2, 0.55);
+          spawnArc(ev.x, ev.y, ev.z, ev.x2 ?? ev.x, ev.y2 ?? ev.y, ev.z2 ?? ev.z, 0xe0f2fe, 0.12, 0.3);
+          effects.spawnSparks(ev.x2 ?? ev.x, ev.y2 ?? ev.y, ev.z2 ?? ev.z, 10, 0x93c5fd, 7);
+          impactFlashLight.position.set(ev.x2 ?? ev.x, (ev.y2 ?? ev.y) + 0.6, ev.z2 ?? ev.z);
+          impactFlashLight.color.setHex(0x60a5fa);
+          impactFlashLight.intensity = Math.max(impactFlashLight.intensity, 7);
+          soundEngine.playZap(0.7);
+          continue;
+        }
+        if (ev.type === 'lightning') {
+          spawnArc(ev.x + (Math.random() - 0.5) * 2, 16, ev.z + (Math.random() - 0.5) * 2, ev.x, 0.1, ev.z, 0xffffff, 0.3, 2.4);
+          spawnArc(ev.x + (Math.random() - 0.5) * 3, 16, ev.z + (Math.random() - 0.5) * 3, ev.x, 0.1, ev.z, 0x93c5fd, 0.35, 3.2);
+          effects.spawnShockwave(ev.x, 0.1, ev.z, 3.6, 0x93c5fd);
+          effects.spawnSparks(ev.x, 0.3, ev.z, 30, 0xe0f2fe, 12);
+          effects.spawnSmoke(ev.x, 0.4, ev.z, 6, 1.1, 0.3);
+          impactFlashLight.position.set(ev.x, 3, ev.z);
+          impactFlashLight.color.setHex(0xdbeafe);
+          impactFlashLight.intensity = 22;
+          screenShake = Math.min(0.9, screenShake + 0.4);
+          crowdExcitement = Math.min(1, crowdExcitement + 0.4);
+          soundEngine.playThunder();
+          continue;
+        }
+        if (ev.type === 'magnet_pull') {
+          spawnArc(ev.x, ev.y, ev.z, ev.x2 ?? ev.x, ev.y2 ?? ev.y, ev.z2 ?? ev.z, 0xef4444, 0.35, 0.2);
+          spawnArc(ev.x, ev.y, ev.z, ev.x2 ?? ev.x, ev.y2 ?? ev.y, ev.z2 ?? ev.z, 0xfca5a5, 0.25, 0.08);
+          soundEngine.playZap(0.5);
+          continue;
+        }
+        if (ev.type === 'lance') {
+          spawnArc(ev.x, ev.y, ev.z, ev.x2 ?? ev.x, ev.y2 ?? ev.y, ev.z2 ?? ev.z, 0xf8fafc, 0.1, 0);
+          if (ev.intensity > 0.5) effects.spawnSparks(ev.x2 ?? ev.x, ev.y2 ?? ev.y, ev.z2 ?? ev.z, 14, 0xfde68a, 10);
+          continue;
+        }
+        if (ev.type === 'reflect') {
+          spawnArc(ev.x, ev.y, ev.z, ev.x2 ?? ev.x, ev.y2 ?? ev.y, ev.z2 ?? ev.z, 0xfb923c, 0.18, 0.4);
+          effects.spawnFlames(ev.x, ev.y, ev.z, 5, 0, 0, 4, 0.8);
+          effects.spawnSparks(ev.x, ev.y, ev.z, 14, 0xf97316, 10);
+          continue;
+        }
+        if (ev.type === 'shield_block') {
+          effects.spawnShockwave(ev.x, ev.y, ev.z, 2.4, 0x818cf8);
+          effects.spawnSparks(ev.x, ev.y, ev.z, 8, 0xa5b4fc, 6);
+          continue;
+        }
+        if (ev.type === 'missile_launch') {
+          effects.spawnSmoke(ev.x, ev.y, ev.z, 5, 0.9, 0.3);
+          effects.spawnFlames(ev.x, ev.y, ev.z, 3, 0, 0, 2, 0.5);
+          soundEngine.playMissileLaunch();
+          continue;
+        }
+        if (ev.type === 'pit_fall') {
+          effects.spawnShockwave(ev.x, 0.1, ev.z, 3.4, 0x22d3ee);
+          effects.spawnFlames(ev.x, 0.2, ev.z, 10, 0, 0, 5, 1.1);
+          effects.spawnSmoke(ev.x, 0.3, ev.z, 8, 1.3, 0.4);
+          screenShake = Math.min(0.9, screenShake + 0.45);
+          crowdExcitement = 1;
+          soundEngine.playExplosion();
+          soundEngine.playCrowdCheer(1.1);
+          continue;
+        }
+        if (ev.type === 'arena_event' || ev.type === 'wave_start' || ev.type === 'hill_move') {
+          const col = ev.type === 'wave_start' ? 0xef4444 : ev.type === 'hill_move' ? 0xfacc15 : 0xd946ef;
+          effects.spawnShockwave(ev.x, 0.15, ev.z, ev.type === 'hill_move' ? 3.6 : 6, col);
+          if (ev.label === 'supply_drop') {
+            effects.spawnSparks(ev.x, 3, ev.z, 30, 0x34d399, 10);
+            effects.spawnSmoke(ev.x, 0.5, ev.z, 8, 1.2, 0.3);
+          }
+          if (ev.type !== 'hill_move' || ev.label === 'moved') soundEngine.playAnnouncerSting();
+          if (ev.type === 'wave_start') soundEngine.playCrowdCheer(1);
+          continue;
+        }
+
         if (ev.type === 'hit' || ev.type === 'crit') {
           const isCrit = ev.type === 'crit';
           effects.spawnSparks(ev.x, ev.y, ev.z, isCrit ? 26 : 14, isCrit ? 0xf97316 : 0xfbbf24, isCrit ? 13 : 9);
@@ -393,18 +634,19 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           soundEngine.playFlip();
           soundEngine.playCrowdCheer(0.95);
         } else if (ev.type === 'explosion') {
-          effects.spawnShockwave(ev.x, ev.y, ev.z, 7.2, 0xef4444);
-          effects.spawnFlames(ev.x, ev.y, ev.z, 18, 0, 0, 6.5, 1.45);
-          effects.spawnSmoke(ev.x, ev.y + 0.4, ev.z, 14, 1.5, 0.14);
-          effects.spawnSparks(ev.x, ev.y, ev.z, 38, 0xf97316, 16);
-          effects.spawnDebris(ev.x, ev.y, ev.z, 8, '#dc2626', 1.1);
+          const k = Math.max(0.35, Math.min(1, ev.intensity / 1.5));
+          effects.spawnShockwave(ev.x, ev.y, ev.z, 7.2 * k, 0xef4444);
+          effects.spawnFlames(ev.x, ev.y, ev.z, Math.round(18 * k), 0, 0, 6.5 * k, 1.45 * k);
+          effects.spawnSmoke(ev.x, ev.y + 0.4, ev.z, Math.round(14 * k), 1.5 * k, 0.14);
+          effects.spawnSparks(ev.x, ev.y, ev.z, Math.round(38 * k), 0xf97316, 16 * k);
+          if (k > 0.6) effects.spawnDebris(ev.x, ev.y, ev.z, 8, '#dc2626', 1.1);
           impactFlashLight.position.set(ev.x, ev.y + 1.2, ev.z);
           impactFlashLight.color.setHex(0xff6b2c);
-          impactFlashLight.intensity = 18;
-          crowdExcitement = 1.0;
-          screenShake = Math.min(0.95, screenShake + 0.55);
+          impactFlashLight.intensity = Math.max(impactFlashLight.intensity, 18 * k);
+          crowdExcitement = Math.min(1, crowdExcitement + 0.6 * k);
+          screenShake = Math.min(0.95, screenShake + 0.55 * k);
           soundEngine.playExplosion();
-          soundEngine.playCrowdCheer(1.2);
+          if (k > 0.6) soundEngine.playCrowdCheer(1.2);
         } else if (ev.type === 'crate_break') {
           effects.spawnDebris(ev.x, ev.y, ev.z, 6, '#926239', 1.0);
           effects.spawnSparks(ev.x, ev.y, ev.z, 10, 0xfbbf24, 7);
@@ -526,9 +768,32 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
               }
             } else if (wType === 'flipper') {
               entry.pivot.rotation.x = -Math.max(0, Math.sin(elapsed * 2.2)) * 0.6;
+            } else if (wType === 'drum') {
+              entry.pivot.rotation.x = workshopWeaponAngle * 1.4;
+            } else if (wType === 'jaws') {
+              if (entry.movingPart) entry.movingPart.rotation.x = -0.55 + Math.max(0, Math.sin(elapsed * 2.4)) * 0.6;
+            } else if (wType === 'lance') {
+              if (entry.movingPart) entry.movingPart.position.z = Math.max(0, Math.sin(elapsed * 2.0)) ** 4 * 1.2;
+            } else if (wType === 'tesla') {
+              entry.secondarySpinners.forEach((r) => (r.rotation.y = workshopWeaponAngle));
+              if (entry.glowMat) entry.glowMat.emissiveIntensity = 1.2 + Math.random() * 1.6;
+              if (Math.random() < 0.08 && entry.movingPart) {
+                const wp = new THREE.Vector3();
+                entry.movingPart.getWorldPosition(wp);
+                spawnArc(wp.x, wp.y, wp.z, wp.x + (Math.random() - 0.5) * 1.4, wp.y + Math.random() * 0.6, wp.z + (Math.random() - 0.5) * 1.4, 0x93c5fd, 0.12, 0.25);
+              }
+            } else if (wType === 'magnet') {
+              if (entry.glowMat) entry.glowMat.emissiveIntensity = 0.6 + Math.abs(Math.sin(elapsed * 2)) * 1.6;
+            } else if (wType === 'missiles') {
+              if (entry.movingPart) entry.movingPart.rotation.y = Math.sin(elapsed * 0.8) * 0.25;
             } else {
               entry.pivot.rotation.x = Math.sin(elapsed * 2.6) * 0.45 - 0.35;
             }
+          }
+          for (const f of workshopBotRig.fans) f.rotation.y += dt * 30;
+          if (workshopBotRig.isHover) workshopBotRig.bodyPivot.position.y = 0.1 + Math.sin(elapsed * 4) * 0.025;
+          if (workshopBotRig.shieldMesh) {
+            (workshopBotRig.shieldMesh.material as THREE.MeshBasicMaterial).opacity = 0.025 + Math.abs(Math.sin(elapsed * 1.5)) * 0.04;
           }
         }
         orbit.update();
@@ -556,7 +821,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
 
             const botWeapons = getBotWeapons(b.config);
             const botStyles = getBotChassisStyles(b.config);
-            const cfgKey = `${b.config.name}_${botStyles.join('+')}_${b.config.armor}_${botWeapons.join('+')}_${b.config.wheelLayout}_${b.config.drive}_${b.config.primaryColor}_${b.config.accentColor}`;
+            const cfgKey = `${b.config.name}_${botStyles.join('+')}_${b.config.armor}_${botWeapons.join('+')}_${b.config.wheelLayout}_${b.config.drive}_${b.config.primaryColor}_${b.config.accentColor}_${b.config.finish ?? ''}_${b.config.pattern ?? ''}_${b.config.glowColor ?? ''}_${b.config.underglow ? 1 : 0}_${b.config.raceNumber ?? ''}`;
             let entry = combatBotRigs.get(b.id);
             if (!entry || entry.configKey !== cfgKey) {
               if (entry) {
@@ -571,11 +836,51 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
                 textures.metalBrushBump,
               );
               scene.add(newRig.root);
-              entry = { rig: newRig, configKey: cfgKey };
+              const teamRing = new THREE.Mesh(teamRingGeo, ringEnemyMat);
+              teamRing.position.y = 0.035;
+              newRig.root.add(teamRing);
+              const bountyMarker = new THREE.Mesh(bountyGeo, bountyMat);
+              bountyMarker.position.y = 2.7;
+              bountyMarker.visible = false;
+              newRig.root.add(bountyMarker);
+              let bossCrown: THREE.Mesh | undefined;
+              if (b.isBoss) {
+                bossCrown = new THREE.Mesh(bossCrownGeo, bountyMat);
+                bossCrown.position.y = 2.3;
+                newRig.root.add(bossCrown);
+              }
+              entry = { rig: newRig, configKey: cfgKey, teamRing, bountyMarker, bossCrown };
               combatBotRigs.set(b.id, entry);
             }
 
             syncBotRigToState(entry.rig, b, dt, b.id === playerIdRef.current);
+            const playerTeamNow = snap.bots.find((x) => x.id === playerIdRef.current)?.team ?? 0;
+            entry.teamRing.visible = !b.isDead;
+            entry.teamRing.material =
+              b.id === playerIdRef.current ? ringPlayerMat : b.team === playerTeamNow ? ringAllyMat : ringEnemyMat;
+            entry.bountyMarker.visible = Boolean(b.isBounty) && !b.isDead;
+            if (entry.bountyMarker.visible) {
+              entry.bountyMarker.rotation.y = elapsed * 3;
+              entry.bountyMarker.position.y = 2.7 + b.y + Math.sin(elapsed * 4) * 0.15;
+            }
+            if (entry.bossCrown) {
+              entry.bossCrown.visible = !b.isDead;
+              entry.bossCrown.rotation.y = elapsed * 1.2;
+              entry.bossCrown.position.y = 2.3 + b.y;
+            }
+
+            // Tesla coil crackle while channeling
+            const teslaIdx = botWeapons.indexOf('tesla');
+            if (!b.isDead && teslaIdx >= 0 && b.weaponActives?.[teslaIdx] && Math.random() < 0.35) {
+              const tx = b.x + Math.cos(b.yaw) * 0.48 + Math.sin(b.yaw) * 0.12;
+              const tz = b.z - Math.sin(b.yaw) * 0.48 + Math.cos(b.yaw) * 0.12;
+              const ty = b.y + 1.5 * b.scale;
+              spawnArc(tx, ty, tz, tx + (Math.random() - 0.5) * 1.6, ty + (Math.random() - 0.3) * 0.8, tz + (Math.random() - 0.5) * 1.6, 0x93c5fd, 0.1, 0.3);
+            }
+            // Stun sparks
+            if (!b.isDead && (b.stunTimer ?? 0) > 0 && Math.random() < 0.4) {
+              effects.spawnSparks(b.x, b.y + 0.8, b.z, 2, 0x93c5fd, 4);
+            }
 
             // Live Flame Torch particle jet stream (only when flame weapon slot itself is active)
             const flameSlotIdx = botWeapons.indexOf('flame');
@@ -640,6 +945,42 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
             }
           });
 
+          // Missiles in flight
+          const liveMissiles = new Set<string>();
+          for (const p of snap.projectiles ?? []) {
+            liveMissiles.add(p.id);
+            const m = ensureMissileMesh(p.id);
+            m.position.set(p.x, p.y, p.z);
+            m.rotation.y = p.yaw;
+            if (Math.random() < 0.7) {
+              effects.spawnSmoke(p.x - Math.sin(p.yaw) * 0.35, p.y, p.z - Math.cos(p.yaw) * 0.35, 1, 0.45, 0.12);
+            }
+          }
+          missileMeshes.forEach((m, id) => {
+            if (!liveMissiles.has(id)) {
+              scene.remove(m);
+              missileMeshes.delete(id);
+            }
+          });
+
+          // King of the Hill zone
+          if (snap.hill) {
+            const hz = snap.hill;
+            const pTeam = snap.bots.find((x) => x.id === playerIdRef.current)?.team ?? 0;
+            hillGroup.visible = true;
+            hillGroup.position.x = THREE.MathUtils.damp(hillGroup.position.x, hz.x, 6, dt);
+            hillGroup.position.z = THREE.MathUtils.damp(hillGroup.position.z, hz.z, 6, dt);
+            hillGroup.scale.set(hz.radius, 1, hz.radius);
+            const hillHex = hz.contested ? 0xf59e0b : hz.owner === null ? 0xf8fafc : hz.owner === pTeam ? 0x34d399 : 0xef4444;
+            hillRingMat.color.setHex(hillHex);
+            hillDiscMat.color.setHex(hillHex);
+            hillBeamMat.color.setHex(hillHex);
+            hillRingMat.opacity = hz.contested ? 0.5 + Math.abs(Math.sin(elapsed * 10)) * 0.45 : 0.85;
+            hillBeamMat.opacity = 0.06 + Math.abs(Math.sin(elapsed * 2)) * 0.05;
+          } else {
+            hillGroup.visible = false;
+          }
+
           if (snap.events && snap.events.length > 0) {
             processEvents(snap.events);
           }
@@ -691,6 +1032,16 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
         }
       }
 
+      // Blackout arena event: dim the arena rig, leaving visors & glows to read the fight
+      const wantBlackout = modeRef.current === 'combat' && snapshotRef.current?.arenaEvent?.kind === 'blackout' ? 1 : 0;
+      blackoutLevel += (wantBlackout - blackoutLevel) * Math.min(1, dt * 2.5);
+      const dim = 1 - blackoutLevel * 0.82;
+      hemiLight.intensity = baseLightLevels.hemi * dim;
+      keyLight.intensity = baseLightLevels.key * dim;
+      rimLight.intensity = baseLightLevels.rim * (1 - blackoutLevel * 0.4);
+      softboxes.forEach((l, i) => (l.intensity = softboxBase[i] * dim));
+
+      updateArcs(dt);
       effects.update(dt);
       renderer.render(scene, camera);
 
@@ -724,6 +1075,12 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       combatBotRigs.forEach((e) => e.rig.dispose());
       arenaBuilt?.dispose();
       effects.dispose();
+      clearMissiles();
+      arcPool.forEach((a) => {
+        a.line.geometry.dispose();
+        a.mat.dispose();
+      });
+      overlayDisposables.forEach((d) => d.dispose());
       damageDecalPack.dispose();
       textures.dispose();
       pedGeo.dispose();

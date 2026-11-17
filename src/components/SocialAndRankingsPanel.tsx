@@ -9,13 +9,15 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type {
-  BatteryMode,
-  ClanInfo,
-  LeaderboardEntry,
-  PlayerProfile,
-  SeasonalEvent,
-  SkillTree,
+import {
+  ARENA_CATALOG,
+  getSeasonalEventProgress,
+  type BatteryMode,
+  type ClanInfo,
+  type LeaderboardEntry,
+  type PlayerProfile,
+  type SeasonalEvent,
+  type SkillTree,
 } from '../shared/types';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -344,17 +346,17 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
             <div>
               <div className="mb-4">
                 <h3 className="font-display text-lg font-bold text-white">
-                  Season 04 · Molten Foundry Community Events
+                  Season 05 · Storm Season Events
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Complete seasonal arena objectives to unlock Scrap and Skill Cores. Current Wins: {profile.wins}
+                  Each event counts wins in its own arena. Claim Scrap, Skill Cores and exclusive parts. Career wins: {profile.wins}
                 </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {seasonalEvents.map((ev) => {
                   const claimed = profile.claimedEvents.includes(ev.id);
-                  const progress = Math.min(ev.targetWins, profile.wins);
+                  const progress = getSeasonalEventProgress(profile, ev);
                   const ready = progress >= ev.targetWins && !claimed;
 
                   return (
@@ -370,7 +372,7 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
 
                       <div className="mt-4">
                         <div className="flex justify-between text-xs font-mono-tabular text-slate-300 mb-1">
-                          <span>Progress</span>
+                          <span>{ARENA_CATALOG[ev.arenaId]?.name ?? 'Arena'} wins</span>
                           <span>
                             {progress} / {ev.targetWins} Wins
                           </span>
@@ -384,6 +386,7 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
                         <div className="mt-3 flex items-center justify-between text-xs">
                           <span className="text-slate-300 font-mono-tabular">
                             +{ev.rewardScrap} Scrap · +{ev.rewardSkillPoints} SP
+                            {ev.rewardUnlock ? ` · ${ev.rewardUnlock.split(':')[1].replace(/_/g, ' ')}` : ''}
                           </span>
                           <button
                             type="button"

@@ -14,13 +14,21 @@ import {
   type BotDecalEntry,
   type DamageDecalPack,
 } from './damageDecals';
-import { createArmorMaterial, createBotNameplateTexture } from './materials';
+import {
+  createArmorMaterial,
+  createBotNameplateTexture,
+  createGlowTexture,
+  createLiveryTexture,
+  createRaceNumberTexture,
+} from './materials';
 
 export interface BuiltWeaponEntry {
   weaponId: WeaponId;
   pivot: THREE.Group;
   secondarySpinners: THREE.Object3D[];
   flameJets: THREE.Mesh[];
+  movingPart?: THREE.Object3D;
+  glowMat?: THREE.MeshStandardMaterial;
 }
 
 export interface BuiltBotRig {
@@ -37,6 +45,10 @@ export interface BuiltBotRig {
   decalPool: BotDecalEntry[];
   visorMat: THREE.MeshStandardMaterial;
   shadowPlane: THREE.Mesh;
+  fans: THREE.Object3D[];
+  underglow?: THREE.Mesh;
+  shieldMesh?: THREE.Mesh;
+  isHover: boolean;
   applyDamageDecal: (
     decalPack: DamageDecalPack,
     localPos: THREE.Vector3,
@@ -324,6 +336,56 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
     return geo;
   }
 
+  if (chassis === 'stinger') {
+    // Low arachnid body with tapered nose (tail spine added as a feature mesh)
+    shape.moveTo(-0.42, -1.02);
+    shape.lineTo(0.42, -1.02);
+    shape.lineTo(0.88, -0.42);
+    shape.lineTo(0.92, 0.5);
+    shape.lineTo(0.56, 0.95);
+    shape.lineTo(-0.56, 0.95);
+    shape.lineTo(-0.92, 0.5);
+    shape.lineTo(-0.88, -0.42);
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, {
+      steps: 3,
+      depth: 0.32,
+      bevelEnabled: true,
+      bevelThickness: 0.07,
+      bevelSize: 0.06,
+      bevelSegments: 3,
+      curveSegments: 8,
+    });
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(0, 0.14, 0);
+    geo.computeVertexNormals();
+    return geo;
+  }
+
+  if (chassis === 'dozer') {
+    // Wide industrial brick with chamfered rear corners
+    shape.moveTo(-0.98, -0.92);
+    shape.lineTo(0.98, -0.92);
+    shape.lineTo(1.0, 0.7);
+    shape.lineTo(0.78, 0.98);
+    shape.lineTo(-0.78, 0.98);
+    shape.lineTo(-1.0, 0.7);
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, {
+      steps: 3,
+      depth: 0.5,
+      bevelEnabled: true,
+      bevelThickness: 0.06,
+      bevelSize: 0.05,
+      bevelSegments: 2,
+      curveSegments: 6,
+    });
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(0, 0.16, 0);
+    geo.computeVertexNormals();
+    return geo;
+  }
+
   // Brawler frame (chamfered heavy rectangle)
   shape.moveTo(-0.78, -0.95);
   shape.lineTo(0.78, -0.95);
@@ -514,6 +576,60 @@ function appendHybridChassisStyle(
       bodyPivot.add(pincer);
       damageableMeshes.push(pincer);
     });
+  } else if (style === 'stinger') {
+    // Arched dorsal tail spine curling forward with a venom tip
+    const tailCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, 0.45, -0.82),
+      new THREE.Vector3(0, 0.95, -1.18),
+      new THREE.Vector3(0, 1.48, -0.9),
+      new THREE.Vector3(0, 1.62, -0.36),
+      new THREE.Vector3(0, 1.46, 0.02),
+    ]);
+    const tailGeo = new THREE.TubeGeometry(tailCurve, 24, 0.1, 8, false);
+    const segGeo = new THREE.TorusGeometry(0.13, 0.035, 6, 12);
+    const tipGeo = new THREE.ConeGeometry(0.1, 0.34, 8);
+    tipGeo.rotateX(Math.PI * 0.62);
+    geometriesToDispose.push(tailGeo, segGeo, tipGeo);
+    const tail = new THREE.Mesh(tailGeo, armorTrimMat);
+    tail.castShadow = castShadow;
+    bodyPivot.add(tail);
+    damageableMeshes.push(tail);
+    for (let i = 1; i < 5; i++) {
+      const t = i / 5;
+      const pt = tailCurve.getPoint(t);
+      const tan = tailCurve.getTangent(t);
+      const seg = new THREE.Mesh(segGeo, bareSteelMat);
+      seg.position.copy(pt);
+      seg.lookAt(pt.clone().add(tan));
+      bodyPivot.add(seg);
+    }
+    const tip = new THREE.Mesh(tipGeo, bareSteelMat);
+    tip.position.set(0, 1.36, 0.14);
+    bodyPivot.add(tip);
+  } else if (style === 'dozer') {
+    // Front plow blade with side wings and hydraulic rams
+    const bladeGeo = new THREE.BoxGeometry(2.08, 0.56, 0.12, 8, 3, 1);
+    const wingGeo = new THREE.BoxGeometry(0.42, 0.52, 0.1, 2, 3, 1);
+    const ramGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.62, 8);
+    ramGeo.rotateX(Math.PI / 2);
+    geometriesToDispose.push(bladeGeo, wingGeo, ramGeo);
+    const blade = new THREE.Mesh(bladeGeo, armorTrimMat);
+    blade.position.set(0, 0.32, 1.12);
+    blade.rotation.x = -0.28;
+    blade.castShadow = castShadow;
+    bodyPivot.add(blade);
+    damageableMeshes.push(blade);
+    [-1, 1].forEach((side) => {
+      const wing = new THREE.Mesh(wingGeo, armorTrimMat);
+      wing.position.set(side * 1.16, 0.32, 0.98);
+      wing.rotation.y = side * -0.55;
+      wing.castShadow = castShadow;
+      bodyPivot.add(wing);
+      const ram = new THREE.Mesh(ramGeo, bareSteelMat);
+      ram.position.set(side * 0.58, 0.5, 0.82);
+      ram.rotation.x = 0.4;
+      bodyPivot.add(ram);
+    });
   } else {
     // Brawler heavy side roll-cage bumper rails
     const railGeoL = new THREE.BoxGeometry(0.14, 0.16, 1.56, 2, 2, 6);
@@ -577,9 +693,10 @@ export function buildBotRig(
     roughness: 0.88,
     metalness: 0.06,
   });
+  const glowHex = config.glowColor || config.accentColor;
   const visorMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(config.accentColor),
-    emissive: new THREE.Color(config.accentColor),
+    color: new THREE.Color(glowHex),
+    emissive: new THREE.Color(glowHex),
     emissiveIntensity: 1.6,
     roughness: 0.2,
     metalness: 0.25,
@@ -609,7 +726,11 @@ export function buildBotRig(
 
   // 2. Top Power Core Cap + Glowing Visor Strip
   const deckTopY =
-    primaryChassis === 'monolith'
+    primaryChassis === 'dozer'
+      ? 0.72
+      : primaryChassis === 'stinger'
+        ? 0.56
+        : primaryChassis === 'monolith'
       ? 1.18
       : primaryChassis === 'behemoth'
         ? 0.78
@@ -666,12 +787,33 @@ export function buildBotRig(
   bodyPivot.add(nameplateMesh);
 
   // 4. Directional Armor Plates (subdivided & non-shared geometry so individual zones dent cleanly)
+  const finish = config.finish ?? 'gloss';
+  const pattern = config.pattern ?? 'none';
+  const liveryTex = pattern !== 'none' ? createLiveryTexture(pattern, config.primaryColor, config.accentColor) : undefined;
+  if (liveryTex) texturesToDispose.push(liveryTex);
+  const makeArmorMat = () =>
+    createArmorMaterial(config.armor, config.primaryColor, weaveTexture, metalBrushBump, finish, liveryTex, config.accentColor);
   const armorMaterials: Record<keyof ArmorZones, THREE.MeshPhysicalMaterial> = {
-    front: createArmorMaterial(config.armor, config.primaryColor, weaveTexture, metalBrushBump),
-    left: createArmorMaterial(config.armor, config.primaryColor, weaveTexture, metalBrushBump),
-    right: createArmorMaterial(config.armor, config.primaryColor, weaveTexture, metalBrushBump),
-    rear: createArmorMaterial(config.armor, config.primaryColor, weaveTexture, metalBrushBump),
+    front: makeArmorMat(),
+    left: makeArmorMat(),
+    right: makeArmorMat(),
+    rear: makeArmorMat(),
   };
+  // Livery also wraps the core hull (darkened so plates still pop)
+  if (liveryTex) {
+    const hullPaint = makeArmorMat();
+    hullPaint.color.setRGB(0.62, 0.64, 0.68);
+    hullPaint.userData.baseColor = `#${hullPaint.color.getHexString()}`;
+    materialsToDispose.push(hullPaint);
+    chassisMesh.material = hullPaint;
+  } else if (finish === 'chrome' || finish === 'pearl' || finish === 'neon') {
+    const hullPaint = makeArmorMat();
+    hullPaint.color.multiplyScalar(0.55);
+    hullPaint.userData.baseColor = `#${hullPaint.color.getHexString()}`;
+    if (finish === 'neon') hullPaint.emissiveIntensity = 0.18;
+    materialsToDispose.push(hullPaint);
+    chassisMesh.material = hullPaint;
+  }
   Object.values(armorMaterials).forEach((m) => materialsToDispose.push(m));
 
   const frontPlateGeo = new THREE.BoxGeometry(1.32, 0.22, 0.18, 8, 3, 2);
@@ -722,11 +864,94 @@ export function buildBotRig(
     );
   }
 
+  // Signature features for the newer core chassis (tail spine / plow blade)
+  if (primaryChassis === 'stinger' || primaryChassis === 'dozer') {
+    appendHybridChassisStyle(
+      primaryChassis,
+      bodyPivot,
+      chassisDarkMat,
+      armorMaterials.front,
+      bareSteelMat,
+      castShadow,
+      geometriesToDispose,
+      damageableMeshes,
+    );
+  }
+
+  // Race number roundels on both flanks
+  if (typeof config.raceNumber === 'number' && config.raceNumber >= 0) {
+    const numTex = createRaceNumberTexture(config.raceNumber, config.accentColor);
+    texturesToDispose.push(numTex);
+    const numGeo = new THREE.PlaneGeometry(0.34, 0.34);
+    const numMat = new THREE.MeshStandardMaterial({
+      map: numTex,
+      transparent: true,
+      roughness: 0.4,
+      metalness: 0.1,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    });
+    geometriesToDispose.push(numGeo);
+    materialsToDispose.push(numMat);
+    const sideX = (config.wheelLayout === '4wd_tucked' ? 0.98 : 0.9) + 0.085;
+    [-1, 1].forEach((side) => {
+      const num = new THREE.Mesh(numGeo, numMat);
+      num.position.set(side * sideX, 0.38, -0.05);
+      num.rotation.y = side * Math.PI * 0.5;
+      bodyPivot.add(num);
+    });
+  }
+
   // 5. Wheel Placements & Drive Functions
   const wheels: THREE.Object3D[] = [];
+  const fans: THREE.Object3D[] = [];
   const wheelLayout = config.wheelLayout || '4wd_wide';
+  const isHover = config.drive === 'hover';
 
-  if (config.drive === 'tracks') {
+  if (isHover) {
+    // Ducted-fan hover skirt: rubber curtain ring + four lift fans + glowing cushion
+    const skirtGeo = new THREE.TorusGeometry(1.0, 0.13, 8, 32);
+    skirtGeo.rotateX(Math.PI / 2);
+    skirtGeo.scale(1.02, 1, 1.12);
+    const ductGeo = new THREE.CylinderGeometry(0.27, 0.27, 0.16, 16, 1, true);
+    const fanGeo = new THREE.BoxGeometry(0.46, 0.02, 0.07);
+    const cushionGeo = new THREE.CircleGeometry(1.05, 32);
+    cushionGeo.rotateX(-Math.PI / 2);
+    const cushionMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(glowHex),
+      transparent: true,
+      opacity: 0.35,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    geometriesToDispose.push(skirtGeo, ductGeo, fanGeo, cushionGeo);
+    materialsToDispose.push(cushionMat);
+    const skirt = new THREE.Mesh(skirtGeo, rubberMat);
+    skirt.position.y = 0.12;
+    skirt.castShadow = castShadow;
+    bodyPivot.add(skirt);
+    const cushion = new THREE.Mesh(cushionGeo, cushionMat);
+    cushion.position.y = 0.03;
+    bodyPivot.add(cushion);
+    [
+      [-0.62, -0.55],
+      [0.62, -0.55],
+      [-0.62, 0.52],
+      [0.62, 0.52],
+    ].forEach(([fx, fz]) => {
+      const duct = new THREE.Mesh(ductGeo, bareSteelMat);
+      duct.position.set(fx * 1.25, 0.2, fz);
+      bodyPivot.add(duct);
+      const fan = new THREE.Group();
+      fan.position.set(fx * 1.25, 0.2, fz);
+      const b1 = new THREE.Mesh(fanGeo, chassisDarkMat);
+      const b2 = new THREE.Mesh(fanGeo, chassisDarkMat);
+      b2.rotation.y = Math.PI / 2;
+      fan.add(b1, b2);
+      bodyPivot.add(fan);
+      fans.push(fan);
+    });
+  } else if (config.drive === 'tracks') {
     const trackX = wheelLayout === 'outboard' ? 1.12 : wheelLayout === '4wd_tucked' ? 0.84 : 0.98;
     const trackGeo = new THREE.BoxGeometry(0.24, 0.34, 1.58);
     const treadRollerGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.28, 12);
@@ -839,6 +1064,8 @@ export function buildBotRig(
     const pivot = new THREE.Group();
     const spinners: THREE.Object3D[] = [];
     const flameJets: THREE.Mesh[] = [];
+    let movingPart: THREE.Object3D | undefined;
+    let glowMat: THREE.MeshStandardMaterial | undefined;
     bodyPivot.add(pivot);
 
     if (wId === 'vspinner') {
@@ -972,9 +1199,192 @@ export function buildBotRig(
         pivot.add(barrel, tank, nozzle, jet);
         flameJets.push(jet);
       }
+    } else if (wId === 'drum') {
+      // Eggbeater drum: stubby high-inertia horizontal-axis drum with impact teeth
+      const low = centerFrontTaken;
+      centerFrontTaken = true;
+      pivot.position.set(0, low ? 0.22 : 0.34, low ? 1.22 : 1.1);
+      const drumGeo = new THREE.CylinderGeometry(0.27, 0.27, 1.02, 14);
+      drumGeo.rotateZ(Math.PI / 2);
+      const toothGeo = new THREE.BoxGeometry(0.92, 0.12, 0.16);
+      const capGeo = new THREE.CylinderGeometry(0.16, 0.16, 1.16, 10);
+      capGeo.rotateZ(Math.PI / 2);
+      geometriesToDispose.push(drumGeo, toothGeo, capGeo);
+      const drum = new THREE.Mesh(drumGeo, chassisDarkMat);
+      drum.castShadow = castShadow;
+      pivot.add(drum, new THREE.Mesh(capGeo, bareSteelMat));
+      for (let t = 0; t < 3; t++) {
+        const a = (t / 3) * Math.PI * 2;
+        const tooth = new THREE.Mesh(toothGeo, weaponAccentMat);
+        tooth.position.set(0, Math.sin(a) * 0.3, Math.cos(a) * 0.3);
+        tooth.rotation.x = -a;
+        tooth.castShadow = castShadow;
+        pivot.add(tooth);
+      }
+      const armGeo = new THREE.BoxGeometry(0.1, 0.18, 0.5);
+      geometriesToDispose.push(armGeo);
+      [-0.58, 0.58].forEach((ax) => {
+        const arm = new THREE.Mesh(armGeo, bareSteelMat);
+        arm.position.set(ax, low ? 0.24 : 0.34, low ? 1.0 : 0.88);
+        bodyPivot.add(arm);
+      });
+    } else if (wId === 'jaws') {
+      // Hydraulic crusher beak: fixed lower mandible + pivoting upper jaw
+      const side = centerFrontTaken;
+      centerFrontTaken = true;
+      pivot.position.set(0, side ? 0.62 : 0.5, side ? 0.86 : 0.92);
+      const lowerGeo = new THREE.BoxGeometry(0.66, 0.1, 0.72);
+      const upperGeo = new THREE.BoxGeometry(0.62, 0.12, 0.78);
+      const fangGeo = new THREE.ConeGeometry(0.06, 0.18, 6);
+      const hingeGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.76, 10);
+      hingeGeo.rotateZ(Math.PI / 2);
+      geometriesToDispose.push(lowerGeo, upperGeo, fangGeo, hingeGeo);
+      const lower = new THREE.Mesh(lowerGeo, weaponAccentMat);
+      lower.position.set(0, -0.32, 0.34);
+      lower.castShadow = castShadow;
+      const hinge = new THREE.Mesh(hingeGeo, bareSteelMat);
+      const upper = new THREE.Group();
+      const upperPlate = new THREE.Mesh(upperGeo, weaponAccentMat);
+      upperPlate.position.set(0, 0, 0.38);
+      upperPlate.castShadow = castShadow;
+      upper.add(upperPlate);
+      [-0.22, 0, 0.22].forEach((fxp) => {
+        const fang = new THREE.Mesh(fangGeo, bareSteelMat);
+        fang.position.set(fxp, -0.13, 0.66);
+        fang.rotation.x = Math.PI;
+        upper.add(fang);
+        const fangLow = new THREE.Mesh(fangGeo, bareSteelMat);
+        fangLow.position.set(fxp, -0.2, 0.62);
+        pivot.add(fangLow);
+      });
+      pivot.add(lower, hinge, upper);
+      movingPart = upper;
+    } else if (wId === 'tesla') {
+      // Tesla coil tower: insulated base, stacked toroids and a crackling top sphere
+      pivot.position.set(0.48, deckTopY - 0.02, 0.12);
+      const baseGeo = new THREE.CylinderGeometry(0.16, 0.22, 0.24, 10);
+      const stemGeo = new THREE.CylinderGeometry(0.06, 0.08, 0.62, 8);
+      const ringGeo = new THREE.TorusGeometry(0.16, 0.035, 6, 16);
+      ringGeo.rotateX(Math.PI / 2);
+      const orbGeo = new THREE.SphereGeometry(0.16, 16, 12);
+      geometriesToDispose.push(baseGeo, stemGeo, ringGeo, orbGeo);
+      const coilGlow = new THREE.MeshStandardMaterial({
+        color: 0x93c5fd,
+        emissive: 0x60a5fa,
+        emissiveIntensity: 0.8,
+        roughness: 0.2,
+        metalness: 0.3,
+      });
+      materialsToDispose.push(coilGlow);
+      const base = new THREE.Mesh(baseGeo, chassisDarkMat);
+      base.position.y = 0.12;
+      const stem = new THREE.Mesh(stemGeo, bareSteelMat);
+      stem.position.y = 0.52;
+      pivot.add(base, stem);
+      const rings = new THREE.Group();
+      [0.36, 0.5, 0.64].forEach((ry, i) => {
+        const ring = new THREE.Mesh(ringGeo, weaponAccentMat);
+        ring.position.y = ry;
+        ring.scale.setScalar(1 - i * 0.12);
+        rings.add(ring);
+      });
+      pivot.add(rings);
+      const orb = new THREE.Mesh(orbGeo, coilGlow);
+      orb.position.y = 0.9;
+      orb.castShadow = castShadow;
+      pivot.add(orb);
+      spinners.push(rings);
+      glowMat = coilGlow;
+      movingPart = orb;
+    } else if (wId === 'missiles') {
+      // Shoulder rocket pod: 2x3 launch tubes angled slightly skyward
+      pivot.position.set(-0.5, deckTopY + 0.04, -0.12);
+      const podGeo = new THREE.BoxGeometry(0.46, 0.32, 0.62);
+      const tubeGeo = new THREE.CylinderGeometry(0.065, 0.065, 0.66, 10, 1, true);
+      tubeGeo.rotateX(Math.PI / 2);
+      const noseGeo = new THREE.ConeGeometry(0.05, 0.12, 8);
+      noseGeo.rotateX(Math.PI / 2);
+      const mountGeo = new THREE.CylinderGeometry(0.08, 0.1, 0.2, 8);
+      geometriesToDispose.push(podGeo, tubeGeo, noseGeo, mountGeo);
+      const mount = new THREE.Mesh(mountGeo, bareSteelMat);
+      mount.position.y = -0.06;
+      pivot.add(mount);
+      const pod = new THREE.Group();
+      pod.position.y = 0.2;
+      pod.rotation.x = -0.22;
+      const box = new THREE.Mesh(podGeo, weaponAccentMat);
+      box.castShadow = castShadow;
+      pod.add(box);
+      for (let r = 0; r < 2; r++) {
+        for (let c = 0; c < 3; c++) {
+          const tx = (c - 1) * 0.14;
+          const ty = (r - 0.5) * 0.14;
+          const tube = new THREE.Mesh(tubeGeo, chassisDarkMat);
+          tube.position.set(tx, ty, 0.02);
+          const nose = new THREE.Mesh(noseGeo, visorMat);
+          nose.position.set(tx, ty, 0.3);
+          pod.add(tube, nose);
+        }
+      }
+      pivot.add(pod);
+      movingPart = pod;
+    } else if (wId === 'lance') {
+      // Pneumatic lance: sleeve cylinder with a sliding armor-piercing spike
+      const side = centerFrontTaken;
+      centerFrontTaken = true;
+      pivot.position.set(side ? -0.6 : 0, side ? 0.5 : 0.36, side ? 0.72 : 0.78);
+      const sleeveGeo = new THREE.CylinderGeometry(0.11, 0.13, 0.7, 12);
+      sleeveGeo.rotateX(Math.PI / 2);
+      const rodGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.9, 10);
+      rodGeo.rotateX(Math.PI / 2);
+      const spikeGeo = new THREE.ConeGeometry(0.11, 0.4, 10);
+      spikeGeo.rotateX(Math.PI / 2);
+      geometriesToDispose.push(sleeveGeo, rodGeo, spikeGeo);
+      const sleeve = new THREE.Mesh(sleeveGeo, chassisDarkMat);
+      sleeve.castShadow = castShadow;
+      const rodGroup = new THREE.Group();
+      const rod = new THREE.Mesh(rodGeo, bareSteelMat);
+      rod.position.z = 0.36;
+      const spike = new THREE.Mesh(spikeGeo, weaponAccentMat);
+      spike.position.z = 0.98;
+      spike.castShadow = castShadow;
+      rodGroup.add(rod, spike);
+      pivot.add(sleeve, rodGroup);
+      movingPart = rodGroup;
+    } else if (wId === 'magnet') {
+      // Grapple electromagnet dish on an articulated arm
+      const side = centerFrontTaken;
+      centerFrontTaken = true;
+      pivot.position.set(side ? 0.62 : 0, side ? 0.6 : 0.5, side ? 0.66 : 0.96);
+      const armGeo = new THREE.BoxGeometry(0.12, 0.12, 0.42);
+      const dishGeo = new THREE.CylinderGeometry(0.3, 0.24, 0.12, 20);
+      dishGeo.rotateX(Math.PI / 2);
+      const faceGeo = new THREE.CircleGeometry(0.24, 20);
+      const coilGeo = new THREE.TorusGeometry(0.17, 0.03, 6, 20);
+      geometriesToDispose.push(armGeo, dishGeo, faceGeo, coilGeo);
+      const magGlow = new THREE.MeshStandardMaterial({
+        color: 0xef4444,
+        emissive: 0xdc2626,
+        emissiveIntensity: 0.4,
+        roughness: 0.3,
+        metalness: 0.4,
+      });
+      materialsToDispose.push(magGlow);
+      const arm = new THREE.Mesh(armGeo, bareSteelMat);
+      arm.position.z = -0.12;
+      const dish = new THREE.Mesh(dishGeo, chassisDarkMat);
+      dish.position.z = 0.14;
+      dish.castShadow = castShadow;
+      const face = new THREE.Mesh(faceGeo, magGlow);
+      face.position.z = 0.205;
+      const coil = new THREE.Mesh(coilGeo, weaponAccentMat);
+      coil.position.z = 0.21;
+      pivot.add(arm, dish, face, coil);
+      glowMat = magGlow;
     } else {
       // Overhead Hammer (Dorsal roof mount — stacks cleanly with any front weapon)
-      const hammerY = primaryChassis === 'monolith' ? 1.16 : primaryChassis === 'behemoth' ? 0.76 : 0.64;
+      const hammerY =
+        primaryChassis === 'monolith' ? 1.16 : primaryChassis === 'behemoth' || primaryChassis === 'dozer' ? 0.76 : 0.64;
       pivot.position.set(0, hammerY, 0.08);
       const shaftGeo = new THREE.BoxGeometry(0.14, 0.14, 1.08);
       const headGeo = new THREE.BoxGeometry(0.54, 0.34, 0.34);
@@ -998,6 +1408,8 @@ export function buildBotRig(
       pivot,
       secondarySpinners: spinners,
       flameJets,
+      movingPart,
+      glowMat,
     });
   }
 
@@ -1019,6 +1431,48 @@ export function buildBotRig(
   shadowPlane.position.y = 0.02;
   root.add(shadowPlane);
 
+  // Neon underglow pool projected on the deck
+  let underglow: THREE.Mesh | undefined;
+  if (config.underglow) {
+    const glowTex = createGlowTexture();
+    texturesToDispose.push(glowTex);
+    const ugGeo = new THREE.PlaneGeometry(3.2, 3.6);
+    ugGeo.rotateX(-Math.PI / 2);
+    const ugMat = new THREE.MeshBasicMaterial({
+      map: glowTex,
+      color: new THREE.Color(glowHex),
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    geometriesToDispose.push(ugGeo);
+    materialsToDispose.push(ugMat);
+    underglow = new THREE.Mesh(ugGeo, ugMat);
+    underglow.position.y = 0.03;
+    root.add(underglow);
+  }
+
+  // Plasma Barrier force-field bubble (flares when absorbing hits)
+  let shieldMesh: THREE.Mesh | undefined;
+  if (config.armor === 'plasma') {
+    const shGeo = new THREE.SphereGeometry(1.42, 24, 16);
+    shGeo.scale(1, 0.62, 1.12);
+    const shMat = new THREE.MeshBasicMaterial({
+      color: 0x818cf8,
+      transparent: true,
+      opacity: 0.05,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    geometriesToDispose.push(shGeo);
+    materialsToDispose.push(shMat);
+    shieldMesh = new THREE.Mesh(shGeo, shMat);
+    shieldMesh.position.y = 0.42;
+    bodyPivot.add(shieldMesh);
+  }
+
   return {
     root,
     bodyPivot,
@@ -1033,6 +1487,10 @@ export function buildBotRig(
     decalPool,
     visorMat,
     shadowPlane,
+    fans,
+    underglow,
+    shieldMesh,
+    isHover,
     applyDamageDecal: (decalPack, localPos, localNormal, force, kind) => {
       applyImpactToBotMeshes({
         bodyPivot,
@@ -1066,8 +1524,22 @@ export function syncBotRigToState(
 ) {
   rig.root.position.set(state.x, 0, state.z);
   rig.root.scale.setScalar(state.scale || 1.0);
-  rig.bodyPivot.position.y = state.y;
+  const nowT = performance.now() * 0.001;
+  rig.bodyPivot.position.y = state.y + (rig.isHover && !state.isDead ? 0.1 + Math.sin(nowT * 4.2 + state.x) * 0.025 : 0);
   rig.bodyPivot.rotation.set(state.pitch, state.yaw, state.roll, 'YXZ');
+  for (const f of rig.fans) {
+    f.rotation.y += dt * (state.isDead ? 2 : 38);
+  }
+  if (rig.underglow) {
+    const mat = rig.underglow.material as THREE.MeshBasicMaterial;
+    mat.opacity = state.isDead ? 0 : Math.max(0.2, 0.75 - state.y * 0.2) * (0.85 + Math.sin(nowT * 3) * 0.15);
+  }
+  if (rig.shieldMesh) {
+    const mat = rig.shieldMesh.material as THREE.MeshBasicMaterial;
+    const flash = state.shieldFlash ?? 0;
+    rig.shieldMesh.visible = !state.isDead;
+    mat.opacity = flash > 0 ? 0.12 + flash * 1.2 : 0.035 + Math.sin(nowT * 2.4) * 0.015;
+  }
 
   rig.shadowPlane.position.y = 0.025;
   const heightFade = Math.max(0.15, 1 - state.y * 0.18);
@@ -1105,6 +1577,23 @@ export function syncBotRigToState(
       }
     } else if (entry.weaponId === 'hammer') {
       entry.pivot.rotation.x = spin > 0.5 ? -0.95 : spin * 1.3;
+    } else if (entry.weaponId === 'drum') {
+      entry.pivot.rotation.x = angle * 1.4;
+    } else if (entry.weaponId === 'jaws') {
+      if (entry.movingPart) entry.movingPart.rotation.x = spin > 0.45 ? 0.05 : -0.55 + spin * 0.6;
+    } else if (entry.weaponId === 'lance') {
+      if (entry.movingPart) entry.movingPart.position.z = spin > 0.55 ? 1.25 * spin : spin * 0.6;
+    } else if (entry.weaponId === 'missiles') {
+      if (entry.movingPart) entry.movingPart.position.z = -spin * 0.12;
+    } else if (entry.weaponId === 'tesla') {
+      entry.secondarySpinners.forEach((r) => (r.rotation.y = angle));
+      if (entry.glowMat) {
+        entry.glowMat.emissiveIntensity = active && !state.isDead ? 2.4 + Math.random() * 2.2 : 0.7;
+      }
+    } else if (entry.weaponId === 'magnet') {
+      if (entry.glowMat) {
+        entry.glowMat.emissiveIntensity = spin > 0.3 ? 2.8 * spin : 0.35 + Math.sin(nowT * 3) * 0.1;
+      }
     }
   });
 
@@ -1117,7 +1606,7 @@ export function syncBotRigToState(
     } else {
       plate.visible = true;
       const tint = 0.45 + ratio * 0.55;
-      mat.color.set(state.config.primaryColor).multiplyScalar(tint);
+      mat.color.set((mat.userData.baseColor as string | undefined) ?? state.config.primaryColor).multiplyScalar(tint);
       mat.roughness = Math.min(0.85, 0.25 + (1 - ratio) * 0.5);
     }
   });
@@ -1129,9 +1618,14 @@ export function syncBotRigToState(
     rig.visorMat.emissiveIntensity = 2.6;
     rig.visorMat.color.setHex(0x38bdf8);
     rig.visorMat.emissive.setHex(0x38bdf8);
+  } else if ((state.stunTimer ?? 0) > 0) {
+    rig.visorMat.emissiveIntensity = Math.random() < 0.5 ? 0.15 : 2.8;
+    rig.visorMat.color.setHex(0x93c5fd);
+    rig.visorMat.emissive.setHex(0x93c5fd);
   } else {
+    const glow = state.config.glowColor || state.config.accentColor;
     rig.visorMat.emissiveIntensity = isPlayer ? 1.8 : 1.3;
-    rig.visorMat.color.set(state.config.accentColor);
-    rig.visorMat.emissive.set(state.config.accentColor);
+    rig.visorMat.color.set(glow);
+    rig.visorMat.emissive.set(glow);
   }
 }

@@ -19,6 +19,12 @@ const WEAPON_SHORT_NAME: Record<WeaponId, string> = {
   flipper: 'Flipper',
   hammer: 'Hammer',
   flame: 'Flame',
+  drum: 'Drum',
+  jaws: 'Jaws',
+  tesla: 'Tesla',
+  missiles: 'Rockets',
+  lance: 'Lance',
+  magnet: 'Magnet',
 };
 
 export const TouchControls: React.FC<TouchControlsProps> = ({

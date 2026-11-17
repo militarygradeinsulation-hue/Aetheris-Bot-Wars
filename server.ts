@@ -23,7 +23,9 @@ import {
   type PlayerInputState,
   type SeasonalEvent,
   type SkillTree,
+  ARENA_CATALOG,
 } from './src/shared/types.ts';
+import { SEASON_EVENTS } from './src/shared/season.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -126,7 +128,7 @@ function seedStore(): PersistentStore {
           {
             id: 'c1',
             sender: 'Kaelen Vance',
-            text: 'Season 04 Foundry bracket opens tonight. Check your flank armor.',
+            text: 'Season 05 Storm bracket opens tonight. Check your flank armor.',
             timestamp: now,
           },
         ],
@@ -172,44 +174,7 @@ function seedStore(): PersistentStore {
         chat: [],
       },
     ],
-    seasonalEvents: [
-      {
-        id: 's4_foundry_clash',
-        seasonName: 'Season 04 · Molten Foundry',
-        title: 'Foundry Crucible Qualifier',
-        description: 'Win 3 arena matches in Molten Foundry to earn prototype alloy scrap and a Skill Core.',
-        arenaId: 'foundry',
-        modifierLabel: 'Active Floor Saws & Explosive Drums',
-        targetWins: 3,
-        rewardScrap: 450,
-        rewardSkillPoints: 2,
-        endsAt: '2026-12-01T00:00:00Z',
-      },
-      {
-        id: 's4_cryo_drift',
-        seasonName: 'Season 04 · Molten Foundry',
-        title: 'Sub-Zero Drift Masters',
-        description: 'Adapt to low-friction ice physics in the Cryo Pit and score 5 total wins.',
-        arenaId: 'cryo',
-        modifierLabel: 'Low Traction Ice + Launch Pads',
-        targetWins: 5,
-        rewardScrap: 650,
-        rewardSkillPoints: 3,
-        endsAt: '2026-12-08T00:00:00Z',
-      },
-      {
-        id: 's4_reactor_surge',
-        seasonName: 'Season 04 · Molten Foundry',
-        title: 'Overcharge Reactor Raid',
-        description: 'Harness +55% energy recharge inside the EMP Reactor chamber for 8 total wins.',
-        arenaId: 'reactor',
-        modifierLabel: '+55% Energy Regen · Periodic EMP',
-        targetWins: 8,
-        rewardScrap: 900,
-        rewardSkillPoints: 4,
-        endsAt: '2026-12-15T00:00:00Z',
-      },
-    ],
+    seasonalEvents: SEASON_EVENTS,
   };
 }
 
@@ -217,7 +182,10 @@ function loadStore(): PersistentStore {
   try {
     if (fs.existsSync(STORE_PATH)) {
       const raw = fs.readFileSync(STORE_PATH, 'utf-8');
-      return JSON.parse(raw) as PersistentStore;
+      const parsed = JSON.parse(raw) as PersistentStore;
+      // Roll stored data forward to the current season's event list
+      parsed.seasonalEvents = SEASON_EVENTS;
+      return parsed;
     }
   } catch {
     // Fallback to fresh seed
@@ -551,7 +519,7 @@ async function startServer() {
           removePlayerFromRoom(ws);
           const mode = msg.mode === 'brawl_4bot' ? 'brawl_4bot' : 'duel_1v1';
           const maxHumans = mode === 'duel_1v1' ? 2 : 4;
-          const arenaId: ArenaId = msg.arenaId || 'foundry';
+          const arenaId: ArenaId = msg.arenaId && ARENA_CATALOG[msg.arenaId] ? msg.arenaId : 'foundry';
           const rawDur = Number(msg.durationSeconds ?? 180);
           const durationSeconds = [90, 150, 180, 300].includes(rawDur) ? rawDur : 180;
 

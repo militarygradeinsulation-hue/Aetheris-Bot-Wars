@@ -4,10 +4,13 @@ import {
   DEFAULT_BOT_CONFIG,
   DEFAULT_SKILLS,
   DRIVE_CATALOG,
+  FINISH_CATALOG,
   getBotChassisStyles,
   getBotWeapons,
   type PlayerProfile,
   WEAPON_CATALOG,
+  PATTERN_CATALOG,
+  type BotConfig,
   WHEEL_LAYOUT_CATALOG,
 } from '../shared/types';
 
@@ -36,7 +39,29 @@ function makeDefaultProfile(): PlayerProfile {
     batteryMode: 'balanced',
     muted: false,
     touchControlsMode: 'auto',
+    ownedParts: [],
+    campaignStars: {},
+    arenaWins: {},
+    bestSurvivalWave: 0,
+    savedLoadouts: [],
   };
+}
+
+/** Repairs a stored or incoming bot config so every part id resolves in the current catalogs. */
+export function sanitizeBotConfig(raw: Partial<BotConfig> | undefined, fallback: BotConfig): BotConfig {
+  const mergedBot: BotConfig = { ...fallback, ...(raw || {}) };
+  if (!CHASSIS_CATALOG[mergedBot.chassis]) mergedBot.chassis = fallback.chassis;
+  if (!ARMOR_CATALOG[mergedBot.armor]) mergedBot.armor = fallback.armor;
+  if (!WEAPON_CATALOG[mergedBot.weapon]) mergedBot.weapon = fallback.weapon;
+  if (!WHEEL_LAYOUT_CATALOG[mergedBot.wheelLayout]) mergedBot.wheelLayout = fallback.wheelLayout;
+  if (!DRIVE_CATALOG[mergedBot.drive]) mergedBot.drive = fallback.drive;
+  if (mergedBot.finish && !FINISH_CATALOG[mergedBot.finish]) mergedBot.finish = 'gloss';
+  if (mergedBot.pattern && !PATTERN_CATALOG[mergedBot.pattern]) mergedBot.pattern = 'none';
+  mergedBot.weapons = getBotWeapons(mergedBot);
+  mergedBot.weapon = mergedBot.weapons[0];
+  mergedBot.chassisStyles = getBotChassisStyles(mergedBot);
+  mergedBot.chassis = mergedBot.chassisStyles[0];
+  return mergedBot;
 }
 
 export function loadPlayerProfile(): PlayerProfile {
@@ -45,21 +70,20 @@ export function loadPlayerProfile(): PlayerProfile {
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<PlayerProfile>;
       const fallback = makeDefaultProfile();
-      const mergedBot = { ...fallback.botConfig, ...(parsed.botConfig || {}) };
-      if (!CHASSIS_CATALOG[mergedBot.chassis]) mergedBot.chassis = fallback.botConfig.chassis;
-      if (!ARMOR_CATALOG[mergedBot.armor]) mergedBot.armor = fallback.botConfig.armor;
-      if (!WEAPON_CATALOG[mergedBot.weapon]) mergedBot.weapon = fallback.botConfig.weapon;
-      if (!WHEEL_LAYOUT_CATALOG[mergedBot.wheelLayout]) mergedBot.wheelLayout = fallback.botConfig.wheelLayout;
-      if (!DRIVE_CATALOG[mergedBot.drive]) mergedBot.drive = fallback.botConfig.drive;
-      mergedBot.weapons = getBotWeapons(mergedBot);
-      mergedBot.weapon = mergedBot.weapons[0];
-      mergedBot.chassisStyles = getBotChassisStyles(mergedBot);
-      mergedBot.chassis = mergedBot.chassisStyles[0];
+      const mergedBot = sanitizeBotConfig(parsed.botConfig, fallback.botConfig);
+      const loadouts = Array.isArray(parsed.savedLoadouts)
+        ? parsed.savedLoadouts.slice(0, 3).map((l) => sanitizeBotConfig(l, fallback.botConfig))
+        : [];
 
       return {
         ...fallback,
         ...parsed,
         botConfig: mergedBot,
+        savedLoadouts: loadouts,
+        ownedParts: Array.isArray(parsed.ownedParts) ? parsed.ownedParts : [],
+        campaignStars: parsed.campaignStars ?? {},
+        arenaWins: parsed.arenaWins ?? {},
+        bestSurvivalWave: parsed.bestSurvivalWave ?? 0,
         skills: { ...fallback.skills, ...(parsed.skills || {}) },
       };
     }

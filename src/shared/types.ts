@@ -10,16 +10,100 @@ export type ChassisId =
   | 'ufo'
   | 'tripod'
   | 'monolith'
-  | 'claw';
-export type ArmorId = 'titanium' | 'ceramic' | 'kevlar' | 'steel';
-export type WeaponId = 'vspinner' | 'hbar' | 'sawblade' | 'flipper' | 'hammer' | 'flame';
+  | 'claw'
+  | 'stinger'
+  | 'dozer';
+export type ArmorId = 'titanium' | 'ceramic' | 'kevlar' | 'steel' | 'tungsten' | 'nanoweave' | 'reactive' | 'plasma';
+export type WeaponId =
+  | 'vspinner'
+  | 'hbar'
+  | 'sawblade'
+  | 'flipper'
+  | 'hammer'
+  | 'flame'
+  | 'drum'
+  | 'jaws'
+  | 'tesla'
+  | 'missiles'
+  | 'lance'
+  | 'magnet';
+export type WeaponKind = 'rotor' | 'channel' | 'strike' | 'projectile';
 export type WheelLayoutId = '4wd_wide' | '4wd_tucked' | '6wd_inline' | 'rear_trike' | 'outboard';
-export type DriveId = 'omni' | 'tracks' | 'turbo' | 'heavy_torque' | 'mecanum';
+export type DriveId = 'omni' | 'tracks' | 'turbo' | 'heavy_torque' | 'mecanum' | 'hover';
 export type BotWeightClass = 'Lightweight' | 'Middleweight' | 'Heavyweight' | 'Titan';
-export type ArenaId = 'foundry' | 'cryo' | 'reactor' | 'colosseum';
-export type GameMode = 'duel_1v1' | 'brawl_4bot' | 'gauntlet' | 'practice' | 'multiplayer';
+export type ArenaId = 'foundry' | 'cryo' | 'reactor' | 'colosseum' | 'skyforge' | 'junkyard' | 'storm';
+export type GameMode =
+  | 'duel_1v1'
+  | 'brawl_4bot'
+  | 'gauntlet'
+  | 'practice'
+  | 'multiplayer'
+  | 'team_2v2'
+  | 'team_3v3'
+  | 'survival'
+  | 'king_hill'
+  | 'boss_raid'
+  | 'campaign';
 export type TimedBattleDuration = 90 | 150 | 180 | 300;
 export type BatteryMode = 'eco' | 'balanced' | 'ultra';
+
+// ---- Livery / cosmetic customization ----
+export type FinishId = 'gloss' | 'matte' | 'chrome' | 'carbon' | 'pearl' | 'neon';
+export type PatternId = 'none' | 'stripes' | 'flames' | 'digital_camo' | 'hex' | 'checker' | 'tiger' | 'circuit';
+
+export const FINISH_CATALOG: Record<FinishId, { id: FinishId; label: string; subtitle: string }> = {
+  gloss: { id: 'gloss', label: 'Factory Gloss', subtitle: 'Clearcoated paint with crisp reflections' },
+  matte: { id: 'matte', label: 'Stealth Matte', subtitle: 'Flat low-sheen coat that drinks light' },
+  chrome: { id: 'chrome', label: 'Mirror Chrome', subtitle: 'Polished plating that mirrors the arena' },
+  carbon: { id: 'carbon', label: 'Raw Carbon', subtitle: 'Exposed woven composite under resin' },
+  pearl: { id: 'pearl', label: 'Pearl Shift', subtitle: 'Iridescent coat that shifts hue with angle' },
+  neon: { id: 'neon', label: 'Neon Edge', subtitle: 'Self-lit paint that glows in the dark' },
+};
+
+export const PATTERN_CATALOG: Record<PatternId, { id: PatternId; label: string }> = {
+  none: { id: 'none', label: 'Solid' },
+  stripes: { id: 'stripes', label: 'Racing Stripes' },
+  flames: { id: 'flames', label: 'Hot Rod Flames' },
+  digital_camo: { id: 'digital_camo', label: 'Digital Camo' },
+  hex: { id: 'hex', label: 'Hex Mesh' },
+  checker: { id: 'checker', label: 'Checkered Flag' },
+  tiger: { id: 'tiger', label: 'Tiger Slash' },
+  circuit: { id: 'circuit', label: 'Circuit Trace' },
+};
+
+// ---- Match modifiers (mutators) ----
+export type MatchModifierId =
+  | 'low_gravity'
+  | 'double_damage'
+  | 'armor_off'
+  | 'no_hazards'
+  | 'chaos_events'
+  | 'giants'
+  | 'turbo'
+  | 'vampire';
+
+export const MATCH_MODIFIERS: Record<MatchModifierId, { id: MatchModifierId; label: string; note: string }> = {
+  low_gravity: { id: 'low_gravity', label: 'Low Gravity', note: 'Flips send bots sky-high' },
+  double_damage: { id: 'double_damage', label: 'Double Damage', note: 'Every hit counts twice' },
+  armor_off: { id: 'armor_off', label: 'Naked Chassis', note: 'All armor zones start stripped' },
+  no_hazards: { id: 'no_hazards', label: 'Clean Floor', note: 'Arena hazards disabled' },
+  chaos_events: { id: 'chaos_events', label: 'Chaos Mode', note: 'Arena events fire 3x as often' },
+  giants: { id: 'giants', label: 'Giant Bots', note: 'Every bot scaled up 25%' },
+  turbo: { id: 'turbo', label: 'Turbo Motors', note: '+30% speed for everyone' },
+  vampire: { id: 'vampire', label: 'Vampire Cores', note: 'Heal 20% of damage dealt' },
+};
+
+// ---- In-match arena events ----
+export type ArenaEventKind = 'supply_drop' | 'power_surge' | 'low_gravity' | 'hazard_frenzy' | 'blackout' | 'bounty';
+
+export const ARENA_EVENT_INFO: Record<ArenaEventKind, { label: string; note: string; duration: number }> = {
+  supply_drop: { label: 'Supply Drop', note: 'Repair and energy crates incoming', duration: 6 },
+  power_surge: { label: 'Power Surge', note: 'Energy regen x2.5, weapons hit 15% harder', duration: 10 },
+  low_gravity: { label: 'Gravity Failure', note: 'Arena gravity cut to 40%', duration: 10 },
+  hazard_frenzy: { label: 'Hazard Frenzy', note: 'All traps cycle 70% faster', duration: 12 },
+  blackout: { label: 'Blackout', note: 'Arena lights down, hunt by visor glow', duration: 10 },
+  bounty: { label: 'Bounty Target', note: 'Marked bot takes +40% damage', duration: 14 },
+};
 
 export const TIMED_BATTLE_OPTIONS: Array<{ seconds: TimedBattleDuration; label: string; tag: string }> = [
   { seconds: 90, label: '1:30', tag: 'Blitz' },
@@ -39,6 +123,15 @@ export interface BotConfig {
   drive: DriveId;
   primaryColor: string;
   accentColor: string;
+  finish?: FinishId;
+  pattern?: PatternId;
+  glowColor?: string;
+  underglow?: boolean;
+  raceNumber?: number;
+}
+
+export function getWeaponKind(id: WeaponId): WeaponKind {
+  return WEAPON_CATALOG[id]?.kind ?? 'strike';
 }
 
 export function getBotWeapons(config: BotConfig): WeaponId[] {
@@ -154,11 +247,57 @@ export interface BotPhysicsState {
   kos: number;
   isBot: boolean;
   team: number;
+  // Status effects & armor trait state
+  stunTimer?: number;
+  pinnedTimer?: number;
+  lastHitAt?: number;
+  shieldFlash?: number;
+  teslaDmgCooldown?: number;
+  isBoss?: boolean;
+  isBounty?: boolean;
+  dmgMult?: number;
+  speedMult?: number;
+}
+
+export interface Projectile {
+  id: string;
+  ownerId: string;
+  team: number;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vz: number;
+  yaw: number;
+  life: number;
+  damage: number;
+  targetId?: string;
+}
+
+export interface HillZone {
+  x: number;
+  z: number;
+  radius: number;
+  scores: Record<number, number>;
+  owner: number | null;
+  contested: boolean;
+  target: number;
+  moveTimer: number;
+}
+
+export interface ActiveArenaEvent {
+  kind: ArenaEventKind;
+  label: string;
+  timeLeft: number;
+  duration: number;
+  x?: number;
+  z?: number;
+  targetId?: string;
 }
 
 export interface DestructibleProp {
   id: string;
-  kind: 'crate' | 'barrel' | 'pillar' | 'pickup_repair' | 'pickup_energy';
+  kind: 'crate' | 'barrel' | 'pillar' | 'pickup_repair' | 'pickup_energy' | 'pickup_armor' | 'scrap_heap';
   x: number;
   y: number;
   z: number;
@@ -170,7 +309,7 @@ export interface DestructibleProp {
 
 export interface HazardState {
   id: string;
-  kind: 'saw' | 'flipper_pad' | 'emp_ring' | 'spinner_blade' | 'crusher';
+  kind: 'saw' | 'flipper_pad' | 'emp_ring' | 'spinner_blade' | 'crusher' | 'pit' | 'lightning' | 'magnet_crane' | 'lava';
   x: number;
   z: number;
   radius: number;
@@ -200,7 +339,18 @@ export type CombatEventType =
   | 'pickup'
   | 'crusher_slam'
   | 'hazard_warn'
-  | 'ko';
+  | 'ko'
+  | 'arc'
+  | 'lightning'
+  | 'missile_launch'
+  | 'pit_fall'
+  | 'arena_event'
+  | 'wave_start'
+  | 'hill_move'
+  | 'reflect'
+  | 'shield_block'
+  | 'lance'
+  | 'magnet_pull';
 
 export type DamageKind = 'kinetic' | 'scorch' | 'blade' | 'crush';
 
@@ -224,6 +374,10 @@ export interface CombatEvent {
   weapon?: WeaponId;
   targetId?: string;
   sourceId?: string;
+  x2?: number;
+  y2?: number;
+  z2?: number;
+  label?: string;
 }
 
 export interface PlayerInputState {
@@ -243,7 +397,7 @@ export interface ArenaSnapshot {
   durationSeconds?: number;
   elapsedTime?: number;
   escalationStage?: number;
-  finishReason?: 'ko' | 'time';
+  finishReason?: 'ko' | 'time' | 'objective';
   phase: 'countdown' | 'active' | 'finished';
   countdown: number;
   bots: BotPhysicsState[];
@@ -251,6 +405,15 @@ export interface ArenaSnapshot {
   hazards: HazardState[];
   events: CombatEvent[];
   winnerId: string | null;
+  winnerTeam?: number | null;
+  projectiles?: Projectile[];
+  modifiers?: MatchModifierId[];
+  arenaEvent?: ActiveArenaEvent | null;
+  nextArenaEventAt?: number;
+  hill?: HillZone | null;
+  survivalWave?: number;
+  survivalKills?: number;
+  gravityMult?: number;
 }
 
 export interface LeaderboardEntry {
@@ -297,7 +460,12 @@ export interface SeasonalEvent {
   targetWins: number;
   rewardScrap: number;
   rewardSkillPoints: number;
+  rewardUnlock?: string;
   endsAt: string;
+}
+
+export function getSeasonalEventProgress(profile: Pick<PlayerProfile, 'arenaWins'>, ev: SeasonalEvent): number {
+  return Math.min(ev.targetWins, profile.arenaWins?.[ev.arenaId] ?? 0);
 }
 
 export interface PlayerProfile {
@@ -320,6 +488,26 @@ export interface PlayerProfile {
   batteryMode: BatteryMode;
   muted: boolean;
   touchControlsMode: 'auto' | 'always' | 'off';
+  ownedParts?: string[];
+  campaignStars?: Record<string, number>;
+  arenaWins?: Partial<Record<ArenaId, number>>;
+  bestSurvivalWave?: number;
+  savedLoadouts?: BotConfig[];
+}
+
+export type PartCategory = 'weapon' | 'armor' | 'chassis' | 'drive';
+export function partKey(cat: PartCategory, id: string): string {
+  return `${cat}:${id}`;
+}
+export function getPartPrice(cat: PartCategory, id: string): number {
+  if (cat === 'weapon') return WEAPON_CATALOG[id as WeaponId]?.price ?? 0;
+  if (cat === 'armor') return ARMOR_CATALOG[id as ArmorId]?.price ?? 0;
+  if (cat === 'chassis') return CHASSIS_CATALOG[id as ChassisId]?.price ?? 0;
+  return DRIVE_CATALOG[id as DriveId]?.price ?? 0;
+}
+export function isPartOwned(profile: Pick<PlayerProfile, 'ownedParts'>, cat: PartCategory, id: string): boolean {
+  if (getPartPrice(cat, id) <= 0) return true;
+  return (profile.ownedParts ?? []).includes(partKey(cat, id));
 }
 
 export interface ChassisSpec {
@@ -332,7 +520,10 @@ export interface ChassisSpec {
   sizeTag: string;
   speedMult: number;
   frontDeflect: number;
+  price?: number;
 }
+
+export type ArmorTrait = 'none' | 'regen' | 'energy_shield' | 'reflect' | 'heat_sink';
 
 export interface ArmorSpec {
   id: ArmorId;
@@ -344,18 +535,27 @@ export interface ArmorSpec {
   speedMult: number;
   roughness: number;
   metalness: number;
+  /** Incoming damage multiplier per damage kind (1 = neutral, <1 resists) */
+  resist: Record<DamageKind, number>;
+  trait: ArmorTrait;
+  traitLabel?: string;
+  price?: number;
 }
 
 export interface WeaponSpec {
   id: WeaponId;
   label: string;
   subtitle: string;
+  kind: WeaponKind;
   damage: number;
   impulse: number;
   lift: number;
   range: number;
   cooldown: number;
   energyCost: number;
+  /** Ignores front-deflect and shreds armor zones faster */
+  armorPierce?: number;
+  price?: number;
 }
 
 export interface WheelLayoutSpec {
@@ -376,6 +576,7 @@ export interface DriveSpec {
   accel: number;
   turnRate: number;
   knockbackResist: number;
+  price?: number;
 }
 
 export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
@@ -511,6 +712,30 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     speedMult: 0.92,
     frontDeflect: 0.38,
   },
+  stinger: {
+    id: 'stinger',
+    label: 'Scorpion Stinger',
+    subtitle: 'Low arachnid body with an arched dorsal tail spine',
+    baseHp: 300,
+    baseMass: 1.02,
+    bodyScale: 1.0,
+    sizeTag: 'Arched Tail',
+    speedMult: 1.1,
+    frontDeflect: 0.28,
+    price: 380,
+  },
+  dozer: {
+    id: 'dozer',
+    label: 'Siege Dozer',
+    subtitle: 'Industrial plow-blade brick that bulldozes rivals into traps',
+    baseHp: 410,
+    baseMass: 1.58,
+    bodyScale: 1.12,
+    sizeTag: 'Plow 1.12×',
+    speedMult: 0.86,
+    frontDeflect: 0.5,
+    price: 420,
+  },
 };
 
 export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
@@ -524,6 +749,8 @@ export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
     speedMult: 0.97,
     roughness: 0.26,
     metalness: 0.88,
+    resist: { kinetic: 0.92, blade: 0.92, crush: 0.95, scorch: 0.95 },
+    trait: 'none',
   },
   ceramic: {
     id: 'ceramic',
@@ -535,6 +762,9 @@ export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
     speedMult: 0.93,
     roughness: 0.42,
     metalness: 0.3,
+    resist: { kinetic: 0.82, blade: 1.05, crush: 0.8, scorch: 0.7 },
+    trait: 'heat_sink',
+    traitLabel: 'Heat Sink: burn wears off 2x faster',
   },
   kevlar: {
     id: 'kevlar',
@@ -546,6 +776,8 @@ export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
     speedMult: 1.09,
     roughness: 0.58,
     metalness: 0.18,
+    resist: { kinetic: 1.0, blade: 0.78, crush: 1.12, scorch: 1.15 },
+    trait: 'none',
   },
   steel: {
     id: 'steel',
@@ -557,6 +789,67 @@ export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
     speedMult: 0.82,
     roughness: 0.34,
     metalness: 0.92,
+    resist: { kinetic: 0.85, blade: 0.88, crush: 0.9, scorch: 1.0 },
+    trait: 'none',
+  },
+  tungsten: {
+    id: 'tungsten',
+    label: 'Tungsten Carbide',
+    subtitle: 'Densest plating in the pit; blades skate right off it',
+    hpBonus: 215,
+    zoneHp: 230,
+    massBonus: 0.62,
+    speedMult: 0.76,
+    roughness: 0.3,
+    metalness: 0.95,
+    resist: { kinetic: 0.82, blade: 0.6, crush: 0.95, scorch: 1.05 },
+    trait: 'none',
+    price: 520,
+  },
+  nanoweave: {
+    id: 'nanoweave',
+    label: 'Nanoweave Mesh',
+    subtitle: 'Self-knitting nanite skin that rebuilds plates mid-fight',
+    hpBonus: 70,
+    zoneHp: 110,
+    massBonus: 0.08,
+    speedMult: 1.02,
+    roughness: 0.45,
+    metalness: 0.55,
+    resist: { kinetic: 0.95, blade: 0.95, crush: 1.0, scorch: 0.95 },
+    trait: 'regen',
+    traitLabel: 'Self-Repair: rebuilds armor + hull after 2.5s out of combat',
+    price: 640,
+  },
+  reactive: {
+    id: 'reactive',
+    label: 'Explosive Reactive',
+    subtitle: 'Charged tiles blast back at anything that hits them',
+    hpBonus: 95,
+    zoneHp: 125,
+    massBonus: 0.2,
+    speedMult: 0.94,
+    roughness: 0.5,
+    metalness: 0.6,
+    resist: { kinetic: 0.9, blade: 0.9, crush: 0.85, scorch: 1.1 },
+    trait: 'reflect',
+    traitLabel: 'Thorns: 30% of melee damage blasts back at the attacker',
+    price: 580,
+  },
+  plasma: {
+    id: 'plasma',
+    label: 'Plasma Barrier',
+    subtitle: 'Light frame wrapped in a battery-fed force field',
+    hpBonus: 55,
+    zoneHp: 95,
+    massBonus: 0.05,
+    speedMult: 1.04,
+    roughness: 0.2,
+    metalness: 0.4,
+    resist: { kinetic: 0.95, blade: 0.95, crush: 0.95, scorch: 0.9 },
+    trait: 'energy_shield',
+    traitLabel: 'Force Field: 45% of damage drained from energy instead of hull',
+    price: 820,
   },
 };
 
@@ -565,6 +858,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     id: 'vspinner',
     label: 'Vertical Spinner',
     subtitle: 'High-RPM toothed flywheel uppercutting rivals skyward',
+    kind: 'rotor',
     damage: 17,
     impulse: 7.5,
     lift: 5.5,
@@ -576,6 +870,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     id: 'hbar',
     label: 'Horizontal Blade',
     subtitle: 'Wide tungsten bar delivering heavy lateral knockback',
+    kind: 'rotor',
     damage: 19,
     impulse: 10.5,
     lift: 2.0,
@@ -587,6 +882,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     id: 'sawblade',
     label: 'Twin Saw Blades',
     subtitle: 'Dual rapid circular saws shredding armor on close contact',
+    kind: 'rotor',
     damage: 8,
     impulse: 3.4,
     lift: 0.8,
@@ -598,6 +894,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     id: 'flipper',
     label: 'Pneumatic Flipper',
     subtitle: 'CO2-driven wedge catapulting bots for ring-out slams',
+    kind: 'strike',
     damage: 11,
     impulse: 6.2,
     lift: 12.8,
@@ -609,23 +906,106 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     id: 'hammer',
     label: 'Overhead Hammer',
     subtitle: 'Armor-piercing striker smashing top decks and plates',
+    kind: 'strike',
     damage: 25,
     impulse: 6.5,
     lift: 1.2,
     range: 2.45,
     cooldown: 1.2,
     energyCost: 15,
+    armorPierce: 0.35,
   },
   flame: {
     id: 'flame',
     label: 'Plasma Flame',
     subtitle: 'Long-reach thermal torch scorching armor and igniting bots',
+    kind: 'channel',
     damage: 7,
     impulse: 1.2,
     lift: 0.0,
     range: 4.1,
     cooldown: 0.42,
     energyCost: 6,
+  },
+  drum: {
+    id: 'drum',
+    label: 'Eggbeater Drum',
+    subtitle: 'Stubby high-inertia drum that punts bots end over end',
+    kind: 'rotor',
+    damage: 21,
+    impulse: 6.0,
+    lift: 8.6,
+    range: 2.05,
+    cooldown: 0.82,
+    energyCost: 9,
+    price: 450,
+  },
+  jaws: {
+    id: 'jaws',
+    label: 'Hydraulic Jaws',
+    subtitle: 'Piercing crusher beak that pins its prey in place',
+    kind: 'strike',
+    damage: 30,
+    impulse: 2.2,
+    lift: 0.4,
+    range: 2.0,
+    cooldown: 1.5,
+    energyCost: 20,
+    armorPierce: 0.6,
+    price: 520,
+  },
+  tesla: {
+    id: 'tesla',
+    label: 'Tesla Coil',
+    subtitle: 'Arcing lightning that chains between rivals and jams motors',
+    kind: 'channel',
+    damage: 6,
+    impulse: 0.6,
+    lift: 0,
+    range: 3.8,
+    cooldown: 0.3,
+    energyCost: 7,
+    price: 680,
+  },
+  missiles: {
+    id: 'missiles',
+    label: 'Micro-Missile Pod',
+    subtitle: 'Homing salvo of mini rockets with splash detonation',
+    kind: 'projectile',
+    damage: 12,
+    impulse: 5.5,
+    lift: 2.5,
+    range: 16,
+    cooldown: 2.2,
+    energyCost: 22,
+    price: 760,
+  },
+  lance: {
+    id: 'lance',
+    label: 'Pneumatic Lance',
+    subtitle: 'Long piston spike punching clean through armor plate',
+    kind: 'strike',
+    damage: 22,
+    impulse: 9.0,
+    lift: 0.6,
+    range: 3.5,
+    cooldown: 1.05,
+    energyCost: 14,
+    armorPierce: 0.45,
+    price: 400,
+  },
+  magnet: {
+    id: 'magnet',
+    label: 'Grapple Magnet',
+    subtitle: 'Electromagnet yanks rivals into your other weapons',
+    kind: 'strike',
+    damage: 5,
+    impulse: -11,
+    lift: 0,
+    range: 7.0,
+    cooldown: 1.8,
+    energyCost: 16,
+    price: 600,
   },
 };
 
@@ -724,6 +1104,16 @@ export const DRIVE_CATALOG: Record<DriveId, DriveSpec> = {
     turnRate: 3.35,
     knockbackResist: 0.96,
   },
+  hover: {
+    id: 'hover',
+    label: 'Hover Skirt',
+    subtitle: 'Ducted-fan cushion floats over saws, lava and floor blades',
+    maxSpeed: 8.2,
+    accel: 17,
+    turnRate: 3.0,
+    knockbackResist: 0.78,
+    price: 700,
+  },
 };
 
 export interface ArenaSpec {
@@ -735,7 +1125,10 @@ export interface ArenaSpec {
   energyRegenMult: number;
   skyHex: string;
   floorHex: string;
+  floorLineHex: string;
+  outerDeckHex: string;
   accentHex: string;
+  gravityMult?: number;
 }
 
 export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
@@ -748,6 +1141,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     energyRegenMult: 1.0,
     skyHex: '#101318',
     floorHex: '#1B2028',
+    floorLineHex: '#2E3745',
+    outerDeckHex: '#0D1015',
     accentHex: '#F59E0B',
   },
   cryo: {
@@ -758,7 +1153,9 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     friction: 2.7,
     energyRegenMult: 1.05,
     skyHex: '#0C141D',
-    floorHex: '#19293A',
+    floorHex: '#16283A',
+    floorLineHex: '#34587A',
+    outerDeckHex: '#0B141E',
     accentHex: '#38BDF8',
   },
   reactor: {
@@ -769,7 +1166,9 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     friction: 5.5,
     energyRegenMult: 1.55,
     skyHex: '#121019',
-    floorHex: '#1E1A2B',
+    floorHex: '#191529',
+    floorLineHex: '#3B2E5E',
+    outerDeckHex: '#100C1B',
     accentHex: '#A855F7',
   },
   colosseum: {
@@ -780,8 +1179,50 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     friction: 5.8,
     energyRegenMult: 1.15,
     skyHex: '#12151C',
-    floorHex: '#202631',
+    floorHex: '#202630',
+    floorLineHex: '#3B4454',
+    outerDeckHex: '#10131A',
     accentHex: '#EF4444',
+  },
+  skyforge: {
+    id: 'skyforge',
+    name: 'Skyforge Platform',
+    subtitle: 'High-altitude deck with opening drop pits and thin air',
+    halfSize: 18,
+    friction: 5.0,
+    energyRegenMult: 1.1,
+    skyHex: '#1A2740',
+    floorHex: '#26303F',
+    floorLineHex: '#4A5A72',
+    outerDeckHex: '#14203A',
+    accentHex: '#22D3EE',
+    gravityMult: 0.82,
+  },
+  junkyard: {
+    id: 'junkyard',
+    name: 'Scrapyard Crucible',
+    subtitle: 'Cluttered wreck lot with a magnet crane and slag pools',
+    halfSize: 18,
+    friction: 6.2,
+    energyRegenMult: 0.95,
+    skyHex: '#16130F',
+    floorHex: '#2A241C',
+    floorLineHex: '#4A3F30',
+    outerDeckHex: '#14110C',
+    accentHex: '#84CC16',
+  },
+  storm: {
+    id: 'storm',
+    name: 'Tesla Stormcage',
+    subtitle: 'Lightning strikes the deck on a timer; EMP core at center',
+    halfSize: 18,
+    friction: 5.3,
+    energyRegenMult: 1.35,
+    skyHex: '#0A0D1A',
+    floorHex: '#141A2E',
+    floorLineHex: '#2C3A66',
+    outerDeckHex: '#090C18',
+    accentHex: '#60A5FA',
   },
 };
 
@@ -792,6 +1233,16 @@ export const PAINT_PRESETS = [
   { label: 'Gunmetal Slate', primary: '#334155', accent: '#F59E0B' },
   { label: 'Emerald Spec', primary: '#047857', accent: '#34D399' },
   { label: 'Obsidian Gold', primary: '#18181B', accent: '#EAB308' },
+  { label: 'Arctic Ops', primary: '#E2E8F0', accent: '#38BDF8' },
+  { label: 'Toxic Waste', primary: '#3F6212', accent: '#A3E635' },
+  { label: 'Royal Violet', primary: '#5B21B6', accent: '#C084FC' },
+  { label: 'Desert Storm', primary: '#A16207', accent: '#FDE68A' },
+  { label: 'Hot Pink Riot', primary: '#BE185D', accent: '#F9A8D4' },
+  { label: 'Marine Corps', primary: '#3F4A2E', accent: '#C2B280' },
+  { label: 'Teal Reef', primary: '#0F766E', accent: '#5EEAD4' },
+  { label: 'Blood Orange', primary: '#C2410C', accent: '#FED7AA' },
+  { label: 'Ghost White', primary: '#F8FAFC', accent: '#94A3B8' },
+  { label: 'Midnight Ion', primary: '#0B1120', accent: '#22D3EE' },
 ];
 
 export const DEFAULT_SKILLS: SkillTree = {
