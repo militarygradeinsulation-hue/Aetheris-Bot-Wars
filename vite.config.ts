@@ -15,8 +15,8 @@ export default defineConfig(() => {
         includeAssets: ['apple-touch-icon.png', 'icon.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
         manifest: {
           id: '/',
-          name: 'ForgeClash: 3D BattleBots Arena',
-          short_name: 'ForgeClash',
+          name: 'Aetheris Bot Wars: 3D Combat Robotics Arena',
+          short_name: 'Aetheris Bot Wars',
           description:
             'Real-time 3D BattleBots arena combat with customizable armor, weaponry, destructible hazards, multiplayer tournaments, and offline solo play.',
           theme_color: '#0D1014',
