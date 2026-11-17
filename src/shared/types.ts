@@ -11,9 +11,21 @@ export type ChassisId =
   | 'tripod'
   | 'monolith'
   | 'claw'
-  | 'stinger'
-  | 'dozer';
-export type ArmorId = 'titanium' | 'ceramic' | 'kevlar' | 'steel' | 'tungsten' | 'nanoweave' | 'reactive' | 'plasma';
+  | 'scorpion'
+  | 'juggernaut'
+  | 'hover_disc'
+  | 'hydra';
+
+export type ArmorId =
+  | 'titanium'
+  | 'ceramic'
+  | 'kevlar'
+  | 'steel'
+  | 'aetherium'
+  | 'reactive_era'
+  | 'tungsten'
+  | 'nanoweave';
+
 export type WeaponId =
   | 'vspinner'
   | 'hbar'
@@ -21,45 +33,81 @@ export type WeaponId =
   | 'flipper'
   | 'hammer'
   | 'flame'
-  | 'drum'
-  | 'jaws'
   | 'tesla'
-  | 'missiles'
+  | 'railgun'
+  | 'cryo_jet'
+  | 'crush_jaw'
+  | 'drum'
+  | 'mortar'
   | 'lance'
-  | 'magnet';
-export type WeaponKind = 'rotor' | 'channel' | 'strike' | 'projectile';
-export type WheelLayoutId = '4wd_wide' | '4wd_tucked' | '6wd_inline' | 'rear_trike' | 'outboard';
-export type DriveId = 'omni' | 'tracks' | 'turbo' | 'heavy_torque' | 'mecanum' | 'hover';
+  | 'magnet'
+  | 'missiles';
+
+export type WheelLayoutId =
+  | '4wd_wide'
+  | '4wd_tucked'
+  | '6wd_inline'
+  | 'rear_trike'
+  | 'outboard'
+  | '8wd_crawler'
+  | 'omni_quad';
+
+export type DriveId =
+  | 'omni'
+  | 'tracks'
+  | 'turbo'
+  | 'heavy_torque'
+  | 'mecanum'
+  | 'maglev'
+  | 'crawler_nuclear'
+  | 'hover';
+
+export type FinishStyleId =
+  | 'standard'
+  | 'chrome'
+  | 'matte'
+  | 'iridescent'
+  | 'gold_leaf'
+  | 'carbon_stealth';
+
+export type AccessoryId =
+  | 'none'
+  | 'halo_crown'
+  | 'twin_flags'
+  | 'radar_dish'
+  | 'thruster_wings'
+  | 'tesla_horns'
+  | 'boss_spikes';
+
 export type BotWeightClass = 'Lightweight' | 'Middleweight' | 'Heavyweight' | 'Titan';
-export type ArenaId = 'foundry' | 'cryo' | 'reactor' | 'colosseum' | 'skyforge' | 'junkyard' | 'storm';
+
+export type ArenaId =
+  | 'foundry'
+  | 'cryo'
+  | 'reactor'
+  | 'colosseum'
+  | 'aether_nexus'
+  | 'toxic_scrapyard'
+  | 'volcano_caldera'
+  | 'cyber_grid'
+  | 'skyforge'
+  | 'storm';
+
 export type GameMode =
   | 'duel_1v1'
   | 'brawl_4bot'
+  | 'team_2v2'
+  | 'boss_raid'
   | 'gauntlet'
   | 'practice'
   | 'multiplayer'
-  | 'team_2v2'
   | 'team_3v3'
   | 'survival'
   | 'king_hill'
-  | 'boss_raid'
   | 'campaign';
-export type TimedBattleDuration = 90 | 150 | 180 | 300;
-export type BatteryMode = 'eco' | 'balanced' | 'ultra';
 
-// ---- Livery / cosmetic customization ----
-export type FinishId = 'gloss' | 'matte' | 'chrome' | 'carbon' | 'pearl' | 'neon';
+// ---- Livery patterns ----
 export type PatternId = 'none' | 'stripes' | 'flames' | 'digital_camo' | 'hex' | 'checker' | 'tiger' | 'circuit';
-
-export const FINISH_CATALOG: Record<FinishId, { id: FinishId; label: string; subtitle: string }> = {
-  gloss: { id: 'gloss', label: 'Factory Gloss', subtitle: 'Clearcoated paint with crisp reflections' },
-  matte: { id: 'matte', label: 'Stealth Matte', subtitle: 'Flat low-sheen coat that drinks light' },
-  chrome: { id: 'chrome', label: 'Mirror Chrome', subtitle: 'Polished plating that mirrors the arena' },
-  carbon: { id: 'carbon', label: 'Raw Carbon', subtitle: 'Exposed woven composite under resin' },
-  pearl: { id: 'pearl', label: 'Pearl Shift', subtitle: 'Iridescent coat that shifts hue with angle' },
-  neon: { id: 'neon', label: 'Neon Edge', subtitle: 'Self-lit paint that glows in the dark' },
-};
-
 export const PATTERN_CATALOG: Record<PatternId, { id: PatternId; label: string }> = {
   none: { id: 'none', label: 'Solid' },
   stripes: { id: 'stripes', label: 'Racing Stripes' },
@@ -97,13 +145,16 @@ export const MATCH_MODIFIERS: Record<MatchModifierId, { id: MatchModifierId; lab
 export type ArenaEventKind = 'supply_drop' | 'power_surge' | 'low_gravity' | 'hazard_frenzy' | 'blackout' | 'bounty';
 
 export const ARENA_EVENT_INFO: Record<ArenaEventKind, { label: string; note: string; duration: number }> = {
-  supply_drop: { label: 'Supply Drop', note: 'Repair and energy crates incoming', duration: 6 },
+  supply_drop: { label: 'Supply Drop', note: 'Repair, energy and overcharge orbs incoming', duration: 6 },
   power_surge: { label: 'Power Surge', note: 'Energy regen x2.5, weapons hit 15% harder', duration: 10 },
   low_gravity: { label: 'Gravity Failure', note: 'Arena gravity cut to 40%', duration: 10 },
   hazard_frenzy: { label: 'Hazard Frenzy', note: 'All traps cycle 70% faster', duration: 12 },
   blackout: { label: 'Blackout', note: 'Arena lights down, hunt by visor glow', duration: 10 },
   bounty: { label: 'Bounty Target', note: 'Marked bot takes +40% damage', duration: 14 },
 };
+
+export type TimedBattleDuration = 90 | 150 | 180 | 300;
+export type BatteryMode = 'eco' | 'balanced' | 'ultra';
 
 export const TIMED_BATTLE_OPTIONS: Array<{ seconds: TimedBattleDuration; label: string; tag: string }> = [
   { seconds: 90, label: '1:30', tag: 'Blitz' },
@@ -123,15 +174,11 @@ export interface BotConfig {
   drive: DriveId;
   primaryColor: string;
   accentColor: string;
-  finish?: FinishId;
+  finishStyle?: FinishStyleId;
+  accessory?: AccessoryId;
+  underglowColor?: string;
   pattern?: PatternId;
-  glowColor?: string;
-  underglow?: boolean;
   raceNumber?: number;
-}
-
-export function getWeaponKind(id: WeaponId): WeaponKind {
-  return WEAPON_CATALOG[id]?.kind ?? 'strike';
 }
 
 export function getBotWeapons(config: BotConfig): WeaponId[] {
@@ -168,15 +215,19 @@ export function getBotChassisStyles(config: BotConfig): ChassisId[] {
 
 export interface SkillTree {
   chassisReinforcement: number; // 0..5: +Max HP
-  weaponTorque: number; // 0..5: +Weapon damage & spin/cooldown speed
+  weaponTorque: number; // 0..5: +Weapon damage & spin speed
   gyroStabilizer: number; // 0..5: +Knockback resistance & stability
   kineticArmor: number; // 0..5: +Armor zone durability & deflection
   batteryCore: number; // 0..5: +Energy capacity & regen
+  coolingSystem?: number; // 0..5: -Weapon cooldowns & burn/freeze recovery
+  naniteRepair?: number; // 0..5: Passive HP & armor repair in combat
+  overclockCore?: number; // 0..5: +Overdrive duration & boost power
 }
 
 export interface BotComputedStats {
   maxHp: number;
   armorZoneHp: number;
+  maxShieldHp: number;
   mass: number;
   bodyScale: number;
   maxSpeed: number;
@@ -223,6 +274,8 @@ export interface BotPhysicsState {
   roll: number;
   hp: number;
   maxHp: number;
+  shieldHp?: number;
+  maxShieldHp?: number;
   energy: number;
   maxEnergy: number;
   armorZones: ArmorZones;
@@ -238,6 +291,11 @@ export interface BotPhysicsState {
   boostCooldown: number;
   overdriveTimer: number;
   burnTimer: number;
+  freezeTimer?: number;
+  shockTimer?: number;
+  damageBoostTimer?: number;
+  eraBlocksRemaining?: number;
+  naniteTickTimer?: number;
   collisionDmgCooldown?: number;
   flameDmgCooldown?: number;
   burnTickTimer?: number;
@@ -247,12 +305,7 @@ export interface BotPhysicsState {
   kos: number;
   isBot: boolean;
   team: number;
-  // Status effects & armor trait state
-  stunTimer?: number;
   pinnedTimer?: number;
-  lastHitAt?: number;
-  shieldFlash?: number;
-  teslaDmgCooldown?: number;
   isBoss?: boolean;
   isBounty?: boolean;
   dmgMult?: number;
@@ -297,7 +350,14 @@ export interface ActiveArenaEvent {
 
 export interface DestructibleProp {
   id: string;
-  kind: 'crate' | 'barrel' | 'pillar' | 'pickup_repair' | 'pickup_energy' | 'pickup_armor' | 'scrap_heap';
+  kind:
+    | 'crate'
+    | 'barrel'
+    | 'pillar'
+    | 'pickup_repair'
+    | 'pickup_energy'
+    | 'pickup_overcharge'
+    | 'pickup_shield';
   x: number;
   y: number;
   z: number;
@@ -309,7 +369,16 @@ export interface DestructibleProp {
 
 export interface HazardState {
   id: string;
-  kind: 'saw' | 'flipper_pad' | 'emp_ring' | 'spinner_blade' | 'crusher' | 'pit' | 'lightning' | 'magnet_crane' | 'lava';
+  kind:
+    | 'saw'
+    | 'flipper_pad'
+    | 'emp_ring'
+    | 'spinner_blade'
+    | 'crusher'
+    | 'lava_vent'
+    | 'acid_pool'
+    | 'pit'
+    | 'lightning';
   x: number;
   z: number;
   radius: number;
@@ -339,16 +408,19 @@ export type CombatEventType =
   | 'pickup'
   | 'crusher_slam'
   | 'hazard_warn'
+  | 'tesla_arc'
+  | 'rail_shot'
+  | 'cryo_blast'
+  | 'mortar_blast'
+  | 'era_blast'
+  | 'shield_hit'
   | 'ko'
-  | 'arc'
-  | 'lightning'
   | 'missile_launch'
   | 'pit_fall'
+  | 'lightning'
   | 'arena_event'
   | 'wave_start'
   | 'hill_move'
-  | 'reflect'
-  | 'shield_block'
   | 'lance'
   | 'magnet_pull';
 
@@ -360,6 +432,9 @@ export interface CombatEvent {
   x: number;
   y: number;
   z: number;
+  targetX?: number;
+  targetY?: number;
+  targetZ?: number;
   intensity: number;
   force?: number;
   damageKind?: DamageKind;
@@ -374,9 +449,7 @@ export interface CombatEvent {
   weapon?: WeaponId;
   targetId?: string;
   sourceId?: string;
-  x2?: number;
-  y2?: number;
-  z2?: number;
+  callout?: string;
   label?: string;
 }
 
@@ -405,7 +478,7 @@ export interface ArenaSnapshot {
   hazards: HazardState[];
   events: CombatEvent[];
   winnerId: string | null;
-  winnerTeam?: number | null;
+  winningTeam?: number | null;
   projectiles?: Projectile[];
   modifiers?: MatchModifierId[];
   arenaEvent?: ActiveArenaEvent | null;
@@ -413,6 +486,7 @@ export interface ArenaSnapshot {
   hill?: HillZone | null;
   survivalWave?: number;
   survivalKills?: number;
+  waveStartedAt?: number;
   gravityMult?: number;
 }
 
@@ -443,6 +517,8 @@ export interface ClanInfo {
   name: string;
   tag: string;
   motto: string;
+  perkLabel?: string;
+  bannerColor?: string;
   warPoints: number;
   memberCount: number;
   wins: number;
@@ -460,17 +536,15 @@ export interface SeasonalEvent {
   targetWins: number;
   rewardScrap: number;
   rewardSkillPoints: number;
+  badgeTitle?: string;
   rewardUnlock?: string;
   endsAt: string;
-}
-
-export function getSeasonalEventProgress(profile: Pick<PlayerProfile, 'arenaWins'>, ev: SeasonalEvent): number {
-  return Math.min(ev.targetWins, profile.arenaWins?.[ev.arenaId] ?? 0);
 }
 
 export interface PlayerProfile {
   id: string;
   callsign: string;
+  pilotTitle?: string;
   clanId: string | null;
   clanTag: string;
   rating: number;
@@ -484,6 +558,9 @@ export interface PlayerProfile {
   gauntletStage: number;
   claimedEvents: string[];
   botConfig: BotConfig;
+  savedLoadouts?: BotConfig[];
+  activeLoadoutSlot?: number;
+  selectedWingmanIndex?: number;
   skills: SkillTree;
   batteryMode: BatteryMode;
   muted: boolean;
@@ -492,9 +569,9 @@ export interface PlayerProfile {
   campaignStars?: Record<string, number>;
   arenaWins?: Partial<Record<ArenaId, number>>;
   bestSurvivalWave?: number;
-  savedLoadouts?: BotConfig[];
 }
 
+// ---- Part economy: premium parts cost scrap or unlock via campaign & events ----
 export type PartCategory = 'weapon' | 'armor' | 'chassis' | 'drive';
 export function partKey(cat: PartCategory, id: string): string {
   return `${cat}:${id}`;
@@ -508,6 +585,28 @@ export function getPartPrice(cat: PartCategory, id: string): number {
 export function isPartOwned(profile: Pick<PlayerProfile, 'ownedParts'>, cat: PartCategory, id: string): boolean {
   if (getPartPrice(cat, id) <= 0) return true;
   return (profile.ownedParts ?? []).includes(partKey(cat, id));
+}
+/** Every premium part key a config uses (for granting ownership of builds that predate the economy). */
+export function premiumPartsInConfig(config: BotConfig): string[] {
+  const keys: string[] = [];
+  for (const w of getBotWeapons(config)) if (getPartPrice('weapon', w) > 0) keys.push(partKey('weapon', w));
+  for (const c of getBotChassisStyles(config)) if (getPartPrice('chassis', c) > 0) keys.push(partKey('chassis', c));
+  if (getPartPrice('armor', config.armor) > 0) keys.push(partKey('armor', config.armor));
+  if (getPartPrice('drive', config.drive) > 0) keys.push(partKey('drive', config.drive));
+  return keys;
+}
+export function describePartKey(key: string | undefined): string {
+  if (!key) return '';
+  const [cat, id] = key.split(':');
+  const label =
+    cat === 'weapon'
+      ? WEAPON_CATALOG[id as WeaponId]?.label
+      : cat === 'armor'
+        ? ARMOR_CATALOG[id as ArmorId]?.label
+        : cat === 'chassis'
+          ? CHASSIS_CATALOG[id as ChassisId]?.label
+          : DRIVE_CATALOG[id as DriveId]?.label;
+  return label ?? id;
 }
 
 export interface ChassisSpec {
@@ -523,22 +622,18 @@ export interface ChassisSpec {
   price?: number;
 }
 
-export type ArmorTrait = 'none' | 'regen' | 'energy_shield' | 'reflect' | 'heat_sink';
-
 export interface ArmorSpec {
   id: ArmorId;
   label: string;
   subtitle: string;
+  specialPerk: string;
   hpBonus: number;
   zoneHp: number;
+  shieldBonus: number;
   massBonus: number;
   speedMult: number;
   roughness: number;
   metalness: number;
-  /** Incoming damage multiplier per damage kind (1 = neutral, <1 resists) */
-  resist: Record<DamageKind, number>;
-  trait: ArmorTrait;
-  traitLabel?: string;
   price?: number;
 }
 
@@ -546,15 +641,13 @@ export interface WeaponSpec {
   id: WeaponId;
   label: string;
   subtitle: string;
-  kind: WeaponKind;
+  category: 'Rotor' | 'Kinetic' | 'Thermal' | 'Energy' | 'Artillery';
   damage: number;
   impulse: number;
   lift: number;
   range: number;
   cooldown: number;
   energyCost: number;
-  /** Ignores front-deflect and shreds armor zones faster */
-  armorPierce?: number;
   price?: number;
 }
 
@@ -577,6 +670,22 @@ export interface DriveSpec {
   turnRate: number;
   knockbackResist: number;
   price?: number;
+}
+
+export interface FinishStyleSpec {
+  id: FinishStyleId;
+  label: string;
+  subtitle: string;
+  roughnessMult: number;
+  metalnessAdd: number;
+  clearcoat: number;
+  iridescence: number;
+}
+
+export interface AccessorySpec {
+  id: AccessoryId;
+  label: string;
+  subtitle: string;
 }
 
 export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
@@ -671,70 +780,94 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
   ufo: {
     id: 'ufo',
     label: 'Gyro Saucer',
-    subtitle: 'Weird circular flying-saucer hull deflecting hits from all sides',
+    subtitle: 'Circular flying-saucer hull deflecting hits from all sides',
     baseHp: 350,
     baseMass: 1.22,
     bodyScale: 1.1,
-    sizeTag: 'Weird Saucer',
+    sizeTag: 'Saucer',
     speedMult: 1.02,
     frontDeflect: 0.44,
   },
   tripod: {
     id: 'tripod',
     label: 'Mantis Tri-Pod',
-    subtitle: 'Weird Y-shaped insectoid frame with splayed forward mandibles',
+    subtitle: 'Y-shaped insectoid frame with splayed forward mandibles',
     baseHp: 310,
     baseMass: 1.06,
     bodyScale: 1.04,
-    sizeTag: 'Weird Tri-Pod',
+    sizeTag: 'Tri-Pod',
     speedMult: 1.06,
     frontDeflect: 0.24,
   },
   monolith: {
     id: 'monolith',
     label: 'Tall Monolith',
-    subtitle: 'Weird towering narrow armored obelisk built like a steel pillar',
+    subtitle: 'Towering narrow armored obelisk built like a steel pillar',
     baseHp: 445,
     baseMass: 1.48,
     bodyScale: 0.94,
-    sizeTag: 'Weird Tall',
+    sizeTag: 'Tall Spire',
     speedMult: 0.85,
     frontDeflect: 0.3,
   },
   claw: {
     id: 'claw',
     label: 'Crescent Claw',
-    subtitle: 'Weird horseshoe crab pincer hull built to trap opponents',
+    subtitle: 'Horseshoe crab pincer hull built to trap opponents',
     baseHp: 375,
     baseMass: 1.34,
     bodyScale: 1.16,
-    sizeTag: 'Weird Claw',
+    sizeTag: 'Pincer',
     speedMult: 0.92,
     frontDeflect: 0.38,
   },
-  stinger: {
-    id: 'stinger',
-    label: 'Scorpion Stinger',
-    subtitle: 'Low arachnid body with an arched dorsal tail spine',
-    baseHp: 300,
-    baseMass: 1.02,
-    bodyScale: 1.0,
-    sizeTag: 'Arched Tail',
-    speedMult: 1.1,
-    frontDeflect: 0.28,
-    price: 380,
+  scorpion: {
+    id: 'scorpion',
+    label: 'Scorpion Tail-Striker',
+    subtitle: 'Predatory arched frame with elevated dorsal strike bridge',
+    baseHp: 345,
+    baseMass: 1.2,
+    bodyScale: 1.06,
+    sizeTag: 'Stinger',
+    speedMult: 1.04,
+    frontDeflect: 0.32,
+    price: 360,
   },
-  dozer: {
-    id: 'dozer',
-    label: 'Siege Dozer',
-    subtitle: 'Industrial plow-blade brick that bulldozes rivals into traps',
-    baseHp: 410,
-    baseMass: 1.58,
-    bodyScale: 1.12,
-    sizeTag: 'Plow 1.12×',
-    speedMult: 0.86,
-    frontDeflect: 0.5,
+  juggernaut: {
+    id: 'juggernaut',
+    label: 'Cathedral Juggernaut',
+    subtitle: 'Multi-turreted siege dreadnought with sloped prow & armored skirts',
+    baseHp: 520,
+    baseMass: 1.82,
+    bodyScale: 1.26,
+    sizeTag: 'Dreadnought',
+    speedMult: 0.76,
+    frontDeflect: 0.38,
+    price: 480,
+  },
+  hover_disc: {
+    id: 'hover_disc',
+    label: 'Aether Mag-Ring',
+    subtitle: 'Futuristic chamfered flux ring hull with glowing plasma vents',
+    baseHp: 325,
+    baseMass: 1.08,
+    bodyScale: 1.06,
+    sizeTag: 'Flux Ring',
+    speedMult: 1.1,
+    frontDeflect: 0.42,
     price: 420,
+  },
+  hydra: {
+    id: 'hydra',
+    label: 'Hydra Twin-Hull',
+    subtitle: 'Dual-pontoon catamaran combat frame engineered for multi-weapons',
+    baseHp: 390,
+    baseMass: 1.36,
+    bodyScale: 1.14,
+    sizeTag: 'Twin-Hull',
+    speedMult: 0.95,
+    frontDeflect: 0.35,
+    price: 440,
   },
 };
 
@@ -743,113 +876,109 @@ export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
     id: 'titanium',
     label: 'Titanium Alloy',
     subtitle: 'Balanced aerospace plating with crisp specular finish',
+    specialPerk: 'Balanced weight-to-durability ratio',
     hpBonus: 85,
     zoneHp: 115,
+    shieldBonus: 0,
     massBonus: 0.15,
     speedMult: 0.97,
     roughness: 0.26,
     metalness: 0.88,
-    resist: { kinetic: 0.92, blade: 0.92, crush: 0.95, scorch: 0.95 },
-    trait: 'none',
   },
   ceramic: {
     id: 'ceramic',
     label: 'Reactive Ceramic',
-    subtitle: 'Ablative composite plates that absorb heavy shock',
+    subtitle: 'Ablative composite plates that absorb heavy shock & thermal heat',
+    specialPerk: '-40% Burn & Plasma duration',
     hpBonus: 115,
     zoneHp: 145,
+    shieldBonus: 0,
     massBonus: 0.22,
     speedMult: 0.93,
     roughness: 0.42,
     metalness: 0.3,
-    resist: { kinetic: 0.82, blade: 1.05, crush: 0.8, scorch: 0.7 },
-    trait: 'heat_sink',
-    traitLabel: 'Heat Sink: burn wears off 2x faster',
   },
   kevlar: {
     id: 'kevlar',
     label: 'Carbon-Kevlar',
-    subtitle: 'Featherweight woven shell for maximum agility',
+    subtitle: 'Featherweight woven shell for maximum agility and flank speed',
+    specialPerk: '+9% Top Speed & zero armor mass penalty',
     hpBonus: 40,
     zoneHp: 85,
+    shieldBonus: 0,
     massBonus: 0.0,
     speedMult: 1.09,
     roughness: 0.58,
     metalness: 0.18,
-    resist: { kinetic: 1.0, blade: 0.78, crush: 1.12, scorch: 1.15 },
-    trait: 'none',
   },
   steel: {
     id: 'steel',
     label: 'Hardened Steel',
-    subtitle: 'Ultra-dense armor slabs for heavy ramming power',
+    subtitle: 'Ultra-dense rolled armor slabs for heavy ramming power',
+    specialPerk: '+20% Collision ramming damage',
     hpBonus: 185,
     zoneHp: 195,
+    shieldBonus: 0,
     massBonus: 0.46,
     speedMult: 0.82,
     roughness: 0.34,
     metalness: 0.92,
-    resist: { kinetic: 0.85, blade: 0.88, crush: 0.9, scorch: 1.0 },
-    trait: 'none',
+  },
+  aetherium: {
+    id: 'aetherium',
+    label: 'Aetherium Lattice',
+    subtitle: 'Iridescent quantum alloy projecting a regenerating energy barrier',
+    specialPerk: '+85 Regenerating Energy Shield & EMP resist',
+    hpBonus: 95,
+    zoneHp: 125,
+    shieldBonus: 85,
+    massBonus: 0.14,
+    speedMult: 1.0,
+    roughness: 0.16,
+    metalness: 0.94,
+    price: 700,
+  },
+  reactive_era: {
+    id: 'reactive_era',
+    label: 'Explosive ERA Blocks',
+    subtitle: 'Military reactive bricks that detonate outward when struck hard',
+    specialPerk: '3 ERA charges blast attackers & halve heavy hit dmg',
+    hpBonus: 150,
+    zoneHp: 175,
+    shieldBonus: 0,
+    massBonus: 0.34,
+    speedMult: 0.88,
+    roughness: 0.48,
+    metalness: 0.68,
+    price: 560,
   },
   tungsten: {
     id: 'tungsten',
     label: 'Tungsten Carbide',
-    subtitle: 'Densest plating in the pit; blades skate right off it',
-    hpBonus: 215,
-    zoneHp: 230,
+    subtitle: 'Super-heavy dreadnought plating with extreme frontal deflection',
+    specialPerk: 'Maximum 240 Zone HP & knockback immunity',
+    hpBonus: 235,
+    zoneHp: 240,
+    shieldBonus: 0,
     massBonus: 0.62,
     speedMult: 0.76,
-    roughness: 0.3,
-    metalness: 0.95,
-    resist: { kinetic: 0.82, blade: 0.6, crush: 0.95, scorch: 1.05 },
-    trait: 'none',
+    roughness: 0.22,
+    metalness: 0.96,
     price: 520,
   },
   nanoweave: {
     id: 'nanoweave',
-    label: 'Nanoweave Mesh',
-    subtitle: 'Self-knitting nanite skin that rebuilds plates mid-fight',
-    hpBonus: 70,
+    label: 'Self-Healing Nanoweave',
+    subtitle: 'Bio-metallic smart mesh that continuously reconstructs damaged plates',
+    specialPerk: 'Regenerates +6 HP & +4 Armor Zone HP every 1.5s',
+    hpBonus: 75,
     zoneHp: 110,
+    shieldBonus: 25,
     massBonus: 0.08,
-    speedMult: 1.02,
-    roughness: 0.45,
-    metalness: 0.55,
-    resist: { kinetic: 0.95, blade: 0.95, crush: 1.0, scorch: 0.95 },
-    trait: 'regen',
-    traitLabel: 'Self-Repair: rebuilds armor + hull after 2.5s out of combat',
-    price: 640,
-  },
-  reactive: {
-    id: 'reactive',
-    label: 'Explosive Reactive',
-    subtitle: 'Charged tiles blast back at anything that hits them',
-    hpBonus: 95,
-    zoneHp: 125,
-    massBonus: 0.2,
-    speedMult: 0.94,
-    roughness: 0.5,
-    metalness: 0.6,
-    resist: { kinetic: 0.9, blade: 0.9, crush: 0.85, scorch: 1.1 },
-    trait: 'reflect',
-    traitLabel: 'Thorns: 30% of melee damage blasts back at the attacker',
-    price: 580,
-  },
-  plasma: {
-    id: 'plasma',
-    label: 'Plasma Barrier',
-    subtitle: 'Light frame wrapped in a battery-fed force field',
-    hpBonus: 55,
-    zoneHp: 95,
-    massBonus: 0.05,
-    speedMult: 1.04,
-    roughness: 0.2,
-    metalness: 0.4,
-    resist: { kinetic: 0.95, blade: 0.95, crush: 0.95, scorch: 0.9 },
-    trait: 'energy_shield',
-    traitLabel: 'Force Field: 45% of damage drained from energy instead of hull',
-    price: 820,
+    speedMult: 1.03,
+    roughness: 0.3,
+    metalness: 0.78,
+    price: 620,
   },
 };
 
@@ -858,7 +987,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     id: 'vspinner',
     label: 'Vertical Spinner',
     subtitle: 'High-RPM toothed flywheel uppercutting rivals skyward',
-    kind: 'rotor',
+    category: 'Rotor',
     damage: 17,
     impulse: 7.5,
     lift: 5.5,
@@ -870,7 +999,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     id: 'hbar',
     label: 'Horizontal Blade',
     subtitle: 'Wide tungsten bar delivering heavy lateral knockback',
-    kind: 'rotor',
+    category: 'Rotor',
     damage: 19,
     impulse: 10.5,
     lift: 2.0,
@@ -882,7 +1011,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     id: 'sawblade',
     label: 'Twin Saw Blades',
     subtitle: 'Dual rapid circular saws shredding armor on close contact',
-    kind: 'rotor',
+    category: 'Rotor',
     damage: 8,
     impulse: 3.4,
     lift: 0.8,
@@ -890,11 +1019,24 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     cooldown: 0.34,
     energyCost: 5,
   },
+  drum: {
+    id: 'drum',
+    label: 'Wide Drum Spinner',
+    subtitle: 'Ultra-high-RPM cylindrical drum that corkscrews enemies into the air',
+    category: 'Rotor',
+    damage: 15,
+    impulse: 8.6,
+    lift: 7.2,
+    range: 2.35,
+    cooldown: 0.58,
+    energyCost: 7,
+    price: 350,
+  },
   flipper: {
     id: 'flipper',
     label: 'Pneumatic Flipper',
     subtitle: 'CO2-driven wedge catapulting bots for ring-out slams',
-    kind: 'strike',
+    category: 'Kinetic',
     damage: 11,
     impulse: 6.2,
     lift: 12.8,
@@ -906,20 +1048,32 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     id: 'hammer',
     label: 'Overhead Hammer',
     subtitle: 'Armor-piercing striker smashing top decks and plates',
-    kind: 'strike',
+    category: 'Kinetic',
     damage: 25,
     impulse: 6.5,
     lift: 1.2,
     range: 2.45,
     cooldown: 1.2,
     energyCost: 15,
-    armorPierce: 0.35,
+  },
+  crush_jaw: {
+    id: 'crush_jaw',
+    label: 'Hydraulic Jaws',
+    subtitle: 'Twin tungsten pincer fangs that clamp and shear armor plates',
+    category: 'Kinetic',
+    damage: 29,
+    impulse: 4.5,
+    lift: 2.4,
+    range: 2.4,
+    cooldown: 1.3,
+    energyCost: 16,
+    price: 400,
   },
   flame: {
     id: 'flame',
     label: 'Plasma Flame',
     subtitle: 'Long-reach thermal torch scorching armor and igniting bots',
-    kind: 'channel',
+    category: 'Thermal',
     damage: 7,
     impulse: 1.2,
     lift: 0.0,
@@ -927,85 +1081,96 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     cooldown: 0.42,
     energyCost: 6,
   },
-  drum: {
-    id: 'drum',
-    label: 'Eggbeater Drum',
-    subtitle: 'Stubby high-inertia drum that punts bots end over end',
-    kind: 'rotor',
-    damage: 21,
-    impulse: 6.0,
-    lift: 8.6,
-    range: 2.05,
-    cooldown: 0.82,
-    energyCost: 9,
-    price: 450,
-  },
-  jaws: {
-    id: 'jaws',
-    label: 'Hydraulic Jaws',
-    subtitle: 'Piercing crusher beak that pins its prey in place',
-    kind: 'strike',
-    damage: 30,
-    impulse: 2.2,
-    lift: 0.4,
-    range: 2.0,
-    cooldown: 1.5,
-    energyCost: 20,
-    armorPierce: 0.6,
-    price: 520,
+  cryo_jet: {
+    id: 'cryo_jet',
+    label: 'Cryo-Freeze Jet',
+    subtitle: 'Sub-zero nitrogen cannon that slows enemies & makes armor brittle',
+    category: 'Thermal',
+    damage: 6,
+    impulse: 1.8,
+    lift: 0.0,
+    range: 4.4,
+    cooldown: 0.44,
+    energyCost: 7,
+    price: 420,
   },
   tesla: {
     id: 'tesla',
-    label: 'Tesla Coil',
-    subtitle: 'Arcing lightning that chains between rivals and jams motors',
-    kind: 'channel',
-    damage: 6,
-    impulse: 0.6,
-    lift: 0,
-    range: 3.8,
-    cooldown: 0.3,
-    energyCost: 7,
+    label: 'Tesla Arc Coils',
+    subtitle: 'High-voltage lightning emitters that chain-shock and drain energy',
+    category: 'Energy',
+    damage: 16,
+    impulse: 5.0,
+    lift: 1.5,
+    range: 5.2,
+    cooldown: 0.95,
+    energyCost: 14,
+    price: 520,
+  },
+  railgun: {
+    id: 'railgun',
+    label: 'Gauss Rail Spike',
+    subtitle: 'Long-range electromagnetic slug cannon with devastating penetration',
+    category: 'Energy',
+    damage: 31,
+    impulse: 12.0,
+    lift: 2.2,
+    range: 10.5,
+    cooldown: 1.85,
+    energyCost: 24,
     price: 680,
   },
-  missiles: {
-    id: 'missiles',
-    label: 'Micro-Missile Pod',
-    subtitle: 'Homing salvo of mini rockets with splash detonation',
-    kind: 'projectile',
-    damage: 12,
-    impulse: 5.5,
-    lift: 2.5,
-    range: 16,
-    cooldown: 2.2,
-    energyCost: 22,
-    price: 760,
+  mortar: {
+    id: 'mortar',
+    label: 'Plasma Mortar',
+    subtitle: 'Dorsal siege howitzer lobbing explosive shockwave plasma shells',
+    category: 'Artillery',
+    damage: 24,
+    impulse: 9.5,
+    lift: 5.8,
+    range: 7.8,
+    cooldown: 1.65,
+    energyCost: 20,
+    price: 640,
   },
   lance: {
     id: 'lance',
     label: 'Pneumatic Lance',
-    subtitle: 'Long piston spike punching clean through armor plate',
-    kind: 'strike',
+    subtitle: 'Long piston spike that punches clean through armor plate',
+    category: 'Kinetic',
     damage: 22,
     impulse: 9.0,
     lift: 0.6,
     range: 3.5,
     cooldown: 1.05,
     energyCost: 14,
-    armorPierce: 0.45,
-    price: 400,
+    price: 380,
   },
   magnet: {
     id: 'magnet',
     label: 'Grapple Magnet',
-    subtitle: 'Electromagnet yanks rivals into your other weapons',
-    kind: 'strike',
+    subtitle: 'Electromagnet that yanks rivals into your other weapons',
+    category: 'Energy',
     damage: 5,
-    impulse: -11,
+    impulse: 11,
     lift: 0,
     range: 7.0,
     cooldown: 1.8,
     energyCost: 16,
-    price: 600,
+    price: 560,
+  },
+  missiles: {
+    id: 'missiles',
+    label: 'Micro-Missile Pod',
+    subtitle: 'Homing salvo of mini rockets with splash detonation',
+    category: 'Artillery',
+    damage: 12,
+    impulse: 5.5,
+    lift: 2.5,
+    range: 16,
+    cooldown: 2.2,
+    energyCost: 22,
+    price: 720,
   },
 };
 
@@ -1055,9 +1220,26 @@ export const WHEEL_LAYOUT_CATALOG: Record<WheelLayoutId, WheelLayoutSpec> = {
     knockbackResistMult: 1.22,
     sideArmorBonus: 12,
   },
+  '8wd_crawler': {
+    id: '8wd_crawler',
+    label: '8WD Siege Crawler',
+    subtitle: 'Eight heavy bogie wheels for immovable stance (+45 zone armor)',
+    turnMult: 0.8,
+    speedMult: 0.9,
+    knockbackResistMult: 1.42,
+    sideArmorBonus: 45,
+  },
+  omni_quad: {
+    id: 'omni_quad',
+    label: '45° Vector Quad',
+    subtitle: 'Angled corner pods for lightning-fast 360° turret rotation',
+    turnMult: 1.32,
+    speedMult: 1.04,
+    knockbackResistMult: 0.96,
+    sideArmorBonus: 10,
+  },
 };
 
-// Recalibrated slower, weighty BattleBot arena speeds
 export const DRIVE_CATALOG: Record<DriveId, DriveSpec> = {
   omni: {
     id: 'omni',
@@ -1104,145 +1286,303 @@ export const DRIVE_CATALOG: Record<DriveId, DriveSpec> = {
     turnRate: 3.35,
     knockbackResist: 0.96,
   },
+  maglev: {
+    id: 'maglev',
+    label: 'Aether Mag-Drive',
+    subtitle: 'Electromagnetic hover-thrusters with explosive acceleration & pivot',
+    maxSpeed: 8.5,
+    accel: 26,
+    turnRate: 3.15,
+    knockbackResist: 0.92,
+    price: 600,
+  },
+  crawler_nuclear: {
+    id: 'crawler_nuclear',
+    label: 'Reactor Torque Core',
+    subtitle: 'Nuclear-geared siege transmission with massive shove & energy output',
+    maxSpeed: 6.4,
+    accel: 28,
+    turnRate: 2.45,
+    knockbackResist: 1.55,
+    price: 560,
+  },
   hover: {
     id: 'hover',
     label: 'Hover Skirt',
-    subtitle: 'Ducted-fan cushion floats over saws, lava and floor blades',
+    subtitle: 'Ducted-fan cushion floats over saws, floor blades, lava and acid',
     maxSpeed: 8.2,
     accel: 17,
     turnRate: 3.0,
     knockbackResist: 0.78,
-    price: 700,
+    price: 650,
   },
 };
+
+export const FINISH_CATALOG: Record<FinishStyleId, FinishStyleSpec> = {
+  standard: {
+    id: 'standard',
+    label: 'Factory Satin',
+    subtitle: 'Balanced machined clearcoat with brushed metal grain',
+    roughnessMult: 1.0,
+    metalnessAdd: 0.0,
+    clearcoat: 0.65,
+    iridescence: 0.0,
+  },
+  chrome: {
+    id: 'chrome',
+    label: 'Mirror Chrome',
+    subtitle: 'Ultra-polished liquid metal reflection',
+    roughnessMult: 0.35,
+    metalnessAdd: 0.25,
+    clearcoat: 1.0,
+    iridescence: 0.1,
+  },
+  matte: {
+    id: 'matte',
+    label: 'Tactical Matte',
+    subtitle: 'Non-reflective stealth military powdercoat',
+    roughnessMult: 1.65,
+    metalnessAdd: -0.25,
+    clearcoat: 0.08,
+    iridescence: 0.0,
+  },
+  iridescent: {
+    id: 'iridescent',
+    label: 'Aether Prismatic',
+    subtitle: 'Color-shifting quantum thin-film interference finish',
+    roughnessMult: 0.55,
+    metalnessAdd: 0.15,
+    clearcoat: 0.95,
+    iridescence: 0.95,
+  },
+  gold_leaf: {
+    id: 'gold_leaf',
+    label: 'Anodized Specular',
+    subtitle: 'High-gloss championship metallic sheen',
+    roughnessMult: 0.45,
+    metalnessAdd: 0.2,
+    clearcoat: 0.9,
+    iridescence: 0.35,
+  },
+  carbon_stealth: {
+    id: 'carbon_stealth',
+    label: 'Forged Carbon',
+    subtitle: 'Deep composite weave with satin clearcoat',
+    roughnessMult: 1.15,
+    metalnessAdd: -0.1,
+    clearcoat: 0.75,
+    iridescence: 0.15,
+  },
+};
+
+export const ACCESSORY_CATALOG: Record<AccessoryId, AccessorySpec> = {
+  none: {
+    id: 'none',
+    label: 'Clean Deck',
+    subtitle: 'Standard low-profile combat deck',
+  },
+  halo_crown: {
+    id: 'halo_crown',
+    label: 'Aether Halo Ring',
+    subtitle: 'Floating illuminated quantum energy ring above the core',
+  },
+  twin_flags: {
+    id: 'twin_flags',
+    label: 'Clan War Pennants',
+    subtitle: 'Twin dorsal battle standards bearing your accent colors',
+  },
+  radar_dish: {
+    id: 'radar_dish',
+    label: 'Tactical Radar Dome',
+    subtitle: 'Rotating target-acquisition dish & telemetry array',
+  },
+  thruster_wings: {
+    id: 'thruster_wings',
+    label: 'Aero Booster Fins',
+    subtitle: 'Swept supersonic stabilizer wings with glowing afterburners',
+  },
+  tesla_horns: {
+    id: 'tesla_horns',
+    label: 'Arc Bull Horns',
+    subtitle: 'Menacing twin chrome horns with glowing plasma tips',
+  },
+  boss_spikes: {
+    id: 'boss_spikes',
+    label: 'Dreadnought Spikes',
+    subtitle: 'Row of hardened steel dorsal spikes along the hull spine',
+  },
+};
+
+export const UNDERGLOW_OPTIONS: Array<{ label: string; value: string }> = [
+  { label: 'Off', value: 'none' },
+  { label: 'Amber Forge', value: '#F59E0B' },
+  { label: 'Cryo Cyan', value: '#38BDF8' },
+  { label: 'Aether Violet', value: '#A855F7' },
+  { label: 'Venom Emerald', value: '#10B981' },
+  { label: 'Crimson Fury', value: '#EF4444' },
+  { label: 'Cyber Magenta', value: '#EC4899' },
+];
 
 export interface ArenaSpec {
   id: ArenaId;
   name: string;
   subtitle: string;
+  hazardTag: string;
   halfSize: number;
   friction: number;
+  gravityMult?: number;
   energyRegenMult: number;
   skyHex: string;
   floorHex: string;
-  floorLineHex: string;
-  outerDeckHex: string;
   accentHex: string;
-  gravityMult?: number;
 }
 
 export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
   foundry: {
     id: 'foundry',
     name: 'Molten Foundry',
-    subtitle: 'Floor saw slots, explosive fuel drums & perimeter bumpers',
+    subtitle: 'Floor saw slots, explosive fuel drums & hydraulic crushers',
+    hazardTag: 'Saws · Crushers · Drums',
     halfSize: 18,
     friction: 5.4,
+    gravityMult: 1.0,
     energyRegenMult: 1.0,
     skyHex: '#101318',
     floorHex: '#1B2028',
-    floorLineHex: '#2E3745',
-    outerDeckHex: '#0D1015',
     accentHex: '#F59E0B',
   },
   cryo: {
     id: 'cryo',
     name: 'Sub-Zero Cryo Pit',
-    subtitle: 'Low-friction ice deck with pneumatic launch pads',
+    subtitle: 'Low-friction ice deck with pneumatic launch pads & cryo vents',
+    hazardTag: 'Ice Drift · Flippers',
     halfSize: 18,
     friction: 2.7,
+    gravityMult: 1.0,
     energyRegenMult: 1.05,
     skyHex: '#0C141D',
-    floorHex: '#16283A',
-    floorLineHex: '#34587A',
-    outerDeckHex: '#0B141E',
+    floorHex: '#19293A',
     accentHex: '#38BDF8',
   },
   reactor: {
     id: 'reactor',
     name: 'Overcharge Reactor',
     subtitle: 'Fast energy recharge with periodic EMP discharge rings',
+    hazardTag: '+55% Energy · EMP Rings',
     halfSize: 18,
     friction: 5.5,
+    gravityMult: 1.0,
     energyRegenMult: 1.55,
     skyHex: '#121019',
-    floorHex: '#191529',
-    floorLineHex: '#3B2E5E',
-    outerDeckHex: '#100C1B',
+    floorHex: '#1E1A2B',
     accentHex: '#A855F7',
   },
   colosseum: {
     id: 'colosseum',
     name: 'Apex Colosseum',
     subtitle: 'Championship stadium floor with corner saws, flipper & packed stands',
+    hazardTag: 'Championship Stadium',
     halfSize: 18,
     friction: 5.8,
+    gravityMult: 1.0,
     energyRegenMult: 1.15,
     skyHex: '#12151C',
-    floorHex: '#202630',
-    floorLineHex: '#3B4454',
-    outerDeckHex: '#10131A',
+    floorHex: '#202631',
     accentHex: '#EF4444',
+  },
+  aether_nexus: {
+    id: 'aether_nexus',
+    name: 'Aetheris Quantum Nexus',
+    subtitle: 'Low-gravity orbital platform with +40% energy flux & twin EMP rings',
+    hazardTag: 'Low Gravity · +40% Energy',
+    halfSize: 19,
+    friction: 4.8,
+    gravityMult: 0.68,
+    energyRegenMult: 1.4,
+    skyHex: '#090D1A',
+    floorHex: '#131C31',
+    accentHex: '#06B6D4',
+  },
+  toxic_scrapyard: {
+    id: 'toxic_scrapyard',
+    name: 'Acid Scrapyard',
+    subtitle: 'Corrosive reclamation pit with bubbling acid pools & heavy crushers',
+    hazardTag: 'Acid Pools · Extra Crates',
+    halfSize: 18,
+    friction: 5.1,
+    gravityMult: 1.0,
+    energyRegenMult: 1.1,
+    skyHex: '#0B1510',
+    floorHex: '#16261E',
+    accentHex: '#10B981',
+  },
+  volcano_caldera: {
+    id: 'volcano_caldera',
+    name: 'Magma Caldera',
+    subtitle: 'Superheated volcanic forge with erupting lava vents & quad saws',
+    hazardTag: 'Lava Vents · Thermal Burn',
+    halfSize: 18,
+    friction: 5.6,
+    gravityMult: 1.0,
+    energyRegenMult: 1.2,
+    skyHex: '#1A0D0A',
+    floorHex: '#2B1612',
+    accentHex: '#F97316',
+  },
+  cyber_grid: {
+    id: 'cyber_grid',
+    name: 'Neon Cyber Grid',
+    subtitle: 'High-traction synthwave circuit with hyper-flippers & sweeping rotors',
+    hazardTag: 'High Grip · +35% Energy',
+    halfSize: 18,
+    friction: 6.4,
+    gravityMult: 0.92,
+    energyRegenMult: 1.35,
+    skyHex: '#13091C',
+    floorHex: '#221330',
+    accentHex: '#EC4899',
   },
   skyforge: {
     id: 'skyforge',
     name: 'Skyforge Platform',
-    subtitle: 'High-altitude deck with opening drop pits and thin air',
+    subtitle: 'High-altitude deck with drop pits that open and close',
+    hazardTag: 'Drop Pits · Thin Air',
     halfSize: 18,
     friction: 5.0,
+    gravityMult: 0.82,
     energyRegenMult: 1.1,
     skyHex: '#1A2740',
     floorHex: '#26303F',
-    floorLineHex: '#4A5A72',
-    outerDeckHex: '#14203A',
     accentHex: '#22D3EE',
-    gravityMult: 0.82,
-  },
-  junkyard: {
-    id: 'junkyard',
-    name: 'Scrapyard Crucible',
-    subtitle: 'Cluttered wreck lot with a magnet crane and slag pools',
-    halfSize: 18,
-    friction: 6.2,
-    energyRegenMult: 0.95,
-    skyHex: '#16130F',
-    floorHex: '#2A241C',
-    floorLineHex: '#4A3F30',
-    outerDeckHex: '#14110C',
-    accentHex: '#84CC16',
   },
   storm: {
     id: 'storm',
     name: 'Tesla Stormcage',
-    subtitle: 'Lightning strikes the deck on a timer; EMP core at center',
+    subtitle: 'Lightning strikes aimed at bots, with an EMP core at center',
+    hazardTag: 'Lightning · EMP Core',
     halfSize: 18,
     friction: 5.3,
+    gravityMult: 1.0,
     energyRegenMult: 1.35,
     skyHex: '#0A0D1A',
     floorHex: '#141A2E',
-    floorLineHex: '#2C3A66',
-    outerDeckHex: '#090C18',
     accentHex: '#60A5FA',
   },
 };
 
 export const PAINT_PRESETS = [
-  { label: 'Molten Amber', primary: '#D97706', accent: '#FBBF24' },
-  { label: 'Crimson Forge', primary: '#B91C1C', accent: '#F87171' },
-  { label: 'Cobalt Steel', primary: '#1D4ED8', accent: '#60A5FA' },
-  { label: 'Gunmetal Slate', primary: '#334155', accent: '#F59E0B' },
-  { label: 'Emerald Spec', primary: '#047857', accent: '#34D399' },
-  { label: 'Obsidian Gold', primary: '#18181B', accent: '#EAB308' },
-  { label: 'Arctic Ops', primary: '#E2E8F0', accent: '#38BDF8' },
-  { label: 'Toxic Waste', primary: '#3F6212', accent: '#A3E635' },
-  { label: 'Royal Violet', primary: '#5B21B6', accent: '#C084FC' },
-  { label: 'Desert Storm', primary: '#A16207', accent: '#FDE68A' },
-  { label: 'Hot Pink Riot', primary: '#BE185D', accent: '#F9A8D4' },
-  { label: 'Marine Corps', primary: '#3F4A2E', accent: '#C2B280' },
-  { label: 'Teal Reef', primary: '#0F766E', accent: '#5EEAD4' },
-  { label: 'Blood Orange', primary: '#C2410C', accent: '#FED7AA' },
-  { label: 'Ghost White', primary: '#F8FAFC', accent: '#94A3B8' },
-  { label: 'Midnight Ion', primary: '#0B1120', accent: '#22D3EE' },
+  { label: 'Aetheris Prime', primary: '#0F172A', accent: '#38BDF8', underglow: '#38BDF8' },
+  { label: 'Molten Amber', primary: '#D97706', accent: '#FBBF24', underglow: '#F59E0B' },
+  { label: 'Crimson Forge', primary: '#B91C1C', accent: '#F87171', underglow: '#EF4444' },
+  { label: 'Cobalt Steel', primary: '#1D4ED8', accent: '#60A5FA', underglow: '#38BDF8' },
+  { label: 'Gunmetal Slate', primary: '#334155', accent: '#F59E0B', underglow: '#F59E0B' },
+  { label: 'Emerald Venom', primary: '#047857', accent: '#34D399', underglow: '#10B981' },
+  { label: 'Obsidian Gold', primary: '#18181B', accent: '#EAB308', underglow: '#F59E0B' },
+  { label: 'Quantum Violet', primary: '#5B21B6', accent: '#C084FC', underglow: '#A855F7' },
+  { label: 'Cyber Synth', primary: '#9D174D', accent: '#F472B6', underglow: '#EC4899' },
+  { label: 'Arctic Zero', primary: '#E2E8F0', accent: '#0284C7', underglow: '#38BDF8' },
+  { label: 'Toxic Hazard', primary: '#3F6212', accent: '#A3E635', underglow: '#10B981' },
+  { label: 'Blood Sovereign', primary: '#450A0A', accent: '#FB7185', underglow: '#EF4444' },
 ];
 
 export const DEFAULT_SKILLS: SkillTree = {
@@ -1251,10 +1591,13 @@ export const DEFAULT_SKILLS: SkillTree = {
   gyroStabilizer: 1,
   kineticArmor: 1,
   batteryCore: 1,
+  coolingSystem: 1,
+  naniteRepair: 0,
+  overclockCore: 1,
 };
 
 export const DEFAULT_BOT_CONFIG: BotConfig = {
-  name: 'Valkyrie MK-IV',
+  name: 'Aetheris MK-V',
   chassis: 'wedge',
   chassisStyles: ['wedge'],
   armor: 'titanium',
@@ -1262,8 +1605,11 @@ export const DEFAULT_BOT_CONFIG: BotConfig = {
   weapons: ['vspinner'],
   wheelLayout: '4wd_wide',
   drive: 'omni',
-  primaryColor: '#D97706',
-  accentColor: '#FBBF24',
+  primaryColor: '#0F172A',
+  accentColor: '#38BDF8',
+  finishStyle: 'standard',
+  accessory: 'halo_crown',
+  underglowColor: '#38BDF8',
 };
 
 export function computeBotStats(config: BotConfig, skills: SkillTree): BotComputedStats {
@@ -1277,6 +1623,10 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
   const extraWeapons = weapons.slice(1).map((id) => WEAPON_CATALOG[id]);
   const wl = WHEEL_LAYOUT_CATALOG[config.wheelLayout || '4wd_wide'] || WHEEL_LAYOUT_CATALOG['4wd_wide'];
   const dr = DRIVE_CATALOG[config.drive] || DRIVE_CATALOG.omni;
+
+  const coolingRank = skills.coolingSystem ?? 0;
+  const naniteRank = skills.naniteRepair ?? 0;
+  const overclockRank = skills.overclockCore ?? 0;
 
   // Hybrid body style fusion: core chassis + reinforced structural modules
   const hybridHpBonus = extraStyles.reduce((acc, s) => acc + s.baseHp * 0.16, 0);
@@ -1301,17 +1651,31 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
   const combinedLift = Math.max(primaryWp.lift, ...extraWeapons.map((w) => w.lift * 0.85));
   const combinedRange = Math.max(primaryWp.range, ...extraWeapons.map((w) => w.range));
 
-  const maxHp = Math.round((primaryCh.baseHp + hybridHpBonus + ar.hpBonus) * (1 + skills.chassisReinforcement * 0.09));
+  const maxHp = Math.round(
+    (primaryCh.baseHp + hybridHpBonus + ar.hpBonus) *
+      (1 + skills.chassisReinforcement * 0.09 + naniteRank * 0.03),
+  );
   const armorZoneHp = Math.round(
     (ar.zoneHp + wl.sideArmorBonus + extraStyles.length * 18) * (1 + skills.kineticArmor * 0.14),
   );
+  const maxShieldHp = Math.round(
+    ar.shieldBonus > 0 ? ar.shieldBonus * (1 + skills.batteryCore * 0.08 + overclockRank * 0.06) : 0,
+  );
   const mass = Number((primaryCh.baseMass + hybridMass + ar.massBonus + extraWeaponMass).toFixed(2));
   const maxSpeed = Number(
-    (dr.maxSpeed * primaryCh.speedMult * hybridSpeedMult * ar.speedMult * wl.speedMult * extraWeaponSpeedDrag).toFixed(
-      2,
-    ),
+    (
+      dr.maxSpeed *
+      primaryCh.speedMult *
+      hybridSpeedMult *
+      ar.speedMult *
+      wl.speedMult *
+      extraWeaponSpeedDrag *
+      (1 + overclockRank * 0.025)
+    ).toFixed(2),
   );
-  const accel = Number((dr.accel * primaryCh.speedMult * ar.speedMult * extraWeaponSpeedDrag).toFixed(2));
+  const accel = Number(
+    (dr.accel * primaryCh.speedMult * ar.speedMult * extraWeaponSpeedDrag * (1 + overclockRank * 0.03)).toFixed(2),
+  );
   const turnRate = Number((dr.turnRate * wl.turnMult * (1 + skills.gyroStabilizer * 0.04)).toFixed(2));
   const weaponDamage = Number(((primaryWp.damage + extraWeaponDamage) * (1 + skills.weaponTorque * 0.075)).toFixed(1));
   const weaponImpulse = Number(
@@ -1320,9 +1684,14 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
   const weaponLift = Number(combinedLift.toFixed(2));
   const weaponRange = Number(combinedRange.toFixed(2));
   const weaponCooldown = Number(
-    (primaryWp.cooldown * (1 + extraWeapons.length * 0.1) * (1 - skills.weaponTorque * 0.035)).toFixed(2),
+    Math.max(
+      0.22,
+      primaryWp.cooldown *
+        (1 + extraWeapons.length * 0.09) *
+        (1 - skills.weaponTorque * 0.035 - coolingRank * 0.045),
+    ).toFixed(2),
   );
-  const frontDeflect = Math.min(0.68, primaryCh.frontDeflect + hybridDeflect + skills.kineticArmor * 0.035);
+  const frontDeflect = Math.min(0.72, primaryCh.frontDeflect + hybridDeflect + skills.kineticArmor * 0.035);
   const knockbackResist = Number(
     (
       dr.knockbackResist *
@@ -1330,8 +1699,16 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
       (1 + extraStyles.length * 0.06 + skills.gyroStabilizer * 0.08)
     ).toFixed(2),
   );
-  const maxEnergy = Math.round(100 + skills.batteryCore * 14);
-  const energyRegen = Number((14 + skills.batteryCore * 2.4).toFixed(1));
+  const driveEnergyBonus = config.drive === 'crawler_nuclear' ? 18 : config.drive === 'maglev' ? 10 : 0;
+  const maxEnergy = Math.round(100 + driveEnergyBonus + skills.batteryCore * 14 + overclockRank * 6);
+  const energyRegen = Number(
+    (
+      14 +
+      (config.drive === 'crawler_nuclear' ? 3.2 : 0) +
+      skills.batteryCore * 2.4 +
+      coolingRank * 1.1
+    ).toFixed(1),
+  );
 
   const weightClass: BotWeightClass =
     mass >= 2.05 || maxHp >= 700
@@ -1342,22 +1719,29 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
           ? 'Lightweight'
           : 'Middleweight';
 
+  const totalSkillRanks =
+    skills.chassisReinforcement +
+    skills.weaponTorque +
+    skills.gyroStabilizer +
+    skills.kineticArmor +
+    skills.batteryCore +
+    coolingRank +
+    naniteRank +
+    overclockRank;
+
   const powerScore = Math.round(
     maxHp * 0.6 +
+      maxShieldHp * 0.75 +
       (weaponDamage / Math.max(0.24, weaponCooldown)) * 2.4 +
       maxSpeed * 14 +
       armorZoneHp * 0.55 +
-      (skills.chassisReinforcement +
-        skills.weaponTorque +
-        skills.gyroStabilizer +
-        skills.kineticArmor +
-        skills.batteryCore) *
-        20,
+      totalSkillRanks * 18,
   );
 
   return {
     maxHp,
     armorZoneHp,
+    maxShieldHp,
     mass,
     bodyScale,
     maxSpeed,

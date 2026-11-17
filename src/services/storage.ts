@@ -1,5 +1,7 @@
 import {
+  ACCESSORY_CATALOG,
   ARMOR_CATALOG,
+  type BotConfig,
   CHASSIS_CATALOG,
   DEFAULT_BOT_CONFIG,
   DEFAULT_SKILLS,
@@ -7,34 +9,90 @@ import {
   FINISH_CATALOG,
   getBotChassisStyles,
   getBotWeapons,
-  type PlayerProfile,
-  WEAPON_CATALOG,
   PATTERN_CATALOG,
-  type BotConfig,
+  type PlayerProfile,
+  premiumPartsInConfig,
+  WEAPON_CATALOG,
   WHEEL_LAYOUT_CATALOG,
 } from '../shared/types';
 
 const PROFILE_STORAGE_KEY = 'forgeclash_profile_v1';
 const PENDING_SYNC_KEY = 'forgeclash_pending_sync_v1';
 
+const DEFAULT_SAVED_LOADOUTS: BotConfig[] = [
+  { ...DEFAULT_BOT_CONFIG },
+  {
+    name: 'Aether Sovereign',
+    chassis: 'scorpion',
+    chassisStyles: ['scorpion', 'wedge'],
+    armor: 'aetherium',
+    weapon: 'tesla',
+    weapons: ['tesla', 'drum'],
+    wheelLayout: 'omni_quad',
+    drive: 'maglev',
+    primaryColor: '#5B21B6',
+    accentColor: '#C084FC',
+    finishStyle: 'iridescent',
+    accessory: 'halo_crown',
+    underglowColor: '#A855F7',
+  },
+  {
+    name: 'Juggernaut MK-IX',
+    chassis: 'juggernaut',
+    chassisStyles: ['juggernaut', 'rammer'],
+    armor: 'reactive_era',
+    weapon: 'railgun',
+    weapons: ['railgun', 'mortar', 'crush_jaw'],
+    wheelLayout: '8wd_crawler',
+    drive: 'crawler_nuclear',
+    primaryColor: '#18181B',
+    accentColor: '#F59E0B',
+    finishStyle: 'gold_leaf',
+    accessory: 'boss_spikes',
+    underglowColor: '#F59E0B',
+  },
+];
+
+function sanitizeBotConfig(raw: Partial<BotConfig> | undefined, fallback: BotConfig): BotConfig {
+  const merged: BotConfig = { ...fallback, ...(raw || {}) };
+  if (!CHASSIS_CATALOG[merged.chassis]) merged.chassis = fallback.chassis;
+  if (!ARMOR_CATALOG[merged.armor]) merged.armor = fallback.armor;
+  if (!WEAPON_CATALOG[merged.weapon]) merged.weapon = fallback.weapon;
+  if (!WHEEL_LAYOUT_CATALOG[merged.wheelLayout]) merged.wheelLayout = fallback.wheelLayout;
+  if (!DRIVE_CATALOG[merged.drive]) merged.drive = fallback.drive;
+  if (merged.finishStyle && !FINISH_CATALOG[merged.finishStyle]) merged.finishStyle = 'standard';
+  if (merged.accessory && !ACCESSORY_CATALOG[merged.accessory]) merged.accessory = 'none';
+  if (merged.pattern && !PATTERN_CATALOG[merged.pattern]) merged.pattern = 'none';
+  if (typeof merged.raceNumber === 'number' && !(merged.raceNumber >= 0 && merged.raceNumber <= 99)) merged.raceNumber = undefined;
+  merged.weapons = getBotWeapons(merged);
+  merged.weapon = merged.weapons[0];
+  merged.chassisStyles = getBotChassisStyles(merged);
+  merged.chassis = merged.chassisStyles[0];
+  return merged;
+}
+
 function makeDefaultProfile(): PlayerProfile {
   const randomTag = Math.random().toString(36).slice(2, 6).toUpperCase();
   return {
     id: `pilot_${Date.now().toString(36)}_${randomTag}`,
     callsign: `Pilot-${randomTag}`,
-    clanId: 'clan_iron',
-    clanTag: 'IRON',
+    pilotTitle: 'Aetheris Vanguard',
+    clanId: 'clan_aether',
+    clanTag: 'AETH',
     rating: 1200,
     level: 1,
     xp: 0,
-    scrap: 240,
-    skillPoints: 2,
+    scrap: 450,
+    skillPoints: 3,
     wins: 0,
     losses: 0,
     kos: 0,
     gauntletStage: 1,
     claimedEvents: [],
     botConfig: { ...DEFAULT_BOT_CONFIG },
+    savedLoadouts: DEFAULT_SAVED_LOADOUTS.map((b) => ({ ...b })),
+    activeLoadoutSlot: 0,
+    selectedWingmanIndex: 3,
     skills: { ...DEFAULT_SKILLS },
     batteryMode: 'balanced',
     muted: false,
@@ -43,25 +101,16 @@ function makeDefaultProfile(): PlayerProfile {
     campaignStars: {},
     arenaWins: {},
     bestSurvivalWave: 0,
-    savedLoadouts: [],
   };
 }
 
-/** Repairs a stored or incoming bot config so every part id resolves in the current catalogs. */
-export function sanitizeBotConfig(raw: Partial<BotConfig> | undefined, fallback: BotConfig): BotConfig {
-  const mergedBot: BotConfig = { ...fallback, ...(raw || {}) };
-  if (!CHASSIS_CATALOG[mergedBot.chassis]) mergedBot.chassis = fallback.chassis;
-  if (!ARMOR_CATALOG[mergedBot.armor]) mergedBot.armor = fallback.armor;
-  if (!WEAPON_CATALOG[mergedBot.weapon]) mergedBot.weapon = fallback.weapon;
-  if (!WHEEL_LAYOUT_CATALOG[mergedBot.wheelLayout]) mergedBot.wheelLayout = fallback.wheelLayout;
-  if (!DRIVE_CATALOG[mergedBot.drive]) mergedBot.drive = fallback.drive;
-  if (mergedBot.finish && !FINISH_CATALOG[mergedBot.finish]) mergedBot.finish = 'gloss';
-  if (mergedBot.pattern && !PATTERN_CATALOG[mergedBot.pattern]) mergedBot.pattern = 'none';
-  mergedBot.weapons = getBotWeapons(mergedBot);
-  mergedBot.weapon = mergedBot.weapons[0];
-  mergedBot.chassisStyles = getBotChassisStyles(mergedBot);
-  mergedBot.chassis = mergedBot.chassisStyles[0];
-  return mergedBot;
+/** Premium parts already sitting in a pilot's builds stay usable after the part economy arrives. */
+function grantEquippedParts(profile: PlayerProfile): PlayerProfile {
+  const owned = new Set(profile.ownedParts ?? []);
+  for (const cfg of [profile.botConfig, ...(profile.savedLoadouts ?? [])]) {
+    if (cfg) premiumPartsInConfig(cfg).forEach((k) => owned.add(k));
+  }
+  return { ...profile, ownedParts: [...owned] };
 }
 
 export function loadPlayerProfile(): PlayerProfile {
@@ -71,26 +120,29 @@ export function loadPlayerProfile(): PlayerProfile {
       const parsed = JSON.parse(raw) as Partial<PlayerProfile>;
       const fallback = makeDefaultProfile();
       const mergedBot = sanitizeBotConfig(parsed.botConfig, fallback.botConfig);
-      const loadouts = Array.isArray(parsed.savedLoadouts)
-        ? parsed.savedLoadouts.slice(0, 3).map((l) => sanitizeBotConfig(l, fallback.botConfig))
-        : [];
+      const rawLoadouts = Array.isArray(parsed.savedLoadouts) ? parsed.savedLoadouts : [];
+      const savedLoadouts: BotConfig[] = [0, 1, 2].map((idx) =>
+        sanitizeBotConfig(rawLoadouts[idx], DEFAULT_SAVED_LOADOUTS[idx] || fallback.botConfig),
+      );
 
-      return {
+      return grantEquippedParts({
         ...fallback,
         ...parsed,
         botConfig: mergedBot,
-        savedLoadouts: loadouts,
+        savedLoadouts,
         ownedParts: Array.isArray(parsed.ownedParts) ? parsed.ownedParts : [],
         campaignStars: parsed.campaignStars ?? {},
         arenaWins: parsed.arenaWins ?? {},
         bestSurvivalWave: parsed.bestSurvivalWave ?? 0,
+        activeLoadoutSlot: typeof parsed.activeLoadoutSlot === 'number' ? parsed.activeLoadoutSlot : 0,
+        selectedWingmanIndex: typeof parsed.selectedWingmanIndex === 'number' ? parsed.selectedWingmanIndex : 3,
         skills: { ...fallback.skills, ...(parsed.skills || {}) },
-      };
+      });
     }
   } catch {
     // Ignore parse errors
   }
-  const fresh = makeDefaultProfile();
+  const fresh = grantEquippedParts(makeDefaultProfile());
   savePlayerProfile(fresh);
   return fresh;
 }

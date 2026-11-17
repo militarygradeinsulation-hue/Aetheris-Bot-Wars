@@ -115,9 +115,12 @@ class SoundEngine {
         cryo: 1,
         reactor: 2,
         colosseum: 3,
-        skyforge: 4,
-        junkyard: 5,
-        storm: 6,
+        aether_nexus: 2,
+        toxic_scrapyard: 4,
+        volcano_caldera: 0,
+        cyber_grid: 5,
+        skyforge: 1,
+        storm: 2,
       };
       this.battleTrackIndex = (startMap[arenaId] ?? 0) % BATTLE_TRACKS.length;
     } else {
@@ -303,9 +306,10 @@ class SoundEngine {
     this.driveGain?.gain.setTargetAtTime(0.014 + speedRatio * 0.032 + boostAdd * 0.016, now, 0.06);
 
     const activeWeapons = params.weapons && params.weapons.length > 0 ? params.weapons : [params.weapon];
-    const hasFlame = activeWeapons.includes('flame') || activeWeapons.includes('tesla');
+    const hasFlame = activeWeapons.includes('flame') || activeWeapons.includes('cryo_jet');
     const hasSaw = activeWeapons.includes('sawblade');
-    const hasRotor = activeWeapons.includes('vspinner') || activeWeapons.includes('hbar') || activeWeapons.includes('drum');
+    const hasRotor =
+      activeWeapons.includes('vspinner') || activeWeapons.includes('hbar') || activeWeapons.includes('drum');
 
     // Modulate continuous weapon motor / torch roar
     if (hasFlame && params.weaponActive) {
@@ -516,7 +520,7 @@ class SoundEngine {
   }
 
   public playImpact(intensity = 1, isCrit = false, weaponId?: WeaponId) {
-    if (weaponId === 'hammer') {
+    if (weaponId === 'hammer' || weaponId === 'crush_jaw') {
       this.playHammerStrike(intensity);
       return;
     }
@@ -524,20 +528,16 @@ class SoundEngine {
       this.playSawGrind(intensity);
       return;
     }
-    if (weaponId === 'vspinner' || weaponId === 'hbar' || weaponId === 'drum') {
+    if (weaponId === 'vspinner' || weaponId === 'hbar' || weaponId === 'drum' || weaponId === 'tesla') {
       this.playSpinnerSlash(intensity);
       return;
     }
-    if (weaponId === 'jaws' || weaponId === 'lance') {
-      this.playHammerStrike(intensity * 0.9);
-      return;
-    }
-    if (weaponId === 'tesla') {
-      this.playZap(intensity);
-      return;
-    }
-    if (weaponId === 'flame') {
+    if (weaponId === 'flame' || weaponId === 'cryo_jet') {
       this.playFlameBurst();
+      return;
+    }
+    if (weaponId === 'railgun' || weaponId === 'mortar') {
+      this.playExplosion();
       return;
     }
 
@@ -721,82 +721,6 @@ class SoundEngine {
     });
   }
 
-  public playZap(intensity = 1.0) {
-    const ctx = this.ensureContext();
-    if (!ctx) return;
-    const now = ctx.currentTime;
-    const vol = Math.min(0.22, 0.08 + intensity * 0.08);
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(1800 + Math.random() * 900, now);
-    osc.frequency.exponentialRampToValueAtTime(120, now + 0.16);
-    gain.gain.setValueAtTime(vol, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.getNoiseBuffer(ctx);
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.setValueAtTime(2600, now);
-    const nGain = ctx.createGain();
-    nGain.gain.setValueAtTime(vol * 0.9, now);
-    nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    noise.connect(hp);
-    hp.connect(nGain);
-    nGain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.2);
-    noise.start(now);
-    noise.stop(now + 0.24);
-  }
-
-  public playThunder() {
-    this.playZap(1.6);
-    this.playExplosion();
-  }
-
-  public playMissileLaunch() {
-    const ctx = this.ensureContext();
-    if (!ctx) return;
-    const now = ctx.currentTime;
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.getNoiseBuffer(ctx);
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.setValueAtTime(600, now);
-    bp.frequency.exponentialRampToValueAtTime(2400, now + 0.35);
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(0.16, now + 0.04);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
-    noise.connect(bp);
-    bp.connect(gain);
-    gain.connect(ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.5);
-  }
-
-  public playAnnouncerSting() {
-    const ctx = this.ensureContext();
-    if (!ctx) return;
-    const now = ctx.currentTime;
-    [523.25, 659.25, 783.99].forEach((f, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(f, now + i * 0.09);
-      gain.gain.setValueAtTime(0.001, now + i * 0.09);
-      gain.gain.linearRampToValueAtTime(0.07, now + i * 0.09 + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.09 + 0.3);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now + i * 0.09);
-      osc.stop(now + i * 0.09 + 0.32);
-    });
-  }
-
   public playKo() {
     const ctx = this.ensureContext();
     if (!ctx) return;
@@ -816,6 +740,80 @@ class SoundEngine {
       osc.start(now + idx * 0.08);
       osc.stop(now + idx * 0.08 + 0.4);
     });
+  }
+
+  private tone(type: OscillatorType, from: number, to: number, start: number, dur: number, vol: number) {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const t0 = ctx.currentTime + start;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(from, t0);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + dur);
+    gain.gain.setValueAtTime(vol, t0);
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  }
+
+  private noiseBurst(type: BiquadFilterType, from: number, to: number, start: number, dur: number, vol: number) {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const t0 = ctx.currentTime + start;
+    const noise = ctx.createBufferSource();
+    noise.buffer = this.getNoiseBuffer(ctx);
+    const filter = ctx.createBiquadFilter();
+    filter.type = type;
+    filter.frequency.setValueAtTime(from, t0);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    noise.connect(filter);
+    filter.connect(g);
+    g.connect(ctx.destination);
+    noise.start(t0);
+    noise.stop(t0 + dur + 0.02);
+  }
+
+  public playZap(intensity = 1) {
+    this.tone('square', 1800, 220, 0, 0.12, 0.07 * intensity);
+    this.tone('sawtooth', 960, 120, 0.03, 0.16, 0.06 * intensity);
+    this.noiseBurst('highpass', 4200, 1800, 0, 0.14, 0.12 * intensity);
+  }
+
+  public playThunder() {
+    this.noiseBurst('highpass', 6000, 2400, 0, 0.08, 0.3);
+    this.noiseBurst('lowpass', 900, 60, 0.05, 1.4, 0.42);
+    this.tone('sine', 70, 30, 0.05, 1.0, 0.28);
+  }
+
+  public playMissileLaunch() {
+    this.noiseBurst('bandpass', 600, 2400, 0, 0.45, 0.22);
+    this.tone('sawtooth', 180, 620, 0, 0.35, 0.06);
+  }
+
+  public playMagnetHum() {
+    this.tone('sine', 90, 60, 0, 0.45, 0.16);
+    this.tone('triangle', 180, 120, 0, 0.4, 0.06);
+  }
+
+  public playLanceThrust() {
+    this.noiseBurst('bandpass', 2400, 600, 0, 0.12, 0.2);
+    this.tone('square', 300, 90, 0, 0.14, 0.12);
+  }
+
+  public playPitFall() {
+    this.tone('sine', 520, 60, 0, 0.9, 0.16);
+    this.noiseBurst('lowpass', 1200, 120, 0.6, 0.5, 0.25);
+  }
+
+  public playAnnouncerSting(kind: 'event' | 'wave' | 'hill' = 'event') {
+    const notes = kind === 'wave' ? [330, 392, 494, 659] : kind === 'hill' ? [523, 659] : [392, 523, 784];
+    notes.forEach((f, i) => this.tone('triangle', f, f * 0.98, i * 0.09, 0.26, 0.11));
   }
 }
 

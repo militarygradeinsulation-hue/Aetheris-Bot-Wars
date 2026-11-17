@@ -148,7 +148,14 @@ export function buildArenaEnvironment(
   const outerDeckGeo = new THREE.PlaneGeometry(160, 160);
   outerDeckGeo.rotateX(-Math.PI / 2);
   const outerDeckMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(spec.outerDeckHex),
+    color:
+      arenaId === 'cryo'
+        ? 0x0b141e
+        : arenaId === 'reactor'
+          ? 0x100c1b
+          : arenaId === 'colosseum'
+            ? 0x10131a
+            : 0x0d1015,
     roughness: 0.85,
     metalness: 0.35,
   });
@@ -219,7 +226,7 @@ export function buildArenaEnvironment(
     metalness: 0.5,
   });
   const glassMat = new THREE.MeshPhysicalMaterial({
-    color: arenaId === 'cryo' ? 0xbae6fd : arenaId === 'storm' ? 0xbfdbfe : 0xe2e8f0,
+    color: arenaId === 'cryo' ? 0xbae6fd : 0xe2e8f0,
     roughness: 0.08,
     metalness: 0.1,
     transparent: true,
@@ -339,8 +346,8 @@ export function buildArenaEnvironment(
       crystal.position.set(sx, 3.5, sz);
       group.add(crystal);
     }
-  } else if (arenaId === 'reactor') {
-    // High-voltage capacitor coils at corners
+  } else if (arenaId === 'reactor' || arenaId === 'aether_nexus') {
+    // High-voltage capacitor coils & quantum pylons at corners
     const coilGeo = new THREE.TorusGeometry(2.0, 0.32, 10, 24);
     coilGeo.rotateX(Math.PI / 2);
     const coreColGeo = new THREE.CylinderGeometry(0.9, 1.1, 7.5, 12);
@@ -356,6 +363,44 @@ export function buildArenaEnvironment(
         coil.position.set(sx, cy, sz);
         group.add(coil);
       });
+    }
+  } else if (arenaId === 'toxic_scrapyard') {
+    // Acid reclamation vats & industrial gantry pipes
+    const vatGeo = new THREE.CylinderGeometry(2.2, 2.2, 5.2, 16);
+    const vatTopGeo = new THREE.CircleGeometry(2.05, 16);
+    vatTopGeo.rotateX(-Math.PI / 2);
+    geometries.push(vatGeo, vatTopGeo);
+    for (let i = 0; i < 4; i++) {
+      const sx = i % 2 === 0 ? -half - 10.5 : half + 10.5;
+      const sz = i < 2 ? -half - 10.5 : half + 10.5;
+      const vat = new THREE.Mesh(vatGeo, wallMat);
+      vat.position.set(sx, 2.6, sz);
+      const pool = new THREE.Mesh(vatTopGeo, accentGlowMat);
+      pool.position.set(sx, 5.22, sz);
+      group.add(vat, pool);
+    }
+  } else if (arenaId === 'volcano_caldera') {
+    // Volcanic basalt spires & magma moat
+    const troughGeo = new THREE.BoxGeometry(half * 2 + 4, 0.18, 1.8);
+    const spireGeo = new THREE.ConeGeometry(2.4, 8.5, 7);
+    geometries.push(troughGeo, spireGeo);
+    [
+      [0, -half - 2.2, 0],
+      [0, half + 2.2, 0],
+      [-half - 2.2, 0, Math.PI / 2],
+      [half + 2.2, 0, Math.PI / 2],
+    ].forEach(([tx, tz, ry]) => {
+      const t = new THREE.Mesh(troughGeo, accentGlowMat);
+      t.position.set(tx, 0.04, tz);
+      t.rotation.y = ry;
+      group.add(t);
+    });
+    for (let i = 0; i < 4; i++) {
+      const sx = i % 2 === 0 ? -half - 11 : half + 11;
+      const sz = i < 2 ? -half - 11 : half + 11;
+      const sp = new THREE.Mesh(spireGeo, wallMat);
+      sp.position.set(sx, 4.25, sz);
+      group.add(sp);
     }
   } else if (arenaId === 'skyforge') {
     // Floating sky platform: deep void ring, hovering rock islands and thruster pylons
@@ -387,40 +432,6 @@ export function buildArenaEnvironment(
       glow.position.set(Math.cos(a) * r, island.position.y - 1.6, Math.sin(a) * r);
       group.add(glow);
     }
-  } else if (arenaId === 'junkyard') {
-    // Scrapyard: stacked wreck piles, tire walls and a tall magnet crane tower
-    const wreckGeo = new THREE.BoxGeometry(2.6, 1.4, 1.8);
-    const tireGeo = new THREE.TorusGeometry(0.75, 0.32, 8, 16);
-    const towerGeo = new THREE.BoxGeometry(1.2, 14, 1.2);
-    const boomGeo = new THREE.BoxGeometry(0.6, 0.6, half + 12);
-    const rustMat = new THREE.MeshStandardMaterial({ color: 0x7c2d12, roughness: 0.9, metalness: 0.35 });
-    const tireMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.95, metalness: 0.05 });
-    geometries.push(wreckGeo, tireGeo, towerGeo, boomGeo);
-    materials.push(rustMat, tireMat);
-    for (let i = 0; i < 4; i++) {
-      const sx = i % 2 === 0 ? -half - 9 : half + 9;
-      const sz = i < 2 ? -half - 8 : half + 8;
-      for (let k = 0; k < 3; k++) {
-        const w = new THREE.Mesh(wreckGeo, k % 2 ? rustMat : wallMat);
-        w.position.set(sx + (k - 1) * 0.6, 0.7 + k * 1.35, sz + (k % 2) * 0.4);
-        w.rotation.y = k * 0.5 + i;
-        group.add(w);
-      }
-    }
-    for (let i = 0; i < 10; i++) {
-      const t = new THREE.Mesh(tireGeo, tireMat);
-      const side = i < 5 ? -1 : 1;
-      t.position.set(((i % 5) - 2) * 3.4, 0.4 + (i % 2) * 0.5, side * (half + 2.6));
-      t.rotation.x = Math.PI / 2;
-      group.add(t);
-    }
-    const tower = new THREE.Mesh(towerGeo, wallMat);
-    tower.position.set(half + 8, 7, 0);
-    group.add(tower);
-    const boom = new THREE.Mesh(boomGeo, rustMat);
-    boom.rotation.y = Math.PI / 2;
-    boom.position.set((half + 8) / 2, 13.6, 0);
-    group.add(boom);
   } else if (arenaId === 'storm') {
     // Tesla Stormcage: ring of lightning rods with glowing orbs and arcing coils
     const rodGeo = new THREE.CylinderGeometry(0.22, 0.4, 9, 10);
@@ -444,7 +455,7 @@ export function buildArenaEnvironment(
       });
     }
   } else {
-    // Apex Colosseum: Stadium floodlight towers & championship scoreboards
+    // Apex Colosseum & Cyber Grid: Stadium floodlight towers & neon arches
     const towerGeo = new THREE.BoxGeometry(1.4, 11, 1.4);
     const lightBarGeo = new THREE.BoxGeometry(4.2, 1.3, 0.6);
     geometries.push(towerGeo, lightBarGeo);
@@ -964,40 +975,20 @@ export function buildArenaEnvironment(
     roughness: 0.2,
     metalness: 0.4,
   });
-  const armorPickupMat = new THREE.MeshStandardMaterial({
-    color: 0xfbbf24,
-    emissive: 0xf59e0b,
-    emissiveIntensity: 1.4,
-    roughness: 0.2,
+  const overchargeMat = new THREE.MeshStandardMaterial({
+    color: 0xf97316,
+    emissive: 0xf97316,
+    emissiveIntensity: 1.7,
+    roughness: 0.18,
     metalness: 0.5,
   });
-  const scrapMat = new THREE.MeshStandardMaterial({ color: 0x57534e, roughness: 0.85, metalness: 0.55 });
-  const scrapRustMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.9, metalness: 0.4 });
-  const scrapChunkGeo = new THREE.BoxGeometry(0.9, 0.5, 0.7);
-  const scrapPipeGeo = new THREE.CylinderGeometry(0.16, 0.16, 1.6, 8);
-  geometries.push(scrapChunkGeo, scrapPipeGeo);
-  materials.push(armorPickupMat, scrapMat, scrapRustMat);
-
-  // New hazard shared geometries
-  const pitHoleGeo = new THREE.CircleGeometry(1.0, 32);
-  pitHoleGeo.rotateX(-Math.PI / 2);
-  const pitRimGeo = new THREE.RingGeometry(1.0, 1.18, 32);
-  pitRimGeo.rotateX(-Math.PI / 2);
-  const pitDoorGeo = new THREE.CircleGeometry(1.0, 32, 0, Math.PI);
-  pitDoorGeo.rotateX(-Math.PI / 2);
-  const boltGeo = new THREE.CylinderGeometry(0.12, 0.35, 16, 6, 8, true);
-  const targetRingGeo = new THREE.RingGeometry(0.85, 1.0, 40);
-  targetRingGeo.rotateX(-Math.PI / 2);
-  const magnetPadGeo = new THREE.CylinderGeometry(1.6, 1.7, 0.06, 28);
-  const magnetHeadGeo = new THREE.CylinderGeometry(1.3, 1.3, 0.5, 24);
-  const magnetCableGeo = new THREE.CylinderGeometry(0.06, 0.06, 6, 6);
-  const magnetFieldGeo = new THREE.RingGeometry(0.95, 1.0, 48);
-  magnetFieldGeo.rotateX(-Math.PI / 2);
-  const lavaGeo = new THREE.CircleGeometry(1.0, 32);
-  lavaGeo.rotateX(-Math.PI / 2);
-  const lavaRimGeo = new THREE.RingGeometry(1.0, 1.14, 32);
-  lavaRimGeo.rotateX(-Math.PI / 2);
-  geometries.push(pitHoleGeo, pitRimGeo, pitDoorGeo, boltGeo, targetRingGeo, magnetPadGeo, magnetHeadGeo, magnetCableGeo, magnetFieldGeo, lavaGeo, lavaRimGeo);
+  const shieldPickupMat = new THREE.MeshStandardMaterial({
+    color: 0xa855f7,
+    emissive: 0xa855f7,
+    emissiveIntensity: 1.6,
+    roughness: 0.18,
+    metalness: 0.5,
+  });
 
   geometries.push(
     crateGeo,
@@ -1009,7 +1000,7 @@ export function buildArenaEnvironment(
     pickupCoreGeo,
     pickupRingGeo,
   );
-  materials.push(crateMat, crateTrimMat, barrelMat, pillarMat, repairMat, energyMat);
+  materials.push(crateMat, crateTrimMat, barrelMat, pillarMat, repairMat, energyMat, overchargeMat, shieldPickupMat);
 
   const sawBladeGeo = new THREE.CylinderGeometry(1.35, 1.35, 0.1, 18);
   const sawBaseGeo = new THREE.CylinderGeometry(1.5, 1.5, 0.06, 20);
@@ -1101,6 +1092,18 @@ export function buildArenaEnvironment(
   });
   materials.push(sawMat, sawSlotMat, gantrySteelMat, chromePistonMat, hazardBladeMat, hazardTipMat);
 
+  // Drop pit & lightning strike shared geometries
+  const pitHoleGeo = new THREE.CircleGeometry(1.0, 32);
+  pitHoleGeo.rotateX(-Math.PI / 2);
+  const pitRimGeo = new THREE.RingGeometry(1.0, 1.18, 32);
+  pitRimGeo.rotateX(-Math.PI / 2);
+  const pitDoorGeo = new THREE.CircleGeometry(1.0, 32, 0, Math.PI);
+  pitDoorGeo.rotateX(-Math.PI / 2);
+  const boltGeo = new THREE.CylinderGeometry(0.12, 0.35, 16, 6, 8, true);
+  const targetRingGeo = new THREE.RingGeometry(0.85, 1.0, 40);
+  targetRingGeo.rotateX(-Math.PI / 2);
+  geometries.push(pitHoleGeo, pitRimGeo, pitDoorGeo, boltGeo, targetRingGeo);
+
   function ensurePropMesh(prop: DestructibleProp): THREE.Group {
     let pGroup = propMeshes.get(prop.id);
     if (pGroup) return pGroup;
@@ -1133,20 +1136,20 @@ export function buildArenaEnvironment(
       const base = new THREE.Mesh(pillarCapGeo, crateTrimMat);
       base.position.y = 0.11;
       pGroup.add(col, cap, base);
-    } else if (prop.kind === 'scrap_heap') {
-      for (let k = 0; k < 5; k++) {
-        const chunk = new THREE.Mesh(scrapChunkGeo, k % 2 ? scrapRustMat : scrapMat);
-        chunk.position.set(Math.cos(k * 1.3) * 0.5, 0.25 + (k % 3) * 0.38, Math.sin(k * 1.3) * 0.5);
-        chunk.rotation.set(k * 0.4, k, k * 0.3);
-        chunk.castShadow = castShadow;
-        pGroup.add(chunk);
-      }
-      const pipe = new THREE.Mesh(scrapPipeGeo, crateTrimMat);
-      pipe.position.set(0.2, 0.9, -0.1);
-      pipe.rotation.z = 0.9;
-      pGroup.add(pipe);
-    } else if (prop.kind === 'pickup_repair' || prop.kind === 'pickup_energy' || prop.kind === 'pickup_armor') {
-      const mat = prop.kind === 'pickup_repair' ? repairMat : prop.kind === 'pickup_energy' ? energyMat : armorPickupMat;
+    } else if (
+      prop.kind === 'pickup_repair' ||
+      prop.kind === 'pickup_energy' ||
+      prop.kind === 'pickup_overcharge' ||
+      prop.kind === 'pickup_shield'
+    ) {
+      const mat =
+        prop.kind === 'pickup_repair'
+          ? repairMat
+          : prop.kind === 'pickup_energy'
+            ? energyMat
+            : prop.kind === 'pickup_overcharge'
+              ? overchargeMat
+              : shieldPickupMat;
       const core = new THREE.Mesh(pickupCoreGeo, mat);
       core.position.y = 0.72;
       const ring = new THREE.Mesh(pickupRingGeo, mat);
@@ -1377,63 +1380,6 @@ export function buildArenaEnvironment(
       return entry;
     }
 
-    if (h.kind === 'magnet_crane') {
-      const fieldMat = new THREE.MeshBasicMaterial({
-        color: 0x84cc16,
-        transparent: true,
-        opacity: 0.12,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-      });
-      const coilMat = new THREE.MeshStandardMaterial({ color: 0x84cc16, emissive: 0x65a30d, emissiveIntensity: 0.3, roughness: 0.3 });
-      materials.push(fieldMat, coilMat);
-      const pad = new THREE.Mesh(magnetPadGeo, sawSlotMat);
-      pad.position.y = 0.03;
-      const field = new THREE.Mesh(magnetFieldGeo, fieldMat);
-      field.scale.setScalar(h.radius);
-      field.position.y = 0.035;
-      const headGroup = new THREE.Group();
-      headGroup.position.y = 6.5;
-      const head = new THREE.Mesh(magnetHeadGeo, gantrySteelMat);
-      head.castShadow = castShadow;
-      const face = new THREE.Mesh(magnetPadGeo, coilMat);
-      face.scale.set(0.78, 1, 0.78);
-      face.position.y = -0.27;
-      const cable = new THREE.Mesh(magnetCableGeo, chromePistonMat);
-      cable.position.y = 3.2;
-      headGroup.add(head, face, cable);
-      hRoot.add(pad, field, headGroup);
-      group.add(hRoot);
-      const entry: HazardMeshEntry = { root: hRoot, movingPart: headGroup, ringMat: fieldMat, emissiveMat: coilMat };
-      hazardMeshes.set(h.id, entry);
-      return entry;
-    }
-
-    if (h.kind === 'lava') {
-      const lavaMat = new THREE.MeshStandardMaterial({
-        color: 0xf97316,
-        emissive: 0xea580c,
-        emissiveIntensity: 1.8,
-        roughness: 0.6,
-        metalness: 0.1,
-      });
-      const crustMat = new THREE.MeshBasicMaterial({ color: 0x1c1917, side: THREE.DoubleSide });
-      materials.push(lavaMat, crustMat);
-      const pool = new THREE.Mesh(lavaGeo, lavaMat);
-      pool.scale.setScalar(h.radius);
-      pool.position.y = 0.015;
-      const rim = new THREE.Mesh(lavaRimGeo, crustMat);
-      rim.scale.setScalar(h.radius);
-      rim.position.y = 0.02;
-      hRoot.add(pool, rim);
-      group.add(hRoot);
-      const entry: HazardMeshEntry = { root: hRoot, movingPart: pool, emissiveMat: lavaMat };
-      hazardMeshes.set(h.id, entry);
-      return entry;
-    }
-
     const rMat = new THREE.MeshBasicMaterial({
       color: 0xa855f7,
       transparent: true,
@@ -1461,7 +1407,13 @@ export function buildArenaEnvironment(
       for (const prop of props) {
         const mesh = ensurePropMesh(prop);
         mesh.visible = !prop.destroyed;
-        if (!prop.destroyed && prop.kind.startsWith('pickup')) {
+        if (
+          !prop.destroyed &&
+          (prop.kind === 'pickup_repair' ||
+            prop.kind === 'pickup_energy' ||
+            prop.kind === 'pickup_overcharge' ||
+            prop.kind === 'pickup_shield')
+        ) {
           mesh.children[0].rotation.y = time * 2.4;
           mesh.children[0].position.y = 0.72 + Math.sin(time * 3.5) * 0.14;
         }
@@ -1476,9 +1428,10 @@ export function buildArenaEnvironment(
           entry.movingPart.position.y = h.active ? 0.16 : h.warning ? 0.03 : -0.05;
         } else if (h.kind === 'flipper_pad') {
           entry.movingPart.position.y = h.active ? 0.36 : h.warning ? 0.12 : 0.07;
-        } else if (h.kind === 'emp_ring' && entry.ringMat) {
+        } else if ((h.kind === 'emp_ring' || h.kind === 'lava_vent' || h.kind === 'acid_pool') && entry.ringMat) {
+          const baseColor = h.kind === 'lava_vent' ? 0xf97316 : h.kind === 'acid_pool' ? 0x10b981 : 0xa855f7;
           if (h.active) {
-            entry.ringMat.color.setHex(0xa855f7);
+            entry.ringMat.color.setHex(baseColor);
             entry.ringMat.opacity = 0.88;
             entry.movingPart.scale.setScalar(1.06);
           } else if (h.warning) {
@@ -1486,8 +1439,8 @@ export function buildArenaEnvironment(
             entry.ringMat.opacity = 0.45 + Math.abs(Math.sin(nowSec * 10)) * 0.35;
             entry.movingPart.scale.setScalar(1.0);
           } else {
-            entry.ringMat.color.setHex(0xa855f7);
-            entry.ringMat.opacity = 0.2;
+            entry.ringMat.color.setHex(baseColor);
+            entry.ringMat.opacity = 0.22;
             entry.movingPart.scale.setScalar(0.96);
           }
         } else if (h.kind === 'crusher') {
@@ -1537,17 +1490,6 @@ export function buildArenaEnvironment(
             entry.ringMat.color.setHex(h.active ? 0xffffff : 0x60a5fa);
             entry.ringMat.opacity = h.active ? 0.95 : h.warning ? 0.35 + Math.abs(Math.sin(nowSec * 14)) * 0.55 : 0;
           }
-        } else if (h.kind === 'magnet_crane') {
-          const targetY = h.active ? 1.4 : h.warning ? 3.2 : 6.5;
-          entry.movingPart.position.y += (targetY - entry.movingPart.position.y) * Math.min(1, dt * 3.5);
-          entry.movingPart.rotation.y += dt * (h.active ? 1.6 : 0.2);
-          if (entry.ringMat) {
-            entry.ringMat.opacity = h.active ? 0.28 + Math.abs(Math.sin(nowSec * 6)) * 0.3 : h.warning ? 0.2 + Math.abs(Math.sin(nowSec * 10)) * 0.2 : 0.06;
-          }
-          if (entry.emissiveMat) entry.emissiveMat.emissiveIntensity = h.active ? 2.6 : h.warning ? 1.4 : 0.3;
-        } else if (h.kind === 'lava') {
-          if (entry.emissiveMat) entry.emissiveMat.emissiveIntensity = 1.5 + Math.sin(nowSec * 2.2 + h.x) * 0.45;
-          entry.movingPart.rotation.y += dt * 0.15;
         } else if (h.kind === 'spinner_blade') {
           const targetY = h.active ? 0.14 : h.warning ? -0.14 : -0.44;
           entry.movingPart.position.y += (targetY - entry.movingPart.position.y) * Math.min(1, dt * 10);

@@ -1,7 +1,8 @@
-import React from 'react';
-import { Camera, Crown, LogOut, Volume2, VolumeX, Trophy, RotateCcw, Star, Swords, Zap } from 'lucide-react';
-import { getCampaignLevel, describeObjective, describeUnlock } from '../shared/campaign';
+import React, { useEffect, useState } from 'react';
+import { Camera, Crown, LogOut, Volume2, VolumeX, Trophy, RotateCcw, Star, Swords, Shield, Zap } from 'lucide-react';
+import { describeObjective, describeUnlock, getCampaignLevel } from '../shared/campaign';
 import {
+  ARENA_CATALOG,
   ARENA_EVENT_INFO,
   getBotWeapons,
   MATCH_MODIFIERS,
@@ -23,8 +24,6 @@ export interface MatchResultSummary {
   levelTitle?: string;
   ratingDelta: number;
 }
-
-const TEAM_COLORS = ['#34D399', '#F87171', '#60A5FA', '#FBBF24', '#C084FC', '#F472B6'];
 
 interface CombatHudProps {
   matchResult?: MatchResultSummary | null;
@@ -73,6 +72,74 @@ function ArmorMiniIndicator({ bot }: { bot: BotPhysicsState }) {
   );
 }
 
+function ArenaMiniRadar({ snapshot, playerId }: { snapshot: ArenaSnapshot; playerId: string }) {
+  const half = ARENA_CATALOG[snapshot.arenaId]?.halfSize || 18;
+  const player = snapshot.bots.find((b) => b.id === playerId) || snapshot.bots[0];
+  const toPct = (coord: number) => Math.max(4, Math.min(96, ((coord + half) / (half * 2)) * 100));
+
+  return (
+    <div className="pointer-events-none hidden md:block fixed bottom-4 left-4 z-20 h-28 w-28 rounded-xl border border-slate-700/80 bg-[#0D1014]/88 p-1.5 shadow-xl">
+      <div className="relative h-full w-full rounded-lg border border-slate-800 bg-[#121720] overflow-hidden">
+        <div className="absolute inset-x-0 top-1/2 h-px bg-slate-800/80" />
+        <div className="absolute inset-y-0 left-1/2 w-px bg-slate-800/80" />
+
+        {/* Hazards */}
+        {snapshot.hazards.map((h) => (
+          <span
+            key={h.id}
+            style={{ left: `${toPct(h.x)}%`, top: `${toPct(h.z)}%` }}
+            className={`-translate-x-1/2 -translate-y-1/2 absolute h-2 w-2 rounded-full ${
+              h.active
+                ? 'bg-red-500/80'
+                : h.warning
+                  ? 'bg-amber-400/75'
+                  : 'bg-slate-600/40'
+            }`}
+          />
+        ))}
+
+        {/* Active Pickups */}
+        {snapshot.props
+          .filter(
+            (p) =>
+              !p.destroyed &&
+              (p.kind === 'pickup_repair' ||
+                p.kind === 'pickup_energy' ||
+                p.kind === 'pickup_overcharge' ||
+                p.kind === 'pickup_shield'),
+          )
+          .map((p) => (
+            <span
+              key={p.id}
+              style={{ left: `${toPct(p.x)}%`, top: `${toPct(p.z)}%` }}
+              className="-translate-x-1/2 -translate-y-1/2 absolute h-2 w-2 rounded-sm bg-emerald-400 animate-pulse"
+            />
+          ))}
+
+        {/* Bots */}
+        {snapshot.bots.map((b) => {
+          if (b.isDead) return null;
+          const isSelf = b.id === player?.id;
+          const isAlly = !isSelf && player && b.team === player.team;
+          return (
+            <span
+              key={b.id}
+              style={{ left: `${toPct(b.x)}%`, top: `${toPct(b.z)}%` }}
+              className={`-translate-x-1/2 -translate-y-1/2 absolute rounded-full border border-slate-950 ${
+                isSelf
+                  ? 'h-3 w-3 bg-amber-400 z-10'
+                  : isAlly
+                    ? 'h-2.5 w-2.5 bg-emerald-400'
+                    : 'h-2.5 w-2.5 bg-red-500'
+              }`}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export const CombatHud: React.FC<CombatHudProps> = ({
   snapshot,
   playerId,
@@ -88,20 +155,28 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   onWeaponTrigger,
   showKeyboardHint,
 }) => {
+  const [calloutText, setCalloutText] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!snapshot.events || snapshot.events.length === 0) return;
+    const withCallout = [...snapshot.events].reverse().find((e) => e.callout);
+    if (withCallout?.callout) {
+      setCalloutText(withCallout.callout);
+      const t = window.setTimeout(() => setCalloutText(null), 2200);
+      return () => clearTimeout(t);
+    }
+  }, [snapshot.events]);
+
   const player = snapshot.bots.find((b) => b.id === playerId) || snapshot.bots[0];
-  const rivals = snapshot.bots.filter((b) => b.id !== player?.id);
+  const allies = snapshot.bots.filter((b) => b.id !== player?.id && b.team === player?.team);
+  const rivals = snapshot.bots.filter((b) => b.id !== player?.id && b.team !== player?.team);
+  const playerWeapons = player ? getBotWeapons(player.config) : [];
   const playerTeam = player?.team ?? 0;
-  const allies = rivals.filter((b) => b.team === playerTeam);
-  const enemies = rivals.filter((b) => b.team !== playerTeam);
-  const isTeamMatch = allies.length > 0 || snapshot.mode === 'team_2v2' || snapshot.mode === 'team_3v3' || snapshot.mode === 'boss_raid' || snapshot.mode === 'king_hill';
   const campaignLevel = campaignLevelId ? getCampaignLevel(campaignLevelId) : undefined;
   const arenaEvent = snapshot.arenaEvent;
   const hill = snapshot.hill;
   const isSurvival = snapshot.mode === 'survival';
   const untimed = snapshot.mode === 'practice' || isSurvival;
-  const stunned = (player?.stunTimer ?? 0) > 0;
-  const pinned = (player?.pinnedTimer ?? 0) > 0;
-  const playerWeapons = player ? getBotWeapons(player.config) : [];
 
   const secs = Math.ceil(snapshot.timeRemaining);
   const mins = Math.floor(secs / 60);
@@ -112,18 +187,19 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   const isFinalTen = !untimed && snapshot.phase === 'active' && secs <= 10;
 
   const escalationStage = snapshot.escalationStage ?? 1;
-  const boltWarning = snapshot.hazards.some((h) => h.kind === 'lightning' && h.warning);
-  const pitOpen = snapshot.hazards.some((h) => h.kind === 'pit' && h.active);
-  const magnetActive = snapshot.hazards.some((h) => h.kind === 'magnet_crane' && h.active);
   const crusherWarning = snapshot.hazards.some((h) => h.kind === 'crusher' && h.warning);
   const crusherActive = snapshot.hazards.some((h) => h.kind === 'crusher' && h.active);
   const bladeWarning = snapshot.hazards.some((h) => h.kind === 'spinner_blade' && h.warning);
   const bladeActive = snapshot.hazards.some((h) => h.kind === 'spinner_blade' && h.active);
 
-  const hazardAlertText = magnetActive
-    ? 'Magnet Crane Engaged'
-    : boltWarning
-      ? 'Lightning Incoming'
+  const arenaSpec = ARENA_CATALOG[snapshot.arenaId];
+  const boltWarning = snapshot.hazards.some((h) => h.kind === 'lightning' && h.warning);
+  const pitOpen = snapshot.hazards.some((h) => h.kind === 'pit' && h.active);
+
+  const hazardAlertText = boltWarning
+    ? 'Lightning Incoming'
+    : pitOpen && !crusherActive
+      ? 'Drop Pits Open'
       : crusherActive
     ? 'Crusher Impact'
     : crusherWarning
@@ -132,16 +208,14 @@ export const CombatHud: React.FC<CombatHudProps> = ({
         ? 'Floor Blades Active'
         : bladeWarning
           ? 'Floor Blades Arming'
-          : pitOpen
-            ? 'Drop Pits Open'
-            : escalationStage >= 3
-            ? 'Hazard Tier 3 · All Traps'
+          : escalationStage >= 3
+            ? `${arenaSpec?.name || 'Arena'} · Tier 3 All Traps`
             : escalationStage === 2
-              ? 'Hazard Tier 2 · Crushers'
-              : 'Hazard Tier 1';
+              ? `${arenaSpec?.name || 'Arena'} · Tier 2 Crushers`
+              : `${arenaSpec?.name || 'Arena'} · Tier 1`;
 
   const hazardAlertTone =
-    crusherActive || bladeActive || magnetActive
+    crusherActive || bladeActive
       ? 'border-red-500/70 bg-[#1B1214]/95 text-red-300'
       : crusherWarning || bladeWarning || boltWarning || pitOpen
         ? 'border-amber-500/70 bg-[#1C1710]/95 text-amber-300'
@@ -150,11 +224,14 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   const winner = snapshot.winnerId ? snapshot.bots.find((b) => b.id === snapshot.winnerId) : null;
   const playerWon =
     matchResult?.won ??
-    (snapshot.winnerTeam !== undefined && snapshot.winnerTeam !== null
-      ? snapshot.winnerTeam === playerTeam
-      : winner?.id === player?.id);
+    (winner?.id === player?.id ||
+      (snapshot.winningTeam !== null &&
+        snapshot.winningTeam !== undefined &&
+        Boolean(player) &&
+        snapshot.winningTeam === player?.team));
   const endedByTime = snapshot.finishReason === 'time';
   const endedByObjective = snapshot.finishReason === 'objective';
+  const isTeamMatch = allies.length > 0 || (rivals.length > 1 && snapshot.mode !== 'brawl_4bot');
   const sortedStandings = [...snapshot.bots].sort((a, b) => {
     if (a.isDead !== b.isDead) return a.isDead ? 1 : -1;
     const scoreA = (a.hp / Math.max(1, a.maxHp)) * 100 + a.damageDealt * 0.16 + a.kos * 30;
@@ -166,42 +243,115 @@ export const CombatHud: React.FC<CombatHudProps> = ({
     <>
       {/* Top Compact Combat Telemetry Bar */}
       <div className="pointer-events-none fixed inset-x-0 top-0 z-20 flex items-start justify-between gap-2 p-3 sm:px-6 pt-safe">
-        {/* Player Status */}
-        {player && (
-          <div className="pointer-events-auto flex items-center gap-3 rounded-xl border border-slate-700/80 bg-[#12161C]/90 px-3 py-2 min-w-[168px] sm:min-w-[248px]">
-            <div className="flex-1 min-w-0">
+        {/* Player + Wingman Ally Status Column */}
+        <div className="pointer-events-auto flex flex-col gap-1.5 min-w-[172px] sm:min-w-[260px]">
+          {player && (
+            <div className="flex items-center gap-3 rounded-xl border border-slate-700/80 bg-[#12161C]/92 px-3 py-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-bold text-white truncate">{player.config.name}</span>
+                  <span className="font-mono-tabular text-amber-400 font-semibold shrink-0">
+                    {Math.max(0, Math.round(player.hp))}/{player.maxHp}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400 mt-0.5">
+                  <span>{player.weightClass}</span>
+                  {(player.shieldHp ?? 0) > 0 && (
+                    <span className="flex items-center gap-0.5 text-sky-400 font-semibold">
+                      <Shield className="h-2.5 w-2.5" /> {Math.round(player.shieldHp!)}
+                    </span>
+                  )}
+                  {(player.eraBlocksRemaining ?? 0) > 0 && (
+                    <span className="rounded bg-amber-500/20 px-1 text-[9px] font-bold text-amber-300">
+                      ERA×{player.eraBlocksRemaining}
+                    </span>
+                  )}
+                  {player.overdriveTimer > 0 && (
+                    <span className="rounded bg-sky-500/25 px-1 text-[9px] font-bold text-sky-300">
+                      OVERDRIVE
+                    </span>
+                  )}
+                  {(player.damageBoostTimer ?? 0) > 0 && (
+                    <span className="rounded bg-orange-500/25 px-1 text-[9px] font-bold text-orange-300">
+                      +35% DMG
+                    </span>
+                  )}
+                  {(player.freezeTimer ?? 0) > 0 && (
+                    <span className="rounded bg-cyan-500/25 px-1 text-[9px] font-bold text-cyan-300">
+                      FROZEN
+                    </span>
+                  )}
+                  {(player.pinnedTimer ?? 0) > 0 && (
+                    <span className="rounded bg-orange-500/25 px-1 text-[9px] font-bold text-orange-300">PINNED</span>
+                  )}
+                  {player.isBounty && (
+                    <span className="rounded bg-yellow-500/25 px-1 text-[9px] font-bold text-yellow-300">BOUNTY</span>
+                  )}
+                  {(player.shockTimer ?? 0) > 0 && (
+                    <span className="rounded bg-purple-500/25 px-1 text-[9px] font-bold text-purple-300">
+                      EMP SHOCK
+                    </span>
+                  )}
+                </div>
+
+                {/* Shield Bar (if equipped) */}
+                {(player.maxShieldHp ?? 0) > 0 && (
+                  <div className="mt-1 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-cyan-400 transition-all duration-100"
+                      style={{
+                        width: `${Math.max(0, ((player.shieldHp ?? 0) / Math.max(1, player.maxShieldHp!)) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Hull HP Bar */}
+                <div className="mt-1 h-2 w-full rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full bg-amber-500 transition-all duration-100"
+                    style={{ width: `${Math.max(0, (player.hp / player.maxHp) * 100)}%` }}
+                  />
+                </div>
+                {/* Energy Bar */}
+                <div className="mt-1 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full bg-sky-400 transition-all duration-100"
+                    style={{ width: `${Math.max(0, (player.energy / player.maxEnergy) * 100)}%` }}
+                  />
+                </div>
+              </div>
+              <ArmorMiniIndicator bot={player} />
+            </div>
+          )}
+
+          {/* Wingman / Teammate Card in 2v2 or Raid */}
+          {allies.map((ally) => (
+            <div
+              key={ally.id}
+              className={`rounded-xl border px-3 py-1.5 bg-[#12161C]/90 ${
+                ally.isDead ? 'border-slate-800 opacity-55' : 'border-emerald-500/60'
+              }`}
+            >
               <div className="flex items-center justify-between gap-2 text-xs">
-                <span className="font-bold text-white truncate">{player.config.name}</span>
-                <span className="font-mono-tabular text-amber-400 font-semibold shrink-0">
-                  {Math.max(0, Math.round(player.hp))}/{player.maxHp}
+                <span className="font-semibold text-emerald-300 truncate">
+                  ALLY · [{ally.clanTag}] {ally.config.name}
                 </span>
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] text-slate-400 truncate">
-                <span>{player.weightClass}</span>
-                {stunned && <span className="rounded bg-sky-500/25 px-1 font-bold text-sky-300">STUNNED</span>}
-                {pinned && <span className="rounded bg-orange-500/25 px-1 font-bold text-orange-300">PINNED</span>}
-                {player.isBounty && <span className="rounded bg-yellow-500/25 px-1 font-bold text-yellow-300">BOUNTY</span>}
-                {player.burnTimer > 0 && <span className="rounded bg-red-500/25 px-1 font-bold text-red-300">BURNING</span>}
-                {(player.shieldFlash ?? 0) > 0 && <span className="rounded bg-violet-500/25 px-1 font-bold text-violet-300">SHIELD</span>}
-              </div>
-              <div className="mt-1 h-2 w-full rounded-full bg-slate-800 overflow-hidden">
-                <div
-                  className="h-full bg-amber-500 transition-all duration-100"
-                  style={{ width: `${Math.max(0, (player.hp / player.maxHp) * 100)}%` }}
-                />
+                <span className="font-mono-tabular text-emerald-400 font-semibold shrink-0">
+                  {ally.isDead ? 'KO' : `${Math.round(ally.hp)}/${ally.maxHp}`}
+                </span>
               </div>
               <div className="mt-1 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
                 <div
-                  className="h-full bg-sky-400 transition-all duration-100"
-                  style={{ width: `${Math.max(0, (player.energy / player.maxEnergy) * 100)}%` }}
+                  className="h-full bg-emerald-400 transition-all duration-100"
+                  style={{ width: `${Math.max(0, (ally.hp / ally.maxHp) * 100)}%` }}
                 />
               </div>
             </div>
-            <ArmorMiniIndicator bot={player} />
-          </div>
-        )}
+          ))}
+        </div>
 
-        {/* Center Match Timer + Controls + Timed Hazard Escalation */}
+        {/* Center Match Timer + Controls + Timed Hazard Escalation + Callout Banner */}
         <div className="pointer-events-none flex flex-col items-center gap-1.5">
           <div
             className={`pointer-events-auto flex items-center gap-1.5 rounded-xl border bg-[#12161C]/90 px-2.5 py-1.5 ${
@@ -225,12 +375,20 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                   ? 'FINAL SEC'
                   : isMultiplayer
                     ? 'Timed PvP'
+                    : campaignLevel
+                      ? campaignLevel.title
                     : isSurvival
                       ? `${snapshot.survivalKills ?? 0} kills`
-                      : snapshot.mode === 'practice'
-                        ? 'Test Range'
-                        : campaignLevel
-                          ? campaignLevel.title
+                    : snapshot.mode === 'team_3v3'
+                      ? 'Squad 3v3'
+                    : snapshot.mode === 'king_hill'
+                      ? 'King of the Hill'
+                    : snapshot.mode === 'team_2v2'
+                      ? '2v2 Clash'
+                      : snapshot.mode === 'boss_raid'
+                        ? 'Boss Raid'
+                        : snapshot.mode === 'practice'
+                          ? 'Test Range'
                           : 'Timed Battle'}
               </div>
               {!untimed && (
@@ -279,7 +437,7 @@ export const CombatHud: React.FC<CombatHudProps> = ({
           )}
 
           {snapshot.phase === 'active' && arenaEvent && (
-            <div className="flex items-center gap-1.5 rounded-lg border border-fuchsia-500/70 bg-[#1A1220]/95 px-2.5 py-1 text-[11px] font-bold text-fuchsia-200 whitespace-nowrap animate-pulse">
+            <div className="flex items-center gap-1.5 rounded-lg border border-fuchsia-500/70 bg-[#1A1220]/95 px-2.5 py-1 text-[11px] font-bold text-fuchsia-200 whitespace-nowrap">
               <Zap className="h-3.5 w-3.5" />
               {arenaEvent.label}
               <span className="font-normal text-fuchsia-300/80 hidden sm:inline">· {ARENA_EVENT_INFO[arenaEvent.kind].note}</span>
@@ -292,7 +450,13 @@ export const CombatHud: React.FC<CombatHudProps> = ({
               <div className="flex items-center justify-between text-[10px] font-semibold text-yellow-200">
                 <span className="flex items-center gap-1">
                   <Crown className="h-3 w-3" />
-                  {hill.contested ? 'CONTESTED' : hill.owner === null ? 'Hill Neutral' : hill.owner === playerTeam ? 'Your Team Holds' : 'Enemy Holds'}
+                  {hill.contested
+                    ? 'CONTESTED'
+                    : hill.owner === null
+                      ? 'Hill Neutral'
+                      : hill.owner === playerTeam
+                        ? 'Your Team Holds'
+                        : 'Enemy Holds'}
                 </span>
                 <span className="font-mono-tabular text-yellow-300/80">moves {Math.ceil(hill.moveTimer)}s</span>
               </div>
@@ -301,19 +465,18 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                 .slice(0, 3)
                 .map((t) => (
                   <div key={t} className="mt-1 flex items-center gap-1.5">
-                    <span className="w-9 text-[9px] font-bold" style={{ color: t === playerTeam ? TEAM_COLORS[0] : TEAM_COLORS[1] }}>
+                    <span className={`w-9 text-[9px] font-bold ${t === playerTeam ? 'text-emerald-400' : 'text-red-400'}`}>
                       {t === playerTeam ? 'YOU' : 'ENMY'}
                     </span>
                     <div className="h-1.5 flex-1 rounded-full bg-slate-800 overflow-hidden">
                       <div
-                        className="h-full transition-all duration-200"
-                        style={{
-                          width: `${Math.min(100, ((hill.scores[t] ?? 0) / hill.target) * 100)}%`,
-                          backgroundColor: t === playerTeam ? TEAM_COLORS[0] : TEAM_COLORS[1],
-                        }}
+                        className={`h-full transition-all duration-200 ${t === playerTeam ? 'bg-emerald-400' : 'bg-red-500'}`}
+                        style={{ width: `${Math.min(100, ((hill.scores[t] ?? 0) / hill.target) * 100)}%` }}
                       />
                     </div>
-                    <span className="w-6 text-right font-mono-tabular text-[9px] text-slate-300">{Math.floor(hill.scores[t] ?? 0)}</span>
+                    <span className="w-6 text-right font-mono-tabular text-[9px] text-slate-300">
+                      {Math.floor(hill.scores[t] ?? 0)}
+                    </span>
                   </div>
                 ))}
             </div>
@@ -322,81 +485,63 @@ export const CombatHud: React.FC<CombatHudProps> = ({
           {snapshot.phase !== 'finished' && (snapshot.modifiers?.length ?? 0) > 0 && (
             <div className="hidden sm:flex flex-wrap justify-center gap-1 max-w-[320px]">
               {snapshot.modifiers!.map((m) => (
-                <span key={m} className="rounded border border-fuchsia-500/40 bg-[#160F1A]/85 px-1.5 py-0.5 text-[9px] font-semibold text-fuchsia-300">
+                <span
+                  key={m}
+                  className="rounded border border-fuchsia-500/40 bg-[#160F1A]/85 px-1.5 py-0.5 text-[9px] font-semibold text-fuchsia-300"
+                >
                   {MATCH_MODIFIERS[m].label}
                 </span>
               ))}
             </div>
           )}
+
+          {calloutText && snapshot.phase === 'active' && (
+            <div className="rounded-xl border border-amber-400/80 bg-amber-500/20 px-3.5 py-1 text-xs font-extrabold tracking-wider text-amber-300 shadow-lg">
+              {calloutText}
+            </div>
+          )}
         </div>
 
-        {/* Allies & Rivals Status */}
-        <div className="pointer-events-auto hidden sm:flex flex-col gap-1.5 min-w-[215px] max-h-[70vh] overflow-y-auto">
-          {[...allies, ...enemies].map((r) => {
-            const isAlly = r.team === playerTeam;
-            return (
-              <div
-                key={r.id}
-                className={`rounded-xl border px-3 py-1.5 bg-[#12161C]/90 ${
-                  r.isDead
-                    ? 'border-slate-800 opacity-55'
-                    : r.isBoss
-                      ? 'border-red-500/70'
-                      : isAlly
-                        ? 'border-emerald-500/50'
-                        : 'border-slate-700/80'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2 text-xs">
-                  <span className="font-semibold text-slate-100 truncate">
-                    {isTeamMatch && (
-                      <span className={`mr-1 text-[9px] font-bold ${isAlly ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {isAlly ? 'ALLY' : r.isBoss ? 'BOSS' : 'FOE'}
-                      </span>
-                    )}
-                    [{r.clanTag}] {r.config.name}
-                  </span>
-                  <span className={`font-mono-tabular font-semibold shrink-0 ${isAlly ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {r.isDead ? 'KO' : `${Math.round(r.hp)}/${r.maxHp}`}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono-tabular">
-                  <span>Lv {r.botLevel} · {r.weightClass}</span>
-                  {r.isBounty && <span className="font-sans font-bold text-yellow-300">BOUNTY</span>}
-                  {(r.stunTimer ?? 0) > 0 && <span className="font-sans font-bold text-sky-300">STUN</span>}
-                </div>
-                <div className={`mt-1 w-full rounded-full bg-slate-800 overflow-hidden ${r.isBoss ? 'h-2.5' : 'h-1.5'}`}>
-                  <div
-                    className={`h-full transition-all duration-100 ${isAlly ? 'bg-emerald-500' : 'bg-red-500'}`}
-                    style={{ width: `${Math.max(0, (r.hp / r.maxHp) * 100)}%` }}
-                  />
-                </div>
+        {/* Rivals Status */}
+        <div className="pointer-events-auto hidden sm:flex flex-col gap-1.5 min-w-[215px]">
+          {rivals.map((r) => (
+            <div
+              key={r.id}
+              className={`rounded-xl border px-3 py-1.5 bg-[#12161C]/90 ${
+                r.isDead ? 'border-slate-800 opacity-55' : 'border-slate-700/80'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-slate-100 truncate">
+                  {r.isBoss && <span className="mr-1 text-[9px] font-bold text-red-400">BOSS</span>}
+                  {r.isBounty && <span className="mr-1 text-[9px] font-bold text-yellow-300">$</span>}
+                  [{r.clanTag}] {r.config.name}
+                </span>
+                <span className="font-mono-tabular text-red-400 font-semibold shrink-0">
+                  {r.isDead ? 'KO' : `${Math.round(r.hp)}/${r.maxHp}`}
+                </span>
               </div>
-            );
-          })}
+              <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono-tabular">
+                <span>Lv {r.botLevel} · {r.weightClass}</span>
+                {(r.shieldHp ?? 0) > 0 && (
+                  <span className="text-sky-400">· SHD {Math.round(r.shieldHp!)}</span>
+                )}
+              </div>
+              <div className="mt-1 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-red-500 transition-all duration-100"
+                  style={{ width: `${Math.max(0, (r.hp / r.maxHp) * 100)}%` }}
+                />
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Mobile boss bar */}
-      {enemies.some((e) => e.isBoss && !e.isDead) && (
-        <div className="pointer-events-none fixed inset-x-3 top-[86px] z-20 sm:hidden">
-          {enemies
-            .filter((e) => e.isBoss && !e.isDead)
-            .map((e) => (
-              <div key={e.id} className="rounded-lg border border-red-500/60 bg-[#12161C]/90 px-2 py-1">
-                <div className="flex justify-between text-[10px] font-bold text-red-300">
-                  <span>{e.config.name}</span>
-                  <span className="font-mono-tabular">{Math.round(e.hp)}</span>
-                </div>
-                <div className="mt-0.5 h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                  <div className="h-full bg-red-500" style={{ width: `${(e.hp / e.maxHp) * 100}%` }} />
-                </div>
-              </div>
-            ))}
-        </div>
-      )}
+      {/* Tactical Arena Mini-Radar */}
+      {snapshot.phase === 'active' && <ArenaMiniRadar snapshot={snapshot} playerId={playerId} />}
 
-      {/* Dedicated Desktop Weapon Action Bar (1 individual clickable/holdable button per weapon) */}
+      {/* Dedicated Desktop Weapon Action Bar */}
       {showKeyboardHint && snapshot.phase === 'active' && player && !player.isDead && (
         <div className="pointer-events-none fixed bottom-12 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2">
           {playerWeapons.map((wId, idx) => {
@@ -449,7 +594,7 @@ export const CombatHud: React.FC<CombatHudProps> = ({
           <span aria-hidden="true">·</span>
           <span>Boost: Shift</span>
           <span aria-hidden="true">·</span>
-          <span>Repair Overdrive: E</span>
+          <span>Overdrive & Purge: E</span>
         </div>
       )}
 
@@ -460,7 +605,9 @@ export const CombatHud: React.FC<CombatHudProps> = ({
             <div className="font-display text-5xl font-bold text-amber-400">
               {Math.max(1, Math.ceil(snapshot.countdown))}
             </div>
-            <div className="mt-1 text-xs font-semibold text-slate-300">Systems Primed</div>
+            <div className="mt-1 text-xs font-semibold text-slate-300">
+              {arenaSpec?.name || 'BattleBox'} · Systems Primed
+            </div>
           </div>
         </div>
       )}
@@ -488,25 +635,23 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                         ? 'Hill Secured'
                         : 'Hill Lost'
                       : endedByTime
-                        ? playerWon
-                          ? 'Judges Decision: Win'
-                          : 'Judges Decision: Loss'
-                        : playerWon
-                          ? isTeamMatch
-                            ? 'Team Victory'
-                            : 'Knockout Victory'
-                          : isTeamMatch
-                            ? 'Team Defeated'
-                            : 'Chassis Knocked Out'}
+                    ? playerWon
+                      ? 'Judges Decision: Win'
+                      : 'Judges Decision: Loss'
+                    : playerWon
+                      ? 'Knockout Victory'
+                      : 'Chassis Knocked Out'}
                 </h2>
                 <p className="text-xs text-slate-400">
                   {isSurvival
                     ? `Waves cleared: ${matchResult?.wavesCleared ?? Math.max(0, (snapshot.survivalWave ?? 1) - 1)} · Kills: ${snapshot.survivalKills ?? 0}`
                     : `${endedByObjective ? 'Objective · ' : endedByTime ? 'Time Expired · ' : 'KO Finish · '}Winner: ${
-                        winner ? `${winner.config.name} (${winner.name})` : 'Draw'
+                        winner ? `[${winner.clanTag}] ${winner.config.name}` : 'Draw'
                       }`}
                 </p>
-                {campaignLevel && <p className="text-[11px] font-semibold text-amber-300 mt-0.5">Campaign · {campaignLevel.title}</p>}
+                {campaignLevel && (
+                  <p className="text-[11px] font-semibold text-amber-300 mt-0.5">Campaign · {campaignLevel.title}</p>
+                )}
               </div>
             </div>
 
@@ -547,7 +692,11 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                       ))}
                     </div>
                     <ul className="mt-2 space-y-0.5 text-[11px]">
-                      {(matchResult.objectives ?? campaignLevel?.objectives.map((o) => ({ label: describeObjective(o), met: false })) ?? []).map((o, i) => (
+                      {(
+                        matchResult.objectives ??
+                        campaignLevel?.objectives.map((o) => ({ label: describeObjective(o), met: false })) ??
+                        []
+                      ).map((o, i) => (
                         <li key={i} className={o.met ? 'text-emerald-300' : 'text-slate-500'}>
                           {o.met ? '✓' : '✗'} {o.label}
                         </li>
@@ -568,7 +717,7 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                 </div>
                 {matchResult.unlocked && (
                   <div className="mt-2 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-center text-xs font-bold text-emerald-300">
-                    Unlocked: {describeUnlock(matchResult.unlocked)}
+                    Unlocked {describeUnlock(matchResult.unlocked)}
                   </div>
                 )}
               </div>
@@ -591,11 +740,9 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                     <span className="truncate font-semibold">
                       #{idx + 1}{' '}
                       {isTeamMatch && (
-                        <span className={b.team === playerTeam ? 'text-emerald-400' : 'text-red-400'}>
-                          {b.team === playerTeam ? '● ' : '● '}
-                        </span>
+                        <span className={b.team === playerTeam ? 'text-emerald-400' : 'text-red-400'}>● </span>
                       )}
-                      {b.config.name}
+                      [{b.clanTag}] {b.config.name}
                     </span>
                     <span className="font-mono-tabular text-[11px] shrink-0 text-slate-400">
                       {b.isDead ? 'KO' : `${hpPct}% HP`} · {Math.round(b.damageDealt)} DMG
