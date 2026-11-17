@@ -1,7 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Clock,
+  Crown,
   Flame,
+  Lock,
+  Map as MapIcon,
+  Sparkles,
+  Star,
+  UsersRound,
+  Waves,
   Globe,
   ShieldAlert,
   Skull,
@@ -13,10 +20,19 @@ import {
 } from 'lucide-react';
 import { AI_RIVAL_PRESETS } from '../shared/physicsEngine';
 import {
+  CAMPAIGN_CHAPTERS,
+  CAMPAIGN_LEVELS,
+  describeObjective,
+  describeUnlock,
+  isLevelUnlocked,
+} from '../shared/campaign';
+import {
   ARENA_CATALOG,
+  MATCH_MODIFIERS,
   TIMED_BATTLE_OPTIONS,
   type ArenaId,
   type BotConfig,
+  type MatchModifierId,
   type TimedBattleDuration,
 } from '../shared/types';
 
@@ -27,7 +43,10 @@ export type LocalLaunchMode =
   | 'team_2v2'
   | 'boss_raid'
   | 'gauntlet'
-  | 'practice';
+  | 'practice'
+  | 'team_3v3'
+  | 'king_hill'
+  | 'survival';
 
 interface ArenaLauncherModalProps {
   open: boolean;
@@ -38,6 +57,11 @@ interface ArenaLauncherModalProps {
   selectedWingmanIndex: number;
   savedLoadouts?: BotConfig[];
   gauntletStage: number;
+  selectedModifiers: MatchModifierId[];
+  campaignStars: Record<string, number>;
+  bestSurvivalWave: number;
+  onToggleModifier: (id: MatchModifierId) => void;
+  onStartCampaign: (levelId: string) => void;
   lobbyRoom: {
     id: string;
     mode: string;
@@ -73,6 +97,11 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
   selectedWingmanIndex,
   savedLoadouts,
   gauntletStage,
+  selectedModifiers,
+  campaignStars,
+  bestSurvivalWave,
+  onToggleModifier,
+  onStartCampaign,
   lobbyRoom,
   onSelectArena,
   onSelectRivalTier,
@@ -84,9 +113,13 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
   onCancelLobby,
   onClose,
 }) => {
+  const [tab, setTab] = useState<'quick' | 'campaign'>('quick');
+  const [expandedLevel, setExpandedLevel] = useState<string | null>(null);
   if (!open) return null;
 
   const bay2Bot = savedLoadouts?.[1];
+  const totalStars = Object.values(campaignStars).reduce((a, b) => a + b, 0);
+  const maxStars = CAMPAIGN_LEVELS.length * 3;
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/75 p-3 sm:p-4 overflow-y-auto">
@@ -97,7 +130,7 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
               Deploy to BattleBox Arena
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              8 destructible arenas, 2v2 Tag-Team Clash, Titan Boss Raids, and Gauntlet Career
+              {Object.keys(ARENA_CATALOG).length} arenas, team modes, boss raids, survival and a {CAMPAIGN_LEVELS.length}-level campaign
             </p>
           </div>
           <button
@@ -109,6 +142,29 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
             <X className="h-5 w-5" />
           </button>
         </div>
+
+        {!lobbyRoom && (
+          <div className="mt-3 flex gap-1.5">
+            {(
+              [
+                { id: 'quick', label: 'Quick Battle', Icon: Swords },
+                { id: 'campaign', label: `Campaign ${totalStars}/${maxStars}★`, Icon: MapIcon },
+              ] as const
+            ).map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTab(id)}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-2 min-h-[40px] text-xs font-semibold transition whitespace-nowrap ${
+                  tab === id ? 'bg-amber-500 text-slate-950' : 'bg-[#19202A] text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Waiting Multiplayer Lobby View */}
         {lobbyRoom ? (
@@ -156,9 +212,105 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
               </button>
             </div>
           </div>
+        ) : tab === 'campaign' ? (
+          <div className="mt-4 space-y-4 max-h-[68vh] overflow-y-auto pr-1">
+            {CAMPAIGN_CHAPTERS.map((ch) => {
+              const levels = CAMPAIGN_LEVELS.filter((l) => l.chapter === ch.chapter);
+              return (
+                <div key={ch.chapter}>
+                  <div className="flex items-baseline justify-between gap-2 mb-1.5">
+                    <h3 className="font-display text-sm font-bold text-white">
+                      Chapter {ch.chapter} · {ch.name}
+                    </h3>
+                    <span className="text-[11px] text-slate-400 truncate">{ch.tagline}</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {levels.map((lvl) => {
+                      const unlocked = isLevelUnlocked(lvl.id, campaignStars);
+                      const stars = campaignStars[lvl.id] ?? 0;
+                      const expanded = expandedLevel === lvl.id;
+                      const arena = ARENA_CATALOG[lvl.arenaId];
+                      return (
+                        <div
+                          key={lvl.id}
+                          className={`rounded-xl border p-3 transition ${
+                            !unlocked
+                              ? 'border-slate-800 bg-[#11151B] opacity-60'
+                              : expanded
+                                ? 'border-amber-500 bg-amber-500/10'
+                                : 'border-slate-800 bg-[#192029] hover:border-slate-600'
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            disabled={!unlocked}
+                            onClick={() => setExpandedLevel(expanded ? null : lvl.id)}
+                            className="w-full text-left"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm font-bold text-white truncate">
+                                {!unlocked && <Lock className="inline h-3.5 w-3.5 mr-1 -mt-0.5 text-slate-500" />}
+                                {lvl.title}
+                              </span>
+                              <span className="flex shrink-0">
+                                {[0, 1, 2].map((i) => (
+                                  <Star
+                                    key={i}
+                                    className={`h-3.5 w-3.5 ${i < stars ? 'fill-amber-400 text-amber-400' : 'text-slate-600'}`}
+                                  />
+                                ))}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-400">
+                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: arena.accentHex }} />
+                              <span>{arena.name}</span>
+                              <span aria-hidden="true">·</span>
+                              <span className="capitalize">{lvl.mode.replace(/_/g, ' ')}</span>
+                            </div>
+                          </button>
+                          {expanded && unlocked && (
+                            <div className="mt-2 border-t border-slate-800 pt-2">
+                              <p className="text-xs text-slate-300 leading-snug">{lvl.brief}</p>
+                              <ul className="mt-2 space-y-0.5 text-[11px] text-slate-400">
+                                {lvl.objectives.map((o, i) => (
+                                  <li key={i} className="flex items-center gap-1.5">
+                                    <Star className={`h-3 w-3 ${i < stars ? 'fill-amber-400 text-amber-400' : 'text-slate-600'}`} />
+                                    {describeObjective(o)}
+                                  </li>
+                                ))}
+                              </ul>
+                              {lvl.modifiers && lvl.modifiers.length > 0 && (
+                                <div className="mt-1.5 text-[11px] text-fuchsia-300">
+                                  Rules: {lvl.modifiers.map((m) => MATCH_MODIFIERS[m].label).join(', ')}
+                                </div>
+                              )}
+                              <div className="mt-2 flex items-center justify-between gap-2">
+                                <span className="text-[11px] font-mono-tabular text-amber-300">
+                                  +{lvl.rewardScrap} Scrap
+                                  {lvl.rewardSkillPoints ? ` · +${lvl.rewardSkillPoints} SP` : ''}
+                                  {lvl.rewardUnlock ? ` · ${describeUnlock(lvl.rewardUnlock)}` : ''}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => onStartCampaign(lvl.id)}
+                                  className="rounded-lg bg-emerald-500 px-3.5 py-2 min-h-[38px] text-xs font-bold text-slate-950 hover:bg-emerald-400 transition shrink-0"
+                                >
+                                  {stars > 0 ? 'Replay' : 'Fight'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <>
-            {/* 8 Arena Stage Picker */}
+            {/* Arena Stage Picker */}
             <div className="mt-4">
               <div className="text-xs font-semibold text-slate-300 mb-2">
                 Select Combat Arena ({Object.keys(ARENA_CATALOG).length} BattleBoxes)
@@ -376,6 +528,53 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
 
                 <button
                   type="button"
+                  onClick={() => onStartOffline('team_3v3')}
+                  className="flex flex-col justify-between rounded-xl border border-teal-500/40 bg-[#122220] p-3 text-left hover:border-teal-400 transition"
+                >
+                  <div className="flex items-center justify-between">
+                    <UsersRound className="h-5 w-5 text-teal-400" />
+                    <span className="rounded bg-teal-500/20 px-1.5 py-0.5 text-[10px] font-bold text-teal-300">SQUAD</span>
+                  </div>
+                  <div className="mt-2">
+                    <div className="text-sm font-bold text-white">Squad 3v3</div>
+                    <div className="text-[11px] text-slate-300 mt-0.5">You + 2 allies vs 3 rivals</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onStartOffline('king_hill')}
+                  className="flex flex-col justify-between rounded-xl border border-yellow-500/40 bg-[#211E10] p-3 text-left hover:border-yellow-400 transition"
+                >
+                  <div className="flex items-center justify-between">
+                    <Crown className="h-5 w-5 text-yellow-300" />
+                    <span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-[10px] font-bold text-yellow-200">OBJECTIVE</span>
+                  </div>
+                  <div className="mt-2">
+                    <div className="text-sm font-bold text-white">King of the Hill</div>
+                    <div className="text-[11px] text-slate-300 mt-0.5">Hold the moving ring to 100</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onStartOffline('survival')}
+                  className="flex flex-col justify-between rounded-xl border border-sky-500/40 bg-[#101C26] p-3 text-left hover:border-sky-400 transition"
+                >
+                  <div className="flex items-center justify-between">
+                    <Waves className="h-5 w-5 text-sky-400" />
+                    <span className="font-mono-tabular text-xs font-bold text-sky-300">
+                      {bestSurvivalWave > 0 ? `Best W${bestSurvivalWave}` : 'ENDLESS'}
+                    </span>
+                  </div>
+                  <div className="mt-2">
+                    <div className="text-sm font-bold text-white">Survival Waves</div>
+                    <div className="text-[11px] text-slate-300 mt-0.5">Boss every 5th wave</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => onStartOffline('practice')}
                   className="flex flex-col justify-between rounded-xl border border-slate-700 bg-[#192029] p-3 text-left hover:border-sky-400 transition"
                 >
@@ -388,6 +587,34 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
               </div>
             </div>
 
+            {/* Match Modifiers */}
+            <div className="mt-4">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-fuchsia-400" />
+                Match Modifiers
+                <span className="font-normal text-slate-500">({selectedModifiers.length} active)</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                {(Object.keys(MATCH_MODIFIERS) as MatchModifierId[]).map((mId) => {
+                  const m = MATCH_MODIFIERS[mId];
+                  const active = selectedModifiers.includes(mId);
+                  return (
+                    <button
+                      key={mId}
+                      type="button"
+                      onClick={() => onToggleModifier(mId)}
+                      aria-pressed={active}
+                      className={`rounded-lg border px-2.5 py-2 text-left transition ${
+                        active ? 'border-fuchsia-400 bg-fuchsia-500/15' : 'border-slate-800 bg-[#0D1014] hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="text-[11px] font-bold text-white truncate">{m.label}</div>
+                      <div className="text-[10px] text-slate-400 truncate">{m.note}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             {/* Online Multiplayer Section */}
             <div className="mt-4 pt-3 border-t border-slate-800">
               <div className="flex items-center justify-between text-xs font-semibold text-slate-300 mb-2">

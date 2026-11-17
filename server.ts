@@ -11,6 +11,7 @@ import {
   type BotRosterTemplate,
 } from './src/shared/physicsEngine.ts';
 import {
+  ARENA_CATALOG,
   type ArenaId,
   type ArenaSnapshot,
   type BotConfig,
@@ -642,7 +643,7 @@ async function startServer() {
           removePlayerFromRoom(ws);
           const mode = msg.mode === 'brawl_4bot' ? 'brawl_4bot' : 'duel_1v1';
           const maxHumans = mode === 'duel_1v1' ? 2 : 4;
-          const arenaId: ArenaId = msg.arenaId || 'foundry';
+          const arenaId: ArenaId = msg.arenaId && msg.arenaId in ARENA_CATALOG ? msg.arenaId : 'foundry';
           const rawDur = Number(msg.durationSeconds ?? 180);
           const durationSeconds = [90, 150, 180, 300].includes(rawDur) ? rawDur : 180;
 

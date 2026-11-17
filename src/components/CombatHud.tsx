@@ -1,14 +1,33 @@
 import React, { useEffect, useState } from 'react';
-import { Camera, LogOut, Volume2, VolumeX, Trophy, RotateCcw, Swords, Shield } from 'lucide-react';
+import { Camera, Crown, LogOut, Volume2, VolumeX, Trophy, RotateCcw, Star, Swords, Shield, Zap } from 'lucide-react';
+import { describeObjective, describeUnlock, getCampaignLevel } from '../shared/campaign';
 import {
   ARENA_CATALOG,
+  ARENA_EVENT_INFO,
   getBotWeapons,
+  MATCH_MODIFIERS,
   WEAPON_CATALOG,
   type ArenaSnapshot,
   type BotPhysicsState,
 } from '../shared/types';
 
+export interface MatchResultSummary {
+  won: boolean;
+  scrap: number;
+  xp: number;
+  skillPoints: number;
+  stars?: number;
+  objectives?: Array<{ label: string; met: boolean }>;
+  unlocked?: string;
+  wavesCleared?: number;
+  newRecord?: boolean;
+  levelTitle?: string;
+  ratingDelta: number;
+}
+
 interface CombatHudProps {
+  matchResult?: MatchResultSummary | null;
+  campaignLevelId?: string | null;
   snapshot: ArenaSnapshot;
   playerId: string;
   cameraPreset: 'chase' | 'tactical' | 'cinematic';
@@ -124,6 +143,8 @@ function ArenaMiniRadar({ snapshot, playerId }: { snapshot: ArenaSnapshot; playe
 export const CombatHud: React.FC<CombatHudProps> = ({
   snapshot,
   playerId,
+  matchResult,
+  campaignLevelId,
   cameraPreset,
   muted,
   isMultiplayer,
@@ -150,14 +171,20 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   const allies = snapshot.bots.filter((b) => b.id !== player?.id && b.team === player?.team);
   const rivals = snapshot.bots.filter((b) => b.id !== player?.id && b.team !== player?.team);
   const playerWeapons = player ? getBotWeapons(player.config) : [];
+  const playerTeam = player?.team ?? 0;
+  const campaignLevel = campaignLevelId ? getCampaignLevel(campaignLevelId) : undefined;
+  const arenaEvent = snapshot.arenaEvent;
+  const hill = snapshot.hill;
+  const isSurvival = snapshot.mode === 'survival';
+  const untimed = snapshot.mode === 'practice' || isSurvival;
 
   const secs = Math.ceil(snapshot.timeRemaining);
   const mins = Math.floor(secs / 60);
   const remSecs = String(secs % 60).padStart(2, '0');
   const totalDur = snapshot.durationSeconds || 180;
   const timePct = Math.max(0, Math.min(100, (snapshot.timeRemaining / totalDur) * 100));
-  const isFinalWarning = snapshot.mode !== 'practice' && snapshot.phase === 'active' && secs <= 20 && secs > 10;
-  const isFinalTen = snapshot.mode !== 'practice' && snapshot.phase === 'active' && secs <= 10;
+  const isFinalWarning = !untimed && snapshot.phase === 'active' && secs <= 20 && secs > 10;
+  const isFinalTen = !untimed && snapshot.phase === 'active' && secs <= 10;
 
   const escalationStage = snapshot.escalationStage ?? 1;
   const crusherWarning = snapshot.hazards.some((h) => h.kind === 'crusher' && h.warning);
@@ -166,8 +193,14 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   const bladeActive = snapshot.hazards.some((h) => h.kind === 'spinner_blade' && h.active);
 
   const arenaSpec = ARENA_CATALOG[snapshot.arenaId];
+  const boltWarning = snapshot.hazards.some((h) => h.kind === 'lightning' && h.warning);
+  const pitOpen = snapshot.hazards.some((h) => h.kind === 'pit' && h.active);
 
-  const hazardAlertText = crusherActive
+  const hazardAlertText = boltWarning
+    ? 'Lightning Incoming'
+    : pitOpen && !crusherActive
+      ? 'Drop Pits Open'
+      : crusherActive
     ? 'Crusher Impact'
     : crusherWarning
       ? 'Crusher Warning'
@@ -184,18 +217,21 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   const hazardAlertTone =
     crusherActive || bladeActive
       ? 'border-red-500/70 bg-[#1B1214]/95 text-red-300'
-      : crusherWarning || bladeWarning
+      : crusherWarning || bladeWarning || boltWarning || pitOpen
         ? 'border-amber-500/70 bg-[#1C1710]/95 text-amber-300'
         : 'border-slate-700/80 bg-[#12161C]/90 text-slate-300';
 
   const winner = snapshot.winnerId ? snapshot.bots.find((b) => b.id === snapshot.winnerId) : null;
   const playerWon =
-    winner?.id === player?.id ||
-    (snapshot.winningTeam !== null &&
-      snapshot.winningTeam !== undefined &&
-      player &&
-      snapshot.winningTeam === player.team);
+    matchResult?.won ??
+    (winner?.id === player?.id ||
+      (snapshot.winningTeam !== null &&
+        snapshot.winningTeam !== undefined &&
+        Boolean(player) &&
+        snapshot.winningTeam === player?.team));
   const endedByTime = snapshot.finishReason === 'time';
+  const endedByObjective = snapshot.finishReason === 'objective';
+  const isTeamMatch = allies.length > 0 || (rivals.length > 1 && snapshot.mode !== 'brawl_4bot');
   const sortedStandings = [...snapshot.bots].sort((a, b) => {
     if (a.isDead !== b.isDead) return a.isDead ? 1 : -1;
     const scoreA = (a.hp / Math.max(1, a.maxHp)) * 100 + a.damageDealt * 0.16 + a.kos * 30;
@@ -244,6 +280,12 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                     <span className="rounded bg-cyan-500/25 px-1 text-[9px] font-bold text-cyan-300">
                       FROZEN
                     </span>
+                  )}
+                  {(player.pinnedTimer ?? 0) > 0 && (
+                    <span className="rounded bg-orange-500/25 px-1 text-[9px] font-bold text-orange-300">PINNED</span>
+                  )}
+                  {player.isBounty && (
+                    <span className="rounded bg-yellow-500/25 px-1 text-[9px] font-bold text-yellow-300">BOUNTY</span>
                   )}
                   {(player.shockTimer ?? 0) > 0 && (
                     <span className="rounded bg-purple-500/25 px-1 text-[9px] font-bold text-purple-300">
@@ -322,13 +364,25 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                   isFinalTen ? 'text-red-400' : isFinalWarning ? 'text-amber-300' : 'text-white'
                 }`}
               >
-                {snapshot.mode === 'practice' ? 'FREE' : `${mins}:${remSecs}`}
+                {isSurvival
+                  ? `W${Math.max(1, snapshot.survivalWave ?? 1)}`
+                  : snapshot.mode === 'practice'
+                    ? 'FREE'
+                    : `${mins}:${remSecs}`}
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5 whitespace-nowrap">
                 {isFinalTen
                   ? 'FINAL SEC'
                   : isMultiplayer
                     ? 'Timed PvP'
+                    : campaignLevel
+                      ? campaignLevel.title
+                    : isSurvival
+                      ? `${snapshot.survivalKills ?? 0} kills`
+                    : snapshot.mode === 'team_3v3'
+                      ? 'Squad 3v3'
+                    : snapshot.mode === 'king_hill'
+                      ? 'King of the Hill'
                     : snapshot.mode === 'team_2v2'
                       ? '2v2 Clash'
                       : snapshot.mode === 'boss_raid'
@@ -337,7 +391,7 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                           ? 'Test Range'
                           : 'Timed Battle'}
               </div>
-              {snapshot.mode !== 'practice' && (
+              {!untimed && (
                 <div className="mt-1 h-1 w-full rounded-full bg-slate-800 overflow-hidden">
                   <div
                     className={`h-full transition-all duration-200 ${
@@ -374,11 +428,70 @@ export const CombatHud: React.FC<CombatHudProps> = ({
             </button>
           </div>
 
-          {snapshot.phase === 'active' && (
+          {snapshot.phase === 'active' && snapshot.hazards.length > 0 && (
             <div
               className={`rounded-lg border px-2.5 py-0.5 text-[10px] font-semibold tracking-wide whitespace-nowrap ${hazardAlertTone}`}
             >
               {hazardAlertText}
+            </div>
+          )}
+
+          {snapshot.phase === 'active' && arenaEvent && (
+            <div className="flex items-center gap-1.5 rounded-lg border border-fuchsia-500/70 bg-[#1A1220]/95 px-2.5 py-1 text-[11px] font-bold text-fuchsia-200 whitespace-nowrap">
+              <Zap className="h-3.5 w-3.5" />
+              {arenaEvent.label}
+              <span className="font-normal text-fuchsia-300/80 hidden sm:inline">· {ARENA_EVENT_INFO[arenaEvent.kind].note}</span>
+              <span className="font-mono-tabular text-fuchsia-300/80">{Math.ceil(arenaEvent.timeLeft)}s</span>
+            </div>
+          )}
+
+          {hill && (
+            <div className="pointer-events-auto w-[220px] rounded-lg border border-yellow-500/50 bg-[#17150E]/92 px-2.5 py-1.5">
+              <div className="flex items-center justify-between text-[10px] font-semibold text-yellow-200">
+                <span className="flex items-center gap-1">
+                  <Crown className="h-3 w-3" />
+                  {hill.contested
+                    ? 'CONTESTED'
+                    : hill.owner === null
+                      ? 'Hill Neutral'
+                      : hill.owner === playerTeam
+                        ? 'Your Team Holds'
+                        : 'Enemy Holds'}
+                </span>
+                <span className="font-mono-tabular text-yellow-300/80">moves {Math.ceil(hill.moveTimer)}s</span>
+              </div>
+              {[playerTeam, ...snapshot.bots.map((b) => b.team).filter((t) => t !== playerTeam)]
+                .filter((t, i, arr) => arr.indexOf(t) === i)
+                .slice(0, 3)
+                .map((t) => (
+                  <div key={t} className="mt-1 flex items-center gap-1.5">
+                    <span className={`w-9 text-[9px] font-bold ${t === playerTeam ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {t === playerTeam ? 'YOU' : 'ENMY'}
+                    </span>
+                    <div className="h-1.5 flex-1 rounded-full bg-slate-800 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-200 ${t === playerTeam ? 'bg-emerald-400' : 'bg-red-500'}`}
+                        style={{ width: `${Math.min(100, ((hill.scores[t] ?? 0) / hill.target) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="w-6 text-right font-mono-tabular text-[9px] text-slate-300">
+                      {Math.floor(hill.scores[t] ?? 0)}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {snapshot.phase !== 'finished' && (snapshot.modifiers?.length ?? 0) > 0 && (
+            <div className="hidden sm:flex flex-wrap justify-center gap-1 max-w-[320px]">
+              {snapshot.modifiers!.map((m) => (
+                <span
+                  key={m}
+                  className="rounded border border-fuchsia-500/40 bg-[#160F1A]/85 px-1.5 py-0.5 text-[9px] font-semibold text-fuchsia-300"
+                >
+                  {MATCH_MODIFIERS[m].label}
+                </span>
+              ))}
             </div>
           )}
 
@@ -400,6 +513,8 @@ export const CombatHud: React.FC<CombatHudProps> = ({
             >
               <div className="flex items-center justify-between gap-2 text-xs">
                 <span className="font-semibold text-slate-100 truncate">
+                  {r.isBoss && <span className="mr-1 text-[9px] font-bold text-red-400">BOSS</span>}
+                  {r.isBounty && <span className="mr-1 text-[9px] font-bold text-yellow-300">$</span>}
                   [{r.clanTag}] {r.config.name}
                 </span>
                 <span className="font-mono-tabular text-red-400 font-semibold shrink-0">
@@ -511,7 +626,15 @@ export const CombatHud: React.FC<CombatHudProps> = ({
               </div>
               <div>
                 <h2 className="font-display text-2xl font-bold text-white">
-                  {endedByTime
+                  {isSurvival
+                    ? matchResult?.newRecord
+                      ? 'New Survival Record'
+                      : 'Survival Run Over'
+                    : endedByObjective
+                      ? playerWon
+                        ? 'Hill Secured'
+                        : 'Hill Lost'
+                      : endedByTime
                     ? playerWon
                       ? 'Judges Decision: Win'
                       : 'Judges Decision: Loss'
@@ -520,9 +643,15 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                       : 'Chassis Knocked Out'}
                 </h2>
                 <p className="text-xs text-slate-400">
-                  {endedByTime ? 'Time Expired · ' : 'KO Finish · '}
-                  Winner: {winner ? `[${winner.clanTag}] ${winner.config.name}` : 'Draw'}
+                  {isSurvival
+                    ? `Waves cleared: ${matchResult?.wavesCleared ?? Math.max(0, (snapshot.survivalWave ?? 1) - 1)} · Kills: ${snapshot.survivalKills ?? 0}`
+                    : `${endedByObjective ? 'Objective · ' : endedByTime ? 'Time Expired · ' : 'KO Finish · '}Winner: ${
+                        winner ? `[${winner.clanTag}] ${winner.config.name}` : 'Draw'
+                      }`}
                 </p>
+                {campaignLevel && (
+                  <p className="text-[11px] font-semibold text-amber-300 mt-0.5">Campaign · {campaignLevel.title}</p>
+                )}
               </div>
             </div>
 
@@ -549,6 +678,51 @@ export const CombatHud: React.FC<CombatHudProps> = ({
               </div>
             )}
 
+            {/* Campaign stars & rewards */}
+            {matchResult && (
+              <div className="mt-3 rounded-xl border border-slate-800 bg-[#0D1014] p-3">
+                {matchResult.stars !== undefined && (
+                  <>
+                    <div className="flex justify-center gap-1.5">
+                      {[0, 1, 2].map((i) => (
+                        <Star
+                          key={i}
+                          className={`h-7 w-7 ${i < (matchResult.stars ?? 0) ? 'fill-amber-400 text-amber-400' : 'text-slate-700'}`}
+                        />
+                      ))}
+                    </div>
+                    <ul className="mt-2 space-y-0.5 text-[11px]">
+                      {(
+                        matchResult.objectives ??
+                        campaignLevel?.objectives.map((o) => ({ label: describeObjective(o), met: false })) ??
+                        []
+                      ).map((o, i) => (
+                        <li key={i} className={o.met ? 'text-emerald-300' : 'text-slate-500'}>
+                          {o.met ? '✓' : '✗'} {o.label}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                <div className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs font-mono-tabular">
+                  <span className="text-amber-300">+{matchResult.scrap} Scrap</span>
+                  <span className="text-sky-300">+{matchResult.xp} XP</span>
+                  {matchResult.skillPoints > 0 && <span className="text-emerald-300">+{matchResult.skillPoints} SP</span>}
+                  {matchResult.ratingDelta !== 0 && (
+                    <span className={matchResult.ratingDelta > 0 ? 'text-emerald-300' : 'text-red-300'}>
+                      {matchResult.ratingDelta > 0 ? '+' : ''}
+                      {matchResult.ratingDelta} Rating
+                    </span>
+                  )}
+                </div>
+                {matchResult.unlocked && (
+                  <div className="mt-2 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-center text-xs font-bold text-emerald-300">
+                    Unlocked {describeUnlock(matchResult.unlocked)}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Judges / Arena Scorecard */}
             <div className="mt-3 rounded-xl border border-slate-800 bg-[#0D1014] p-2.5 space-y-1.5">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 px-1">
@@ -564,7 +738,11 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                     }`}
                   >
                     <span className="truncate font-semibold">
-                      #{idx + 1} [{b.clanTag}] {b.config.name}
+                      #{idx + 1}{' '}
+                      {isTeamMatch && (
+                        <span className={b.team === playerTeam ? 'text-emerald-400' : 'text-red-400'}>● </span>
+                      )}
+                      [{b.clanTag}] {b.config.name}
                     </span>
                     <span className="font-mono-tabular text-[11px] shrink-0 text-slate-400">
                       {b.isDead ? 'KO' : `${hpPct}% HP`} · {Math.round(b.damageDealt)} DMG
@@ -588,7 +766,7 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                 className="flex-1 flex items-center justify-center gap-2 min-h-[44px] rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400 transition"
               >
                 <RotateCcw className="h-4 w-4" />
-                Fight Again
+                {campaignLevel ? 'Retry Level' : 'Fight Again'}
               </button>
             </div>
           </div>

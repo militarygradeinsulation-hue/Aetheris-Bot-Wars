@@ -25,6 +25,9 @@ const WEAPON_SHORT_NAME: Record<WeaponId, string> = {
   tesla: 'Tesla',
   railgun: 'Railgun',
   mortar: 'Mortar',
+  lance: 'Lance',
+  magnet: 'Magnet',
+  missiles: 'Rockets',
 };
 
 export const TouchControls: React.FC<TouchControlsProps> = ({

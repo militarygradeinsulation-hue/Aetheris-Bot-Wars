@@ -402,6 +402,58 @@ export function buildArenaEnvironment(
       sp.position.set(sx, 4.25, sz);
       group.add(sp);
     }
+  } else if (arenaId === 'skyforge') {
+    // Floating sky platform: deep void ring, hovering rock islands and thruster pylons
+    const voidGeo = new THREE.RingGeometry(half + 3, half + 30, 48);
+    voidGeo.rotateX(-Math.PI / 2);
+    const voidMat = new THREE.MeshBasicMaterial({ color: 0x0b1324, transparent: true, opacity: 0.85, depthWrite: false });
+    const islandGeo = new THREE.DodecahedronGeometry(2.2, 0);
+    const thrusterGeo = new THREE.CylinderGeometry(0.9, 1.4, 2.2, 12);
+    const cloudGeo = new THREE.TorusGeometry(half + 14, 1.6, 6, 48);
+    cloudGeo.rotateX(Math.PI / 2);
+    const cloudMat = new THREE.MeshBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.35, depthWrite: false });
+    geometries.push(voidGeo, islandGeo, thrusterGeo, cloudGeo);
+    materials.push(voidMat, cloudMat);
+    const voidMesh = new THREE.Mesh(voidGeo, voidMat);
+    voidMesh.position.y = -0.03;
+    group.add(voidMesh);
+    const cloud = new THREE.Mesh(cloudGeo, cloudMat);
+    cloud.position.y = -6;
+    group.add(cloud);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + 0.3;
+      const r = half + 13 + (i % 2) * 4;
+      const island = new THREE.Mesh(islandGeo, wallMat);
+      island.position.set(Math.cos(a) * r, 2 + (i % 3) * 2.5, Math.sin(a) * r);
+      island.scale.set(1.2, 0.7, 1.1);
+      island.rotation.set(i, i * 0.7, 0);
+      group.add(island);
+      const glow = new THREE.Mesh(thrusterGeo, accentGlowMat);
+      glow.position.set(Math.cos(a) * r, island.position.y - 1.6, Math.sin(a) * r);
+      group.add(glow);
+    }
+  } else if (arenaId === 'storm') {
+    // Tesla Stormcage: ring of lightning rods with glowing orbs and arcing coils
+    const rodGeo = new THREE.CylinderGeometry(0.22, 0.4, 9, 10);
+    const orbGeo = new THREE.SphereGeometry(0.9, 16, 12);
+    const coilGeo = new THREE.TorusGeometry(1.1, 0.14, 8, 20);
+    coilGeo.rotateX(Math.PI / 2);
+    geometries.push(rodGeo, orbGeo, coilGeo);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+      const r = half + 7;
+      const rod = new THREE.Mesh(rodGeo, wallMat);
+      rod.position.set(Math.cos(a) * r, 4.5, Math.sin(a) * r);
+      const orb = new THREE.Mesh(orbGeo, accentGlowMat);
+      orb.position.set(Math.cos(a) * r, 9.4, Math.sin(a) * r);
+      group.add(rod, orb);
+      [2.5, 4.5, 6.5].forEach((cy) => {
+        const coil = new THREE.Mesh(coilGeo, accentGlowMat);
+        coil.position.set(Math.cos(a) * r, cy, Math.sin(a) * r);
+        coil.scale.setScalar(0.7);
+        group.add(coil);
+      });
+    }
   } else {
     // Apex Colosseum & Cyber Grid: Stadium floodlight towers & neon arches
     const towerGeo = new THREE.BoxGeometry(1.4, 11, 1.4);
@@ -1040,6 +1092,18 @@ export function buildArenaEnvironment(
   });
   materials.push(sawMat, sawSlotMat, gantrySteelMat, chromePistonMat, hazardBladeMat, hazardTipMat);
 
+  // Drop pit & lightning strike shared geometries
+  const pitHoleGeo = new THREE.CircleGeometry(1.0, 32);
+  pitHoleGeo.rotateX(-Math.PI / 2);
+  const pitRimGeo = new THREE.RingGeometry(1.0, 1.18, 32);
+  pitRimGeo.rotateX(-Math.PI / 2);
+  const pitDoorGeo = new THREE.CircleGeometry(1.0, 32, 0, Math.PI);
+  pitDoorGeo.rotateX(-Math.PI / 2);
+  const boltGeo = new THREE.CylinderGeometry(0.12, 0.35, 16, 6, 8, true);
+  const targetRingGeo = new THREE.RingGeometry(0.85, 1.0, 40);
+  targetRingGeo.rotateX(-Math.PI / 2);
+  geometries.push(pitHoleGeo, pitRimGeo, pitDoorGeo, boltGeo, targetRingGeo);
+
   function ensurePropMesh(prop: DestructibleProp): THREE.Group {
     let pGroup = propMeshes.get(prop.id);
     if (pGroup) return pGroup;
@@ -1251,6 +1315,71 @@ export function buildArenaEnvironment(
       return entry;
     }
 
+    if (h.kind === 'pit') {
+      const holeMat = new THREE.MeshBasicMaterial({ color: 0x020617 });
+      const glowRimMat = new THREE.MeshBasicMaterial({
+        color: 0x22d3ee,
+        transparent: true,
+        opacity: 0.55,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      });
+      const doorMat = new THREE.MeshStandardMaterial({ map: textures.hazardStripe, roughness: 0.4, metalness: 0.6 });
+      materials.push(holeMat, glowRimMat, doorMat);
+      const r = h.radius;
+      const hole = new THREE.Mesh(pitHoleGeo, holeMat);
+      hole.scale.setScalar(r);
+      hole.position.y = 0.012;
+      const rim = new THREE.Mesh(pitRimGeo, glowRimMat);
+      rim.scale.setScalar(r);
+      rim.position.y = 0.02;
+      const doors = new THREE.Group();
+      const doorA = new THREE.Mesh(pitDoorGeo, doorMat);
+      doorA.scale.setScalar(r);
+      const doorB = new THREE.Mesh(pitDoorGeo, doorMat);
+      doorB.scale.setScalar(r);
+      doorB.rotation.y = Math.PI;
+      doors.add(doorA, doorB);
+      doors.position.y = 0.03;
+      hRoot.add(hole, rim, doors);
+      group.add(hRoot);
+      const entry: HazardMeshEntry = { root: hRoot, movingPart: doors, ringMat: glowRimMat };
+      hazardMeshes.set(h.id, entry);
+      return entry;
+    }
+
+    if (h.kind === 'lightning') {
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0x60a5fa,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      });
+      const boltMat = new THREE.MeshBasicMaterial({
+        color: 0xe0f2fe,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      materials.push(ringMat, boltMat);
+      const ring = new THREE.Mesh(targetRingGeo, ringMat);
+      ring.scale.setScalar(h.radius);
+      ring.position.y = 0.03;
+      const bolt = new THREE.Mesh(boltGeo, boltMat);
+      bolt.position.y = 8;
+      hRoot.add(ring, bolt);
+      group.add(hRoot);
+      const entry: HazardMeshEntry = { root: hRoot, movingPart: bolt, ringMat };
+      hazardMeshes.set(h.id, entry);
+      return entry;
+    }
+
     const rMat = new THREE.MeshBasicMaterial({
       color: 0xa855f7,
       transparent: true,
@@ -1333,6 +1462,33 @@ export function buildArenaEnvironment(
           if (entry.emissiveMat) {
             entry.emissiveMat.emissive.setHex(h.active ? 0xef4444 : h.warning ? 0xf97316 : 0xf59e0b);
             entry.emissiveMat.emissiveIntensity = h.active ? 2.1 : h.warning ? 1.5 : 0.35;
+          }
+        } else if (h.kind === 'pit') {
+          // Trap doors slide apart when the pit opens
+          const open = h.active ? 1 : h.warning ? 0.15 + Math.abs(Math.sin(nowSec * 10)) * 0.1 : 0;
+          const doors = entry.movingPart;
+          const cur = doors.userData.open ?? 0;
+          const next = cur + (open - cur) * Math.min(1, dt * 7);
+          doors.userData.open = next;
+          doors.children[0].position.z = -next * h.radius * 1.05;
+          doors.children[1].position.z = next * h.radius * 1.05;
+          if (entry.ringMat) {
+            entry.ringMat.color.setHex(h.active ? 0xef4444 : h.warning ? 0xf59e0b : 0x22d3ee);
+            entry.ringMat.opacity = h.warning ? 0.45 + Math.abs(Math.sin(nowSec * 12)) * 0.45 : h.active ? 0.85 : 0.35;
+          }
+        } else if (h.kind === 'lightning') {
+          entry.root.position.set(h.x, 0, h.z);
+          const boltMat = (entry.movingPart as THREE.Mesh).material as THREE.MeshBasicMaterial;
+          if (h.active) {
+            boltMat.opacity = 0.95;
+            entry.movingPart.scale.set(0.8 + Math.random() * 0.8, 1, 0.8 + Math.random() * 0.8);
+            entry.movingPart.rotation.y = Math.random() * Math.PI;
+          } else {
+            boltMat.opacity *= Math.exp(-dt * 14);
+          }
+          if (entry.ringMat) {
+            entry.ringMat.color.setHex(h.active ? 0xffffff : 0x60a5fa);
+            entry.ringMat.opacity = h.active ? 0.95 : h.warning ? 0.35 + Math.abs(Math.sin(nowSec * 14)) * 0.55 : 0;
           }
         } else if (h.kind === 'spinner_blade') {
           const targetY = h.active ? 0.14 : h.warning ? -0.14 : -0.44;

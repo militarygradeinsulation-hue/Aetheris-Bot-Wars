@@ -38,7 +38,10 @@ export type WeaponId =
   | 'cryo_jet'
   | 'crush_jaw'
   | 'drum'
-  | 'mortar';
+  | 'mortar'
+  | 'lance'
+  | 'magnet'
+  | 'missiles';
 
 export type WheelLayoutId =
   | '4wd_wide'
@@ -56,7 +59,8 @@ export type DriveId =
   | 'heavy_torque'
   | 'mecanum'
   | 'maglev'
-  | 'crawler_nuclear';
+  | 'crawler_nuclear'
+  | 'hover';
 
 export type FinishStyleId =
   | 'standard'
@@ -85,7 +89,9 @@ export type ArenaId =
   | 'aether_nexus'
   | 'toxic_scrapyard'
   | 'volcano_caldera'
-  | 'cyber_grid';
+  | 'cyber_grid'
+  | 'skyforge'
+  | 'storm';
 
 export type GameMode =
   | 'duel_1v1'
@@ -94,7 +100,58 @@ export type GameMode =
   | 'boss_raid'
   | 'gauntlet'
   | 'practice'
-  | 'multiplayer';
+  | 'multiplayer'
+  | 'team_3v3'
+  | 'survival'
+  | 'king_hill'
+  | 'campaign';
+
+// ---- Livery patterns ----
+export type PatternId = 'none' | 'stripes' | 'flames' | 'digital_camo' | 'hex' | 'checker' | 'tiger' | 'circuit';
+export const PATTERN_CATALOG: Record<PatternId, { id: PatternId; label: string }> = {
+  none: { id: 'none', label: 'Solid' },
+  stripes: { id: 'stripes', label: 'Racing Stripes' },
+  flames: { id: 'flames', label: 'Hot Rod Flames' },
+  digital_camo: { id: 'digital_camo', label: 'Digital Camo' },
+  hex: { id: 'hex', label: 'Hex Mesh' },
+  checker: { id: 'checker', label: 'Checkered Flag' },
+  tiger: { id: 'tiger', label: 'Tiger Slash' },
+  circuit: { id: 'circuit', label: 'Circuit Trace' },
+};
+
+// ---- Match modifiers (mutators) ----
+export type MatchModifierId =
+  | 'low_gravity'
+  | 'double_damage'
+  | 'armor_off'
+  | 'no_hazards'
+  | 'chaos_events'
+  | 'giants'
+  | 'turbo'
+  | 'vampire';
+
+export const MATCH_MODIFIERS: Record<MatchModifierId, { id: MatchModifierId; label: string; note: string }> = {
+  low_gravity: { id: 'low_gravity', label: 'Low Gravity', note: 'Flips send bots sky-high' },
+  double_damage: { id: 'double_damage', label: 'Double Damage', note: 'Every hit counts twice' },
+  armor_off: { id: 'armor_off', label: 'Naked Chassis', note: 'All armor zones start stripped' },
+  no_hazards: { id: 'no_hazards', label: 'Clean Floor', note: 'Arena hazards disabled' },
+  chaos_events: { id: 'chaos_events', label: 'Chaos Mode', note: 'Arena events fire 3x as often' },
+  giants: { id: 'giants', label: 'Giant Bots', note: 'Every bot scaled up 25%' },
+  turbo: { id: 'turbo', label: 'Turbo Motors', note: '+30% speed for everyone' },
+  vampire: { id: 'vampire', label: 'Vampire Cores', note: 'Heal 20% of damage dealt' },
+};
+
+// ---- In-match arena events ----
+export type ArenaEventKind = 'supply_drop' | 'power_surge' | 'low_gravity' | 'hazard_frenzy' | 'blackout' | 'bounty';
+
+export const ARENA_EVENT_INFO: Record<ArenaEventKind, { label: string; note: string; duration: number }> = {
+  supply_drop: { label: 'Supply Drop', note: 'Repair, energy and overcharge orbs incoming', duration: 6 },
+  power_surge: { label: 'Power Surge', note: 'Energy regen x2.5, weapons hit 15% harder', duration: 10 },
+  low_gravity: { label: 'Gravity Failure', note: 'Arena gravity cut to 40%', duration: 10 },
+  hazard_frenzy: { label: 'Hazard Frenzy', note: 'All traps cycle 70% faster', duration: 12 },
+  blackout: { label: 'Blackout', note: 'Arena lights down, hunt by visor glow', duration: 10 },
+  bounty: { label: 'Bounty Target', note: 'Marked bot takes +40% damage', duration: 14 },
+};
 
 export type TimedBattleDuration = 90 | 150 | 180 | 300;
 export type BatteryMode = 'eco' | 'balanced' | 'ultra';
@@ -120,6 +177,8 @@ export interface BotConfig {
   finishStyle?: FinishStyleId;
   accessory?: AccessoryId;
   underglowColor?: string;
+  pattern?: PatternId;
+  raceNumber?: number;
 }
 
 export function getBotWeapons(config: BotConfig): WeaponId[] {
@@ -246,6 +305,47 @@ export interface BotPhysicsState {
   kos: number;
   isBot: boolean;
   team: number;
+  pinnedTimer?: number;
+  isBoss?: boolean;
+  isBounty?: boolean;
+  dmgMult?: number;
+  speedMult?: number;
+}
+
+export interface Projectile {
+  id: string;
+  ownerId: string;
+  team: number;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vz: number;
+  yaw: number;
+  life: number;
+  damage: number;
+  targetId?: string;
+}
+
+export interface HillZone {
+  x: number;
+  z: number;
+  radius: number;
+  scores: Record<number, number>;
+  owner: number | null;
+  contested: boolean;
+  target: number;
+  moveTimer: number;
+}
+
+export interface ActiveArenaEvent {
+  kind: ArenaEventKind;
+  label: string;
+  timeLeft: number;
+  duration: number;
+  x?: number;
+  z?: number;
+  targetId?: string;
 }
 
 export interface DestructibleProp {
@@ -276,7 +376,9 @@ export interface HazardState {
     | 'spinner_blade'
     | 'crusher'
     | 'lava_vent'
-    | 'acid_pool';
+    | 'acid_pool'
+    | 'pit'
+    | 'lightning';
   x: number;
   z: number;
   radius: number;
@@ -312,7 +414,15 @@ export type CombatEventType =
   | 'mortar_blast'
   | 'era_blast'
   | 'shield_hit'
-  | 'ko';
+  | 'ko'
+  | 'missile_launch'
+  | 'pit_fall'
+  | 'lightning'
+  | 'arena_event'
+  | 'wave_start'
+  | 'hill_move'
+  | 'lance'
+  | 'magnet_pull';
 
 export type DamageKind = 'kinetic' | 'scorch' | 'blade' | 'crush';
 
@@ -340,6 +450,7 @@ export interface CombatEvent {
   targetId?: string;
   sourceId?: string;
   callout?: string;
+  label?: string;
 }
 
 export interface PlayerInputState {
@@ -359,7 +470,7 @@ export interface ArenaSnapshot {
   durationSeconds?: number;
   elapsedTime?: number;
   escalationStage?: number;
-  finishReason?: 'ko' | 'time';
+  finishReason?: 'ko' | 'time' | 'objective';
   phase: 'countdown' | 'active' | 'finished';
   countdown: number;
   bots: BotPhysicsState[];
@@ -368,6 +479,15 @@ export interface ArenaSnapshot {
   events: CombatEvent[];
   winnerId: string | null;
   winningTeam?: number | null;
+  projectiles?: Projectile[];
+  modifiers?: MatchModifierId[];
+  arenaEvent?: ActiveArenaEvent | null;
+  nextArenaEventAt?: number;
+  hill?: HillZone | null;
+  survivalWave?: number;
+  survivalKills?: number;
+  waveStartedAt?: number;
+  gravityMult?: number;
 }
 
 export interface LeaderboardEntry {
@@ -417,6 +537,7 @@ export interface SeasonalEvent {
   rewardScrap: number;
   rewardSkillPoints: number;
   badgeTitle?: string;
+  rewardUnlock?: string;
   endsAt: string;
 }
 
@@ -444,6 +565,48 @@ export interface PlayerProfile {
   batteryMode: BatteryMode;
   muted: boolean;
   touchControlsMode: 'auto' | 'always' | 'off';
+  ownedParts?: string[];
+  campaignStars?: Record<string, number>;
+  arenaWins?: Partial<Record<ArenaId, number>>;
+  bestSurvivalWave?: number;
+}
+
+// ---- Part economy: premium parts cost scrap or unlock via campaign & events ----
+export type PartCategory = 'weapon' | 'armor' | 'chassis' | 'drive';
+export function partKey(cat: PartCategory, id: string): string {
+  return `${cat}:${id}`;
+}
+export function getPartPrice(cat: PartCategory, id: string): number {
+  if (cat === 'weapon') return WEAPON_CATALOG[id as WeaponId]?.price ?? 0;
+  if (cat === 'armor') return ARMOR_CATALOG[id as ArmorId]?.price ?? 0;
+  if (cat === 'chassis') return CHASSIS_CATALOG[id as ChassisId]?.price ?? 0;
+  return DRIVE_CATALOG[id as DriveId]?.price ?? 0;
+}
+export function isPartOwned(profile: Pick<PlayerProfile, 'ownedParts'>, cat: PartCategory, id: string): boolean {
+  if (getPartPrice(cat, id) <= 0) return true;
+  return (profile.ownedParts ?? []).includes(partKey(cat, id));
+}
+/** Every premium part key a config uses (for granting ownership of builds that predate the economy). */
+export function premiumPartsInConfig(config: BotConfig): string[] {
+  const keys: string[] = [];
+  for (const w of getBotWeapons(config)) if (getPartPrice('weapon', w) > 0) keys.push(partKey('weapon', w));
+  for (const c of getBotChassisStyles(config)) if (getPartPrice('chassis', c) > 0) keys.push(partKey('chassis', c));
+  if (getPartPrice('armor', config.armor) > 0) keys.push(partKey('armor', config.armor));
+  if (getPartPrice('drive', config.drive) > 0) keys.push(partKey('drive', config.drive));
+  return keys;
+}
+export function describePartKey(key: string | undefined): string {
+  if (!key) return '';
+  const [cat, id] = key.split(':');
+  const label =
+    cat === 'weapon'
+      ? WEAPON_CATALOG[id as WeaponId]?.label
+      : cat === 'armor'
+        ? ARMOR_CATALOG[id as ArmorId]?.label
+        : cat === 'chassis'
+          ? CHASSIS_CATALOG[id as ChassisId]?.label
+          : DRIVE_CATALOG[id as DriveId]?.label;
+  return label ?? id;
 }
 
 export interface ChassisSpec {
@@ -456,6 +619,7 @@ export interface ChassisSpec {
   sizeTag: string;
   speedMult: number;
   frontDeflect: number;
+  price?: number;
 }
 
 export interface ArmorSpec {
@@ -470,6 +634,7 @@ export interface ArmorSpec {
   speedMult: number;
   roughness: number;
   metalness: number;
+  price?: number;
 }
 
 export interface WeaponSpec {
@@ -483,6 +648,7 @@ export interface WeaponSpec {
   range: number;
   cooldown: number;
   energyCost: number;
+  price?: number;
 }
 
 export interface WheelLayoutSpec {
@@ -503,6 +669,7 @@ export interface DriveSpec {
   accel: number;
   turnRate: number;
   knockbackResist: number;
+  price?: number;
 }
 
 export interface FinishStyleSpec {
@@ -664,6 +831,7 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Stinger',
     speedMult: 1.04,
     frontDeflect: 0.32,
+    price: 360,
   },
   juggernaut: {
     id: 'juggernaut',
@@ -675,6 +843,7 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Dreadnought',
     speedMult: 0.76,
     frontDeflect: 0.38,
+    price: 480,
   },
   hover_disc: {
     id: 'hover_disc',
@@ -686,6 +855,7 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Flux Ring',
     speedMult: 1.1,
     frontDeflect: 0.42,
+    price: 420,
   },
   hydra: {
     id: 'hydra',
@@ -697,6 +867,7 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Twin-Hull',
     speedMult: 0.95,
     frontDeflect: 0.35,
+    price: 440,
   },
 };
 
@@ -765,6 +936,7 @@ export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
     speedMult: 1.0,
     roughness: 0.16,
     metalness: 0.94,
+    price: 700,
   },
   reactive_era: {
     id: 'reactive_era',
@@ -778,6 +950,7 @@ export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
     speedMult: 0.88,
     roughness: 0.48,
     metalness: 0.68,
+    price: 560,
   },
   tungsten: {
     id: 'tungsten',
@@ -791,6 +964,7 @@ export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
     speedMult: 0.76,
     roughness: 0.22,
     metalness: 0.96,
+    price: 520,
   },
   nanoweave: {
     id: 'nanoweave',
@@ -804,6 +978,7 @@ export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
     speedMult: 1.03,
     roughness: 0.3,
     metalness: 0.78,
+    price: 620,
   },
 };
 
@@ -855,6 +1030,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 2.35,
     cooldown: 0.58,
     energyCost: 7,
+    price: 350,
   },
   flipper: {
     id: 'flipper',
@@ -891,6 +1067,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 2.4,
     cooldown: 1.3,
     energyCost: 16,
+    price: 400,
   },
   flame: {
     id: 'flame',
@@ -915,6 +1092,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 4.4,
     cooldown: 0.44,
     energyCost: 7,
+    price: 420,
   },
   tesla: {
     id: 'tesla',
@@ -927,6 +1105,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 5.2,
     cooldown: 0.95,
     energyCost: 14,
+    price: 520,
   },
   railgun: {
     id: 'railgun',
@@ -939,6 +1118,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 10.5,
     cooldown: 1.85,
     energyCost: 24,
+    price: 680,
   },
   mortar: {
     id: 'mortar',
@@ -951,6 +1131,46 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 7.8,
     cooldown: 1.65,
     energyCost: 20,
+    price: 640,
+  },
+  lance: {
+    id: 'lance',
+    label: 'Pneumatic Lance',
+    subtitle: 'Long piston spike that punches clean through armor plate',
+    category: 'Kinetic',
+    damage: 22,
+    impulse: 9.0,
+    lift: 0.6,
+    range: 3.5,
+    cooldown: 1.05,
+    energyCost: 14,
+    price: 380,
+  },
+  magnet: {
+    id: 'magnet',
+    label: 'Grapple Magnet',
+    subtitle: 'Electromagnet that yanks rivals into your other weapons',
+    category: 'Energy',
+    damage: 5,
+    impulse: 11,
+    lift: 0,
+    range: 7.0,
+    cooldown: 1.8,
+    energyCost: 16,
+    price: 560,
+  },
+  missiles: {
+    id: 'missiles',
+    label: 'Micro-Missile Pod',
+    subtitle: 'Homing salvo of mini rockets with splash detonation',
+    category: 'Artillery',
+    damage: 12,
+    impulse: 5.5,
+    lift: 2.5,
+    range: 16,
+    cooldown: 2.2,
+    energyCost: 22,
+    price: 720,
   },
 };
 
@@ -1074,6 +1294,7 @@ export const DRIVE_CATALOG: Record<DriveId, DriveSpec> = {
     accel: 26,
     turnRate: 3.15,
     knockbackResist: 0.92,
+    price: 600,
   },
   crawler_nuclear: {
     id: 'crawler_nuclear',
@@ -1083,6 +1304,17 @@ export const DRIVE_CATALOG: Record<DriveId, DriveSpec> = {
     accel: 28,
     turnRate: 2.45,
     knockbackResist: 1.55,
+    price: 560,
+  },
+  hover: {
+    id: 'hover',
+    label: 'Hover Skirt',
+    subtitle: 'Ducted-fan cushion floats over saws, floor blades, lava and acid',
+    maxSpeed: 8.2,
+    accel: 17,
+    turnRate: 3.0,
+    knockbackResist: 0.78,
+    price: 650,
   },
 };
 
@@ -1309,6 +1541,32 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     skyHex: '#13091C',
     floorHex: '#221330',
     accentHex: '#EC4899',
+  },
+  skyforge: {
+    id: 'skyforge',
+    name: 'Skyforge Platform',
+    subtitle: 'High-altitude deck with drop pits that open and close',
+    hazardTag: 'Drop Pits · Thin Air',
+    halfSize: 18,
+    friction: 5.0,
+    gravityMult: 0.82,
+    energyRegenMult: 1.1,
+    skyHex: '#1A2740',
+    floorHex: '#26303F',
+    accentHex: '#22D3EE',
+  },
+  storm: {
+    id: 'storm',
+    name: 'Tesla Stormcage',
+    subtitle: 'Lightning strikes aimed at bots, with an EMP core at center',
+    hazardTag: 'Lightning · EMP Core',
+    halfSize: 18,
+    friction: 5.3,
+    gravityMult: 1.0,
+    energyRegenMult: 1.35,
+    skyHex: '#0A0D1A',
+    floorHex: '#141A2E',
+    accentHex: '#60A5FA',
   },
 };
 

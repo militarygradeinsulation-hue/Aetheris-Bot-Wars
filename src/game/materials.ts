@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { PatternId } from '../shared/types';
 import type { ArenaId, ArmorId, FinishStyleId } from '../shared/types';
 import { ARMOR_CATALOG, ARENA_CATALOG, FINISH_CATALOG } from '../shared/types';
 
@@ -96,7 +97,11 @@ export function createProceduralTextures(
                 ? '#4c1d6e'
                 : arenaId === 'colosseum'
                   ? '#3b4454'
-                  : '#2e3745';
+                  : arenaId === 'skyforge'
+                    ? '#4a5a72'
+                    : arenaId === 'storm'
+                      ? '#2c3a66'
+                      : '#2e3745';
 
   fCtx.fillStyle = bg;
   fCtx.fillRect(0, 0, 512, 512);
@@ -117,7 +122,7 @@ export function createProceduralTextures(
   fCtx.lineTo(512, 256);
   fCtx.stroke();
 
-  if (arenaId === 'cyber_grid' || arenaId === 'aether_nexus') {
+  if (arenaId === 'cyber_grid' || arenaId === 'aether_nexus' || arenaId === 'storm') {
     fCtx.strokeStyle = accent;
     fCtx.globalAlpha = 0.22;
     fCtx.lineWidth = 2;
@@ -239,20 +244,190 @@ export function createProceduralTextures(
   };
 }
 
+function shade(hex: string, factor: number): string {
+  const c = new THREE.Color(hex);
+  c.multiplyScalar(factor);
+  return `#${c.getHexString()}`;
+}
+
+/** Procedural livery pattern painted in the bot's body + accent colors. */
+export function createLiveryTexture(
+  pattern: PatternId,
+  primary: string,
+  accent: string,
+  maxAnisotropy = 4,
+): THREE.CanvasTexture {
+  const size = 256;
+  const [canvas, ctx] = makeCanvas(size);
+  ctx.fillStyle = primary;
+  ctx.fillRect(0, 0, size, size);
+  const dark = shade(primary, 0.55);
+
+  if (pattern === 'stripes') {
+    ctx.fillStyle = accent;
+    ctx.fillRect(size * 0.36, 0, size * 0.1, size);
+    ctx.fillRect(size * 0.54, 0, size * 0.1, size);
+    ctx.fillStyle = dark;
+    ctx.fillRect(size * 0.46, 0, size * 0.08, size);
+  } else if (pattern === 'flames') {
+    const drawFlame = (y0: number, color: string, scale: number) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(0, y0);
+      for (let i = 0; i <= 8; i++) {
+        const x = (i / 8) * size;
+        const tip = y0 - (30 + ((i * 37) % 50)) * scale;
+        ctx.quadraticCurveTo(x - 10, tip, x + 14, y0 - 6 * scale);
+      }
+      ctx.lineTo(size, size);
+      ctx.lineTo(0, size);
+      ctx.closePath();
+      ctx.fill();
+    };
+    drawFlame(size * 0.82, '#B91C1C', 1.4);
+    drawFlame(size * 0.9, '#F97316', 1.0);
+    drawFlame(size * 0.97, accent, 0.6);
+  } else if (pattern === 'digital_camo') {
+    const cols = [dark, accent, shade(primary, 0.8), shade(accent, 0.6)];
+    const cell = 16;
+    let seed = 7;
+    const rnd = () => {
+      seed = (seed * 9301 + 49297) % 233280;
+      return seed / 233280;
+    };
+    for (let y = 0; y < size; y += cell) {
+      for (let x = 0; x < size; x += cell) {
+        const r = rnd();
+        if (r < 0.45) continue;
+        ctx.fillStyle = cols[Math.floor(rnd() * cols.length)];
+        ctx.fillRect(x, y, cell * (1 + Math.floor(rnd() * 2)), cell);
+      }
+    }
+  } else if (pattern === 'hex') {
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 3;
+    const r = 18;
+    const h = Math.sqrt(3) * r;
+    for (let row = -1; row < size / h + 1; row++) {
+      for (let col = -1; col < size / (r * 1.5) + 1; col++) {
+        const cx = col * r * 1.5;
+        const cy = row * h + (col % 2 ? h / 2 : 0);
+        ctx.beginPath();
+        for (let k = 0; k < 6; k++) {
+          const a = (k / 6) * Math.PI * 2;
+          const px = cx + Math.cos(a) * r * 0.92;
+          const py = cy + Math.sin(a) * r * 0.92;
+          if (k === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
+  } else if (pattern === 'checker') {
+    const cell = 32;
+    for (let y = 0; y < size; y += cell) {
+      for (let x = 0; x < size; x += cell) {
+        if (((x + y) / cell) % 2 === 0) {
+          ctx.fillStyle = accent;
+          ctx.fillRect(x, y, cell, cell);
+        }
+      }
+    }
+  } else if (pattern === 'tiger') {
+    ctx.fillStyle = dark;
+    for (let i = 0; i < 9; i++) {
+      const y = (i / 9) * size + 6;
+      ctx.beginPath();
+      ctx.moveTo(-10, y);
+      ctx.quadraticCurveTo(size * 0.3, y - 22, size * 0.55, y + 4);
+      ctx.quadraticCurveTo(size * 0.35, y + 10, -10, y + 14);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(size + 10, y + 12);
+      ctx.quadraticCurveTo(size * 0.7, y - 10, size * 0.48, y + 14);
+      ctx.quadraticCurveTo(size * 0.68, y + 22, size + 10, y + 26);
+      ctx.fill();
+    }
+  } else if (pattern === 'circuit') {
+    ctx.strokeStyle = accent;
+    ctx.fillStyle = accent;
+    ctx.lineWidth = 2.5;
+    let seed = 13;
+    const rnd = () => {
+      seed = (seed * 9301 + 49297) % 233280;
+      return seed / 233280;
+    };
+    for (let i = 0; i < 22; i++) {
+      let x = Math.floor(rnd() * 16) * 16;
+      let y = Math.floor(rnd() * 16) * 16;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      for (let k = 0; k < 4; k++) {
+        if (rnd() < 0.5) x += (rnd() < 0.5 ? -1 : 1) * 32;
+        else y += (rnd() < 0.5 ? -1 : 1) * 32;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Subtle panel wear so solid patterns still read as painted metal
+  for (let i = 0; i < 600; i++) {
+    ctx.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.05)';
+    ctx.fillRect(Math.random() * size, Math.random() * size, 2, 1);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1.2, 1.2);
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+/** Circular race-number roundel for side plates. */
+export function createRaceNumberTexture(num: number, accent: string): THREE.CanvasTexture {
+  const [canvas, ctx] = makeCanvas(128);
+  ctx.clearRect(0, 0, 128, 128);
+  ctx.fillStyle = '#F8FAFC';
+  ctx.beginPath();
+  ctx.arc(64, 64, 58, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 10;
+  ctx.stroke();
+  ctx.fillStyle = '#0F172A';
+  ctx.font = '800 64px "Chakra Petch", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(num), 64, 68);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** Soft radial glow sprite used for underglow pools and team rings. */
 export function createArmorMaterial(
   armorId: ArmorId,
   colorHex: string,
   weaveMap: THREE.Texture,
   bumpMap?: THREE.Texture,
   finishStyle: FinishStyleId = 'standard',
+  liveryMap?: THREE.Texture,
 ): THREE.MeshPhysicalMaterial {
   const spec = ARMOR_CATALOG[armorId] || ARMOR_CATALOG.titanium;
   const fin = FINISH_CATALOG[finishStyle] || FINISH_CATALOG.standard;
   const isIridescentArmor = armorId === 'aetherium' || finishStyle === 'iridescent';
 
-  return new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color(colorHex),
-    map: weaveMap,
+  const baseColor = liveryMap ? '#FFFFFF' : colorHex;
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(baseColor),
+    map: liveryMap ?? weaveMap,
     bumpMap,
     bumpScale: armorId === 'reactive_era' ? 0.022 : 0.014,
     roughness: THREE.MathUtils.clamp(spec.roughness * 0.78 * fin.roughnessMult, 0.08, 0.88),
@@ -267,4 +442,6 @@ export function createArmorMaterial(
         ? 0.85
         : 0.25,
   });
+  mat.userData.baseColor = baseColor;
+  return mat;
 }

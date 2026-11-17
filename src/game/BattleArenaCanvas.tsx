@@ -21,6 +21,7 @@ import { buildBotRig, syncBotRigToState, type BuiltBotRig } from './botBuilder';
 import { createDamageDecalPack } from './damageDecals';
 import { createProceduralTextures, type ProceduralTexturePack } from './materials';
 import { EffectsManager } from './particlesAndDebris';
+import { CombatOverlay } from './combatOverlay';
 import { soundEngine } from './soundEngine';
 
 export interface BattleArenaCanvasProps {
@@ -226,6 +227,10 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     const damageDecalPack = createDamageDecalPack(maxAnisotropy);
     let arenaBuilt: BuiltArenaScene | null = null;
     const effects = new EffectsManager(scene, isSoftwareGl);
+    const overlay = new CombatOverlay(scene);
+    const baseHemi = hemiLight.intensity;
+    const baseKey = keyLight.intensity;
+    let blackoutLevel = 0;
 
     // Workshop turntable pedestal
     const turntableGroup = new THREE.Group();
@@ -283,6 +288,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
         entry.rig.dispose();
       });
       combatBotRigs.clear();
+      overlay.clearDynamic();
     };
 
     const rebuildWorkshopBot = () => {
@@ -398,6 +404,9 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           const tz = ev.targetZ ?? ev.z;
           effects.spawnSparks(ev.x, ev.y, ev.z, 18, 0xc084fc, 11);
           effects.spawnSparks(tx, ev.y, tz, 22, 0x38bdf8, 12);
+          overlay.addArc(ev.x, ev.y + 0.4, ev.z, tx, (ev.targetY ?? ev.y) + 0.3, tz, 0xc084fc, 0.2, 0.45);
+          overlay.addArc(ev.x, ev.y + 0.4, ev.z, tx, (ev.targetY ?? ev.y) + 0.3, tz, 0x7dd3fc, 0.14, 0.3);
+          soundEngine.playZap(1);
           effects.spawnShockwave(tx, ev.y, tz, 3.4, 0xa855f7);
           impactFlashLight.position.set(tx, ev.y + 0.8, tz);
           impactFlashLight.color.setHex(0xa855f7);
@@ -413,6 +422,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
             const lz = ev.z + (tz - ev.z) * frac;
             effects.spawnSparks(lx, ev.y, lz, 6, 0x38bdf8, 7);
           }
+          overlay.addBeam(ev.x, ev.y + 0.35, ev.z, tx, (ev.targetY ?? ev.y) + 0.3, tz, 0x7dd3fc, 0.3);
           effects.spawnShockwave(tx, ev.y, tz, 4.8, 0x38bdf8);
           effects.spawnSparks(tx, ev.y, tz, 28, 0xfbbf24, 15);
           impactFlashLight.position.set(tx, ev.y + 0.8, tz);
@@ -442,18 +452,19 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           soundEngine.playFlip();
           soundEngine.playCrowdCheer(0.95);
         } else if (ev.type === 'explosion') {
-          effects.spawnShockwave(ev.x, ev.y, ev.z, 7.2, 0xef4444);
-          effects.spawnFlames(ev.x, ev.y, ev.z, 18, 0, 0, 6.5, 1.45);
-          effects.spawnSmoke(ev.x, ev.y + 0.4, ev.z, 14, 1.5, 0.14);
-          effects.spawnSparks(ev.x, ev.y, ev.z, 38, 0xf97316, 16);
-          effects.spawnDebris(ev.x, ev.y, ev.z, 8, '#dc2626', 1.1);
+          const k = Math.max(0.35, Math.min(1, (ev.intensity || 1) / 1.5));
+          effects.spawnShockwave(ev.x, ev.y, ev.z, 7.2 * k, 0xef4444);
+          effects.spawnFlames(ev.x, ev.y, ev.z, Math.round(18 * k), 0, 0, 6.5 * k, 1.45 * k);
+          effects.spawnSmoke(ev.x, ev.y + 0.4, ev.z, Math.round(14 * k), 1.5 * k, 0.14);
+          effects.spawnSparks(ev.x, ev.y, ev.z, Math.round(38 * k), 0xf97316, 16 * k);
+          if (k > 0.6) effects.spawnDebris(ev.x, ev.y, ev.z, 8, '#dc2626', 1.1);
           impactFlashLight.position.set(ev.x, ev.y + 1.2, ev.z);
           impactFlashLight.color.setHex(0xff6b2c);
-          impactFlashLight.intensity = 18;
-          crowdExcitement = 1.0;
-          screenShake = Math.min(0.95, screenShake + 0.55);
+          impactFlashLight.intensity = Math.max(impactFlashLight.intensity, 18 * k);
+          crowdExcitement = Math.min(1, crowdExcitement + k);
+          screenShake = Math.min(0.95, screenShake + 0.55 * k);
           soundEngine.playExplosion();
-          soundEngine.playCrowdCheer(1.2);
+          if (k > 0.6) soundEngine.playCrowdCheer(1.2);
         } else if (ev.type === 'crate_break') {
           effects.spawnDebris(ev.x, ev.y, ev.z, 6, '#926239', 1.0);
           effects.spawnSparks(ev.x, ev.y, ev.z, 10, 0xfbbf24, 7);
@@ -488,6 +499,48 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           crowdExcitement = Math.min(1.0, crowdExcitement + 0.38);
           screenShake = Math.min(0.85, screenShake + 0.36);
           soundEngine.playCrusherSlam();
+        } else if (ev.type === 'lance') {
+          const tx = ev.targetX ?? ev.x;
+          const tz = ev.targetZ ?? ev.z;
+          overlay.addBeam(ev.x, ev.y + 0.4, ev.z, tx, (ev.targetY ?? ev.y) + 0.35, tz, 0xfbbf24, 0.16);
+          effects.spawnSparks(tx, ev.y + 0.3, tz, 20, 0xfde68a, 12);
+          screenShake = Math.min(0.75, screenShake + 0.22);
+          soundEngine.playLanceThrust();
+        } else if (ev.type === 'magnet_pull') {
+          const tx = ev.targetX ?? ev.x;
+          const tz = ev.targetZ ?? ev.z;
+          overlay.addArc(ev.x, ev.y + 0.45, ev.z, tx, (ev.targetY ?? ev.y) + 0.35, tz, 0xf472b6, 0.3, 0.2);
+          effects.spawnShockwave(tx, ev.y, tz, 2.2, 0xf472b6);
+          soundEngine.playMagnetHum();
+        } else if (ev.type === 'missile_launch') {
+          effects.spawnSmoke(ev.x, ev.y, ev.z, 5, 0.9, 0.4);
+          effects.spawnFlames(ev.x, ev.y, ev.z, 3, 0, 0, 2.5, 0.6);
+          soundEngine.playMissileLaunch();
+        } else if (ev.type === 'lightning') {
+          overlay.addLightning(ev.x, ev.z);
+          effects.spawnShockwave(ev.x, 0.1, ev.z, 4.6, 0x93c5fd);
+          effects.spawnSparks(ev.x, 0.3, ev.z, 30, 0xe0f2fe, 14);
+          impactFlashLight.position.set(ev.x, 3, ev.z);
+          impactFlashLight.color.setHex(0xdbeafe);
+          impactFlashLight.intensity = 24;
+          screenShake = Math.min(0.9, screenShake + 0.4);
+          soundEngine.playThunder();
+        } else if (ev.type === 'pit_fall') {
+          effects.spawnSmoke(ev.x, 0.2, ev.z, 10, 1.3, 0.3);
+          effects.spawnSparks(ev.x, 0.2, ev.z, 18, 0xf97316, 9);
+          crowdExcitement = 1.0;
+          soundEngine.playPitFall();
+          soundEngine.playCrowdCheer(1.1);
+        } else if (ev.type === 'arena_event') {
+          effects.spawnShockwave(ev.x, 0.15, ev.z, 6, 0xa855f7);
+          soundEngine.playAnnouncerSting('event');
+        } else if (ev.type === 'wave_start') {
+          effects.spawnShockwave(0, 0.15, 0, 10, ev.intensity > 1.2 ? 0xef4444 : 0xf59e0b);
+          crowdExcitement = 1.0;
+          soundEngine.playAnnouncerSting('wave');
+        } else if (ev.type === 'hill_move') {
+          effects.spawnShockwave(ev.x, 0.12, ev.z, 5, 0xe2e8f0);
+          soundEngine.playAnnouncerSting('hill');
         } else if (ev.type === 'ko') {
           effects.spawnShockwave(ev.x, ev.y, ev.z, 7.8, 0xef4444);
           effects.spawnFlames(ev.x, ev.y, ev.z, 20, 0, 0, 6.0, 1.5);
@@ -552,6 +605,11 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       if (modeRef.current === 'workshop') {
         soundEngine.stopLoops();
         turntableGroup.visible = true;
+        if (blackoutLevel > 0) {
+          blackoutLevel = 0;
+          hemiLight.intensity = baseHemi;
+          keyLight.intensity = baseKey;
+        }
         if (workshopBotRig) {
           workshopBotRig.root.visible = true;
           workshopBotRig.root.rotation.y += dt * 0.42;
@@ -584,6 +642,13 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
               }
             } else if (wType === 'flipper') {
               entry.pivot.rotation.x = -Math.max(0, Math.sin(elapsed * 2.2)) * 0.6;
+            } else if (wType === 'lance') {
+              if (entry.movingPart) entry.movingPart.position.z = Math.max(0, Math.sin(elapsed * 2.4)) * 0.9;
+            } else if (wType === 'missiles') {
+              if (entry.movingPart) entry.movingPart.position.z = -Math.max(0, Math.sin(elapsed * 3)) * 0.1;
+            } else if (wType === 'magnet') {
+              if (entry.glowMat) entry.glowMat.emissiveIntensity = 0.8 + Math.sin(elapsed * 3) * 0.6;
+              entry.pivot.rotation.x = 0;
             } else if (wType === 'railgun' || wType === 'mortar') {
               entry.pivot.rotation.x = Math.sin(elapsed * 1.8) * 0.08;
             } else {
@@ -595,6 +660,10 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           }
           if (workshopBotRig.shieldBubble) {
             workshopBotRig.shieldBubble.rotation.y += dt * 0.7;
+          }
+          for (const fan of workshopBotRig.fans) fan.rotation.y += dt * 24;
+          if (workshopBotRig.isHover) {
+            workshopBotRig.bodyPivot.position.y = 0.1 + Math.sin(elapsed * 4.2) * 0.025;
           }
         }
         orbit.update();
@@ -622,7 +691,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
 
             const botWeapons = getBotWeapons(b.config);
             const botStyles = getBotChassisStyles(b.config);
-            const cfgKey = `${b.config.name}_${botStyles.join('+')}_${b.config.armor}_${botWeapons.join('+')}_${b.config.wheelLayout}_${b.config.drive}_${b.config.primaryColor}_${b.config.accentColor}_${b.config.finishStyle || 'standard'}_${b.config.accessory || 'none'}_${b.config.underglowColor || 'none'}`;
+            const cfgKey = `${b.config.name}_${botStyles.join('+')}_${b.config.armor}_${botWeapons.join('+')}_${b.config.wheelLayout}_${b.config.drive}_${b.config.primaryColor}_${b.config.accentColor}_${b.config.finishStyle || 'standard'}_${b.config.accessory || 'none'}_${b.config.underglowColor || 'none'}_${b.config.pattern || 'solid'}_${b.config.raceNumber ?? ''}`;
             let entry = combatBotRigs.get(b.id);
             if (!entry || entry.configKey !== cfgKey) {
               if (entry) {
@@ -710,6 +779,12 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
             processEvents(snap.events);
           }
 
+          overlay.sync(snap, playerIdRef.current, dt, elapsed, snap.phase !== 'finished');
+          const wantBlackout = snap.arenaEvent?.kind === 'blackout' ? 1 : 0;
+          blackoutLevel += (wantBlackout - blackoutLevel) * Math.min(1, dt * 2.5);
+          hemiLight.intensity = baseHemi * (1 - blackoutLevel * 0.82);
+          keyLight.intensity = baseKey * (1 - blackoutLevel * 0.88);
+
           // Smooth Camera Tracking
           if (playerBot) {
             const preset = camPresetRef.current;
@@ -790,6 +865,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       combatBotRigs.forEach((e) => e.rig.dispose());
       arenaBuilt?.dispose();
       effects.dispose();
+      overlay.dispose();
       damageDecalPack.dispose();
       textures.dispose();
       pedGeo.dispose();

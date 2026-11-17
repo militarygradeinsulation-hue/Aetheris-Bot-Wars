@@ -4,6 +4,7 @@ import {
   ChevronUp,
   CircleDot,
   Gauge,
+  Lock,
   Palette,
   Shuffle,
   Shield,
@@ -33,6 +34,12 @@ import {
   type WeaponId,
   WHEEL_LAYOUT_CATALOG,
   type WheelLayoutId,
+  getPartPrice,
+  isPartOwned,
+  type PartCategory,
+  PATTERN_CATALOG,
+  type PatternId,
+  type PlayerProfile,
 } from '../shared/types';
 
 interface WorkshopDockProps {
@@ -43,6 +50,8 @@ interface WorkshopDockProps {
   onSelectLoadoutSlot?: (slotIdx: number) => void;
   onChange: (next: BotConfig) => void;
   onStartFight: () => void;
+  profile: Pick<PlayerProfile, 'ownedParts' | 'scrap'>;
+  onBuyPart: (cat: PartCategory, id: string) => boolean;
 }
 
 type CustomTab = 'weapon' | 'chassis' | 'armor' | 'wheels' | 'drive' | 'cosmetics' | 'paint';
@@ -55,9 +64,37 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
   onSelectLoadoutSlot,
   onChange,
   onStartFight,
+  profile,
+  onBuyPart,
 }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [tab, setTab] = useState<CustomTab>('weapon');
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Premium parts: first click buys (if enough scrap), then equips
+  const ensureOwned = (cat: PartCategory, id: string, label: string): boolean => {
+    if (isPartOwned(profile, cat, id)) return true;
+    const price = getPartPrice(cat, id);
+    if (onBuyPart(cat, id)) {
+      setNotice(`Purchased ${label} for ${price} scrap`);
+    } else {
+      setNotice(`${label} costs ${price} scrap. Earn more in the arena, campaign or season events.`);
+    }
+    window.setTimeout(() => setNotice(null), 2600);
+    return isPartOwned(profile, cat, id) || profile.scrap >= price;
+  };
+  const owned = (cat: PartCategory, id: string) => isPartOwned(profile, cat, id);
+  const PriceTag = ({ cat, id }: { cat: PartCategory; id: string }) =>
+    owned(cat, id) ? null : (
+      <span
+        className={`absolute right-1.5 bottom-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+          profile.scrap >= getPartPrice(cat, id) ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-400'
+        }`}
+      >
+        <Lock className="h-3 w-3" />
+        {getPartPrice(cat, id)}
+      </span>
+    );
   const stats = computeBotStats(config, skills);
   const activeWeapons = getBotWeapons(config);
   const activeStyles = getBotChassisStyles(config);
@@ -68,6 +105,8 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
     if (idx >= 0) {
       if (activeWeapons.length <= 1) return;
       next = activeWeapons.filter((w) => w !== wId);
+    } else if (!ensureOwned('weapon', wId, WEAPON_CATALOG[wId].label)) {
+      return;
     } else if (activeWeapons.length < 3) {
       next = [...activeWeapons, wId];
     } else {
@@ -82,6 +121,8 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
     if (idx >= 0) {
       if (activeStyles.length <= 1) return;
       next = activeStyles.filter((c) => c !== cId);
+    } else if (!ensureOwned('chassis', cId, CHASSIS_CATALOG[cId].label)) {
+      return;
     } else if (activeStyles.length < 3) {
       next = [...activeStyles, cId];
     } else {
@@ -91,11 +132,11 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
   };
 
   const handleRandomize = () => {
-    const allChassis = Object.keys(CHASSIS_CATALOG) as ChassisId[];
-    const allWeapons = Object.keys(WEAPON_CATALOG) as WeaponId[];
-    const allArmors = Object.keys(ARMOR_CATALOG) as ArmorId[];
+    const allChassis = (Object.keys(CHASSIS_CATALOG) as ChassisId[]).filter((c) => owned('chassis', c));
+    const allWeapons = (Object.keys(WEAPON_CATALOG) as WeaponId[]).filter((w) => owned('weapon', w));
+    const allArmors = (Object.keys(ARMOR_CATALOG) as ArmorId[]).filter((a) => owned('armor', a));
     const allWheels = Object.keys(WHEEL_LAYOUT_CATALOG) as WheelLayoutId[];
-    const allDrives = Object.keys(DRIVE_CATALOG) as DriveId[];
+    const allDrives = (Object.keys(DRIVE_CATALOG) as DriveId[]).filter((d) => owned('drive', d));
     const allFinishes = Object.keys(FINISH_CATALOG) as FinishStyleId[];
     const allAccessories = Object.keys(ACCESSORY_CATALOG) as AccessoryId[];
 
@@ -294,6 +335,12 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
             </div>
           )}
 
+          {notice && (
+            <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-200">
+              {notice}
+            </div>
+          )}
+
           {/* Selection Strip */}
           <div className="mt-2.5 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-[32vh] sm:max-h-[225px] overflow-y-auto pr-0.5">
             {tab === 'weapon' &&
@@ -306,7 +353,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                     key={wId}
                     type="button"
                     onClick={() => toggleWeapon(wId)}
-                    className={`text-left rounded-xl border p-2.5 transition ${
+                    className={`relative text-left rounded-xl border p-2.5 transition ${
                       active
                         ? 'border-amber-500 bg-amber-500/12'
                         : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
@@ -325,7 +372,8 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                       <span>·</span>
                       <span>CD {item.cooldown}s</span>
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-400 line-clamp-2">{item.subtitle}</p>
+                    <p className="mt-1 text-[11px] text-slate-400 line-clamp-2 pr-10">{item.subtitle}</p>
+                    <PriceTag cat="weapon" id={wId} />
                   </button>
                 );
               })}
@@ -338,8 +386,10 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                   <button
                     key={aId}
                     type="button"
-                    onClick={() => onChange({ ...config, armor: aId })}
-                    className={`text-left rounded-xl border p-2.5 transition ${
+                    onClick={() => {
+                      if (ensureOwned('armor', aId, item.label)) onChange({ ...config, armor: aId });
+                    }}
+                    className={`relative text-left rounded-xl border p-2.5 transition ${
                       active
                         ? 'border-amber-500 bg-amber-500/12'
                         : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
@@ -354,7 +404,8 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                     <div className="mt-0.5 text-[10px] font-semibold text-emerald-400 truncate">
                       {item.specialPerk}
                     </div>
-                    <p className="mt-0.5 text-[11px] text-slate-400 line-clamp-2">{item.subtitle}</p>
+                    <p className="mt-0.5 text-[11px] text-slate-400 line-clamp-2 pr-10">{item.subtitle}</p>
+                    <PriceTag cat="armor" id={aId} />
                   </button>
                 );
               })}
@@ -369,7 +420,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                     key={cId}
                     type="button"
                     onClick={() => toggleChassisStyle(cId)}
-                    className={`text-left rounded-xl border p-2.5 transition ${
+                    className={`relative text-left rounded-xl border p-2.5 transition ${
                       active
                         ? 'border-amber-500 bg-amber-500/12'
                         : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
@@ -384,7 +435,8 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                     <div className="mt-0.5 text-[10px] text-slate-300 font-mono-tabular">
                       {item.baseHp} HP · {Math.round(item.speedMult * 100)}% SPD · {Math.round(item.frontDeflect * 100)}% DEF
                     </div>
-                    <p className="mt-0.5 text-[11px] text-slate-400 line-clamp-2">{item.subtitle}</p>
+                    <p className="mt-0.5 text-[11px] text-slate-400 line-clamp-2 pr-10">{item.subtitle}</p>
+                    <PriceTag cat="chassis" id={cId} />
                   </button>
                 );
               })}
@@ -423,8 +475,10 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                   <button
                     key={dId}
                     type="button"
-                    onClick={() => onChange({ ...config, drive: dId })}
-                    className={`text-left rounded-xl border p-2.5 transition ${
+                    onClick={() => {
+                      if (ensureOwned('drive', dId, item.label)) onChange({ ...config, drive: dId });
+                    }}
+                    className={`relative text-left rounded-xl border p-2.5 transition ${
                       active
                         ? 'border-amber-500 bg-amber-500/12'
                         : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
@@ -436,7 +490,8 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                         {item.maxSpeed} m/s
                       </span>
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-400 line-clamp-2">{item.subtitle}</p>
+                    <p className="mt-1 text-[11px] text-slate-400 line-clamp-2 pr-10">{item.subtitle}</p>
+                    <PriceTag cat="drive" id={dId} />
                   </button>
                 );
               })}
@@ -462,6 +517,40 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                     >
                       <div className="text-xs font-bold text-white">{item.label}</div>
                       <p className="mt-0.5 text-[11px] text-slate-400">{item.subtitle}</p>
+                    </button>
+                  );
+                })}
+
+                <div className="col-span-full mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  <span>Livery Pattern</span>
+                  <label className="flex items-center gap-1.5 normal-case tracking-normal text-slate-300">
+                    Race number
+                    <input
+                      type="number"
+                      min={0}
+                      max={99}
+                      value={config.raceNumber ?? ''}
+                      placeholder="--"
+                      onChange={(e) => {
+                        const v = e.target.value === '' ? undefined : Math.max(0, Math.min(99, Number(e.target.value)));
+                        onChange({ ...config, raceNumber: v });
+                      }}
+                      className="w-14 rounded border border-slate-700 bg-[#0D1014] px-1.5 py-0.5 text-xs text-white"
+                    />
+                  </label>
+                </div>
+                {(Object.keys(PATTERN_CATALOG) as PatternId[]).map((pId) => {
+                  const active = (config.pattern || 'none') === pId;
+                  return (
+                    <button
+                      key={pId}
+                      type="button"
+                      onClick={() => onChange({ ...config, pattern: pId })}
+                      className={`text-left rounded-xl border p-2.5 transition ${
+                        active ? 'border-amber-500 bg-amber-500/12' : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="text-xs font-bold text-white">{PATTERN_CATALOG[pId].label}</div>
                     </button>
                   );
                 })}

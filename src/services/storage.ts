@@ -9,7 +9,9 @@ import {
   FINISH_CATALOG,
   getBotChassisStyles,
   getBotWeapons,
+  PATTERN_CATALOG,
   type PlayerProfile,
+  premiumPartsInConfig,
   WEAPON_CATALOG,
   WHEEL_LAYOUT_CATALOG,
 } from '../shared/types';
@@ -60,6 +62,8 @@ function sanitizeBotConfig(raw: Partial<BotConfig> | undefined, fallback: BotCon
   if (!DRIVE_CATALOG[merged.drive]) merged.drive = fallback.drive;
   if (merged.finishStyle && !FINISH_CATALOG[merged.finishStyle]) merged.finishStyle = 'standard';
   if (merged.accessory && !ACCESSORY_CATALOG[merged.accessory]) merged.accessory = 'none';
+  if (merged.pattern && !PATTERN_CATALOG[merged.pattern]) merged.pattern = 'none';
+  if (typeof merged.raceNumber === 'number' && !(merged.raceNumber >= 0 && merged.raceNumber <= 99)) merged.raceNumber = undefined;
   merged.weapons = getBotWeapons(merged);
   merged.weapon = merged.weapons[0];
   merged.chassisStyles = getBotChassisStyles(merged);
@@ -93,7 +97,20 @@ function makeDefaultProfile(): PlayerProfile {
     batteryMode: 'balanced',
     muted: false,
     touchControlsMode: 'auto',
+    ownedParts: [],
+    campaignStars: {},
+    arenaWins: {},
+    bestSurvivalWave: 0,
   };
+}
+
+/** Premium parts already sitting in a pilot's builds stay usable after the part economy arrives. */
+function grantEquippedParts(profile: PlayerProfile): PlayerProfile {
+  const owned = new Set(profile.ownedParts ?? []);
+  for (const cfg of [profile.botConfig, ...(profile.savedLoadouts ?? [])]) {
+    if (cfg) premiumPartsInConfig(cfg).forEach((k) => owned.add(k));
+  }
+  return { ...profile, ownedParts: [...owned] };
 }
 
 export function loadPlayerProfile(): PlayerProfile {
@@ -108,20 +125,24 @@ export function loadPlayerProfile(): PlayerProfile {
         sanitizeBotConfig(rawLoadouts[idx], DEFAULT_SAVED_LOADOUTS[idx] || fallback.botConfig),
       );
 
-      return {
+      return grantEquippedParts({
         ...fallback,
         ...parsed,
         botConfig: mergedBot,
         savedLoadouts,
+        ownedParts: Array.isArray(parsed.ownedParts) ? parsed.ownedParts : [],
+        campaignStars: parsed.campaignStars ?? {},
+        arenaWins: parsed.arenaWins ?? {},
+        bestSurvivalWave: parsed.bestSurvivalWave ?? 0,
         activeLoadoutSlot: typeof parsed.activeLoadoutSlot === 'number' ? parsed.activeLoadoutSlot : 0,
         selectedWingmanIndex: typeof parsed.selectedWingmanIndex === 'number' ? parsed.selectedWingmanIndex : 3,
         skills: { ...fallback.skills, ...(parsed.skills || {}) },
-      };
+      });
     }
   } catch {
     // Ignore parse errors
   }
-  const fresh = makeDefaultProfile();
+  const fresh = grantEquippedParts(makeDefaultProfile());
   savePlayerProfile(fresh);
   return fresh;
 }

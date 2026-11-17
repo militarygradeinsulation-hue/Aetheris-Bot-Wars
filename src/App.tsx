@@ -6,7 +6,7 @@ import {
   type LocalLaunchMode,
   type RivalTier,
 } from './components/ArenaLauncherModal';
-import { CombatHud } from './components/CombatHud';
+import { CombatHud, type MatchResultSummary } from './components/CombatHud';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { SocialAndRankingsPanel, type HubModalTab } from './components/SocialAndRankingsPanel';
 import { TouchControls } from './components/TouchControls';
@@ -23,9 +23,18 @@ import {
 import {
   AI_RIVAL_PRESETS,
   createInitialSnapshot,
+  getRivalPreset,
+  presetToRoster,
   stepArenaPhysics,
   type BotRosterTemplate,
 } from './shared/physicsEngine';
+import {
+  describeObjective,
+  evaluateObjective,
+  getCampaignLevel,
+  isLevelUnlocked,
+  levelPassed,
+} from './shared/campaign';
 import {
   type ArenaId,
   type ArenaSnapshot,
@@ -35,7 +44,12 @@ import {
   DEFAULT_SKILLS,
   type GameMode,
   getBotWeapons,
+  getPartPrice,
+  isPartOwned,
   type LeaderboardEntry,
+  type MatchModifierId,
+  type PartCategory,
+  partKey,
   type PlayerInputState,
   type PlayerProfile,
   type SeasonalEvent,
@@ -308,6 +322,8 @@ const GAUNTLET_ARENA_ORDER: ArenaId[] = [
   'reactor',
   'volcano_caldera',
   'cyber_grid',
+  'skyforge',
+  'storm',
   'colosseum',
 ];
 
@@ -321,6 +337,9 @@ export default function App() {
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [hubTab, setHubTab] = useState<HubModalTab | null>(null);
   const [cameraPreset, setCameraPreset] = useState<'chase' | 'tactical' | 'cinematic'>('chase');
+  const [selectedModifiers, setSelectedModifiers] = useState<MatchModifierId[]>([]);
+  const [matchResult, setMatchResult] = useState<MatchResultSummary | null>(null);
+  const activeCampaignIdRef = useRef<string | null>(null);
 
   // Server-backed social & leaderboard data (seeded with rich offline fallbacks)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(OFFLINE_FALLBACK_LEADERBOARD);
@@ -332,7 +351,7 @@ export default function App() {
   const [hudSnapshot, setHudSnapshot] = useState<ArenaSnapshot | null>(null);
   const [isMultiplayerMatch, setIsMultiplayerMatch] = useState(false);
   const [isClanWarMatch, setIsClanWarMatch] = useState(false);
-  const [lastLocalMode, setLastLocalMode] = useState<LocalLaunchMode>('gauntlet');
+  const [lastLocalMode, setLastLocalMode] = useState<LocalLaunchMode | 'campaign'>('gauntlet');
   const matchRewardAppliedRef = useRef(false);
   const lastCountdownCeilRef = useRef(0);
   const lastMatchTimerCeilRef = useRef(0);
@@ -640,33 +659,103 @@ export default function App() {
     matchRewardAppliedRef.current = true;
 
     const playerBot = hudSnapshot.bots.find((b) => b.id === profile.id);
+    const playerTeam = playerBot?.team ?? 0;
     const won =
-      hudSnapshot.winnerId === profile.id ||
-      (hudSnapshot.winningTeam !== null &&
-        hudSnapshot.winningTeam !== undefined &&
-        playerBot &&
-        hudSnapshot.winningTeam === playerBot.team);
+      hudSnapshot.mode === 'survival'
+        ? false
+        : hudSnapshot.winningTeam !== undefined && hudSnapshot.winningTeam !== null
+          ? hudSnapshot.winningTeam === playerTeam
+          : hudSnapshot.winnerId === profile.id;
     const kos = playerBot?.kos ?? 0;
+    const mode = hudSnapshot.mode;
+    const wave = hudSnapshot.survivalWave ?? 0;
+    const wavesCleared = Math.max(0, wave - 1);
+    const isPractice = mode === 'practice';
+    const modeBonus =
+      mode === 'boss_raid' ? 85 : mode === 'team_3v3' || mode === 'king_hill' ? 45 : mode === 'team_2v2' ? 35 : 0;
 
-    const modeBonus = lastLocalMode === 'boss_raid' ? 85 : lastLocalMode === 'team_2v2' ? 35 : 0;
-    const scrapEarned = (won ? 150 + modeBonus : 50) + kos * 35;
-    const xpEarned = won ? 135 + modeBonus : 45;
-    const ratingDelta = won ? (isMultiplayerMatch ? 28 : 18) : isMultiplayerMatch ? -14 : -6;
+    let scrapEarned = isPractice ? 0 : (won ? 150 + modeBonus : 50) + kos * 35;
+    let xpEarned = isPractice ? 10 : won ? 135 + modeBonus : 45;
+    let spEarned = 0;
+    if (mode === 'survival') {
+      scrapEarned = 40 + wavesCleared * 45 + kos * 15;
+      xpEarned = 40 + wavesCleared * 25;
+    }
+
+    // Campaign star evaluation
+    const level = activeCampaignIdRef.current ? getCampaignLevel(activeCampaignIdRef.current) : undefined;
+    let stars = 0;
+    let objectives: MatchResultSummary['objectives'];
+    let unlocked: string | undefined;
+    let levelWon = won;
+    if (level) {
+      const facts = {
+        won,
+        hpPct: playerBot && !playerBot.isDead ? (playerBot.hp / Math.max(1, playerBot.maxHp)) * 100 : 0,
+        elapsed: hudSnapshot.elapsedTime ?? 0,
+        kos,
+        alliesAlive: hudSnapshot.bots.filter((b) => b.team === playerTeam && b.id !== profile.id).every((b) => !b.isDead),
+        wave: wavesCleared + (playerBot && !playerBot.isDead ? 1 : 0),
+      };
+      const passed = levelPassed(level, facts);
+      levelWon = passed;
+      objectives = level.objectives.map((o) => ({ label: describeObjective(o), met: passed && evaluateObjective(o, facts) }));
+      stars = passed ? objectives.filter((o) => o.met).length : 0;
+      const prevStars = profile.campaignStars?.[level.id] ?? 0;
+      const firstClear = prevStars === 0 && stars > 0;
+      if (firstClear) {
+        scrapEarned += level.rewardScrap;
+        spEarned += level.rewardSkillPoints ?? 0;
+        unlocked = level.rewardUnlock;
+      } else if (stars > prevStars) {
+        scrapEarned += Math.round(level.rewardScrap * 0.25);
+      }
+    }
+
+    const ratingDelta = isPractice || level || mode === 'survival' ? 0 : won ? (isMultiplayerMatch ? 28 : 18) : isMultiplayerMatch ? -14 : -6;
+    const newRecord = mode === 'survival' && wavesCleared > (profile.bestSurvivalWave ?? 0);
+
+    setMatchResult({
+      won: mode === 'survival' ? wavesCleared > 0 : levelWon,
+      scrap: scrapEarned,
+      xp: xpEarned,
+      skillPoints: spEarned,
+      stars: level ? stars : undefined,
+      objectives,
+      unlocked,
+      wavesCleared: mode === 'survival' ? wavesCleared : undefined,
+      newRecord,
+      levelTitle: level?.title,
+      ratingDelta,
+    });
 
     setProfile((prev) => {
       const nextXp = prev.xp + xpEarned;
       const leveledUp = nextXp >= prev.level * 200;
+      const arenaWins = { ...(prev.arenaWins ?? {}) };
+      if (won && !isPractice) {
+        arenaWins[hudSnapshot.arenaId] = (arenaWins[hudSnapshot.arenaId] ?? 0) + 1;
+      }
+      const owned = new Set(prev.ownedParts ?? []);
+      if (unlocked) owned.add(unlocked);
+      const campaignStars = { ...(prev.campaignStars ?? {}) };
+      if (level) campaignStars[level.id] = Math.max(campaignStars[level.id] ?? 0, stars);
+
       const nextProfile: PlayerProfile = {
         ...prev,
         scrap: prev.scrap + scrapEarned,
         xp: leveledUp ? nextXp - prev.level * 200 : nextXp,
         level: leveledUp ? prev.level + 1 : prev.level,
-        skillPoints: leveledUp ? prev.skillPoints + 1 : prev.skillPoints,
+        skillPoints: (leveledUp ? prev.skillPoints + 1 : prev.skillPoints) + spEarned,
         rating: Math.max(800, prev.rating + ratingDelta),
         wins: won ? prev.wins + 1 : prev.wins,
-        losses: won ? prev.losses : prev.losses + 1,
+        losses: won || isPractice || mode === 'survival' ? prev.losses : prev.losses + 1,
         kos: prev.kos + kos,
         gauntletStage: won && lastLocalMode === 'gauntlet' ? prev.gauntletStage + 1 : prev.gauntletStage,
+        arenaWins,
+        ownedParts: [...owned],
+        campaignStars,
+        bestSurvivalWave: Math.max(prev.bestSurvivalWave ?? 0, mode === 'survival' ? wavesCleared : 0),
       };
       savePlayerProfile(nextProfile);
       syncProfileToServer(nextProfile);
@@ -699,7 +788,7 @@ export default function App() {
 
       return nextProfile;
     });
-  }, [hudSnapshot, profile.id, isMultiplayerMatch, isClanWarMatch, lastLocalMode, syncProfileToServer]);
+  }, [hudSnapshot, profile.id, profile.campaignStars, profile.bestSurvivalWave, isMultiplayerMatch, isClanWarMatch, lastLocalMode, syncProfileToServer]);
 
   // Start Offline / Local Arena Match
   const startLocalMatch = useCallback(
@@ -710,6 +799,8 @@ export default function App() {
       setIsMultiplayerMatch(false);
       setIsClanWarMatch(clanWar);
       setLastLocalMode(mode);
+      activeCampaignIdRef.current = null;
+      setMatchResult(null);
 
       const arenaToUse: ArenaId =
         mode === 'gauntlet'
@@ -730,7 +821,7 @@ export default function App() {
       ];
 
       // Spawn AI Wingman on Team 0 for 2v2 Team Clash & Titan Boss Raid
-      if (mode === 'team_2v2' || mode === 'boss_raid') {
+      if (mode === 'team_2v2' || mode === 'boss_raid' || mode === 'team_3v3' || mode === 'king_hill') {
         const wingIdx = profile.selectedWingmanIndex ?? 3;
         const bay2 = profile.savedLoadouts?.[1];
         if (wingIdx === -1 && bay2) {
@@ -765,6 +856,13 @@ export default function App() {
       }
 
       const stageBoost = mode === 'gauntlet' ? Math.min(4, Math.floor((profile.gauntletStage - 1) / 2)) : 1;
+
+      // Squad 3v3 gets a second AI teammate
+      if (mode === 'team_3v3') {
+        const mids = AI_RIVAL_PRESETS.filter((p) => p.weightClass === 'Middleweight' || p.weightClass === 'Heavyweight');
+        const extra = mids[(profile.gauntletStage + 2) % mids.length];
+        roster.push({ ...presetToRoster(extra, 'ally_squad', 0, 2), clanTag: profile.clanTag });
+      }
 
       if (mode === 'boss_raid') {
         // Spawn colossal Raid Boss + 1 escort drone on Team 1
@@ -807,8 +905,9 @@ export default function App() {
             team: 1,
           },
         );
-      } else {
-        const rivalCount = mode === 'brawl_4bot' ? 3 : mode === 'team_2v2' ? 2 : 1;
+      } else if (mode !== 'survival') {
+        const rivalCount =
+          mode === 'brawl_4bot' || mode === 'team_3v3' ? 3 : mode === 'team_2v2' || mode === 'king_hill' ? 2 : 1;
         const pickPresetPool = () => {
           if (mode === 'gauntlet') {
             const st = profile.gauntletStage;
@@ -837,7 +936,7 @@ export default function App() {
 
         for (let i = 0; i < rivalCount; i++) {
           const preset =
-            selectedRivalTier === 'mixed' && (mode === 'brawl_4bot' || mode === 'team_2v2')
+            selectedRivalTier === 'mixed' && rivalCount > 1
               ? safePool[(i * 3 + profile.gauntletStage) % safePool.length]
               : safePool[(i + profile.gauntletStage - 1) % safePool.length];
           roster.push({
@@ -858,12 +957,14 @@ export default function App() {
               kineticArmor: mode === 'practice' ? 0 : stageBoost,
             },
             isBot: mode !== 'practice',
-            team: mode === 'practice' || mode === 'team_2v2' ? 1 : i + 1,
+            team: mode === 'practice' || mode === 'team_2v2' || mode === 'team_3v3' || mode === 'king_hill' ? 1 : i + 1,
           });
         }
       }
 
-      const snap = createInitialSnapshot(mode as GameMode, arenaToUse, roster, selectedDuration);
+      const snap = createInitialSnapshot(mode as GameMode, arenaToUse, roster, selectedDuration, {
+        modifiers: mode === 'practice' ? [] : selectedModifiers,
+      });
       lastMatchTimerCeilRef.current = Math.ceil(snap.timeRemaining);
       snapshotRef.current = snap;
       setHudSnapshot({ ...snap });
@@ -872,7 +973,55 @@ export default function App() {
       setSceneMode('combat');
       soundEngine.playNextBattleMusic(arenaToUse);
     },
-    [profile, selectedArena, selectedRivalTier, selectedDuration],
+    [profile, selectedArena, selectedRivalTier, selectedDuration, selectedModifiers],
+  );
+
+  const startCampaignLevel = useCallback(
+    (levelId: string) => {
+      const level = getCampaignLevel(levelId);
+      if (!level || !isLevelUnlocked(levelId, profile.campaignStars)) return;
+      soundEngine.unlock();
+      matchRewardAppliedRef.current = false;
+      lastCountdownCeilRef.current = 3;
+      activeCampaignIdRef.current = level.id;
+      setMatchResult(null);
+      setIsMultiplayerMatch(false);
+      setIsClanWarMatch(false);
+      setLastLocalMode('campaign');
+      setSelectedArena(level.arenaId);
+
+      const roster: BotRosterTemplate[] = [
+        {
+          id: profile.id,
+          name: profile.callsign,
+          clanTag: profile.clanTag,
+          config: profile.botConfig,
+          skills: profile.skills,
+          isBot: false,
+          team: 0,
+        },
+      ];
+      (level.allies ?? []).forEach((key, i) => {
+        const entry = presetToRoster(getRivalPreset(key), `ally_${i}`, 0, level.allySkill ?? level.enemySkill);
+        roster.push({ ...entry, clanTag: profile.clanTag });
+      });
+      const ffa = level.mode === 'brawl_4bot' || level.mode === 'duel_1v1';
+      level.enemies.forEach((key, i) => {
+        roster.push(presetToRoster(getRivalPreset(key), `ai_${i}`, ffa ? i + 1 : 1, level.enemySkill));
+      });
+
+      const snap = createInitialSnapshot(level.mode, level.arenaId, roster, level.duration, {
+        modifiers: level.modifiers ?? [],
+      });
+      lastMatchTimerCeilRef.current = Math.ceil(snap.timeRemaining);
+      snapshotRef.current = snap;
+      setHudSnapshot({ ...snap });
+      setLauncherOpen(false);
+      setHubTab(null);
+      setSceneMode('combat');
+      soundEngine.playNextBattleMusic(level.arenaId);
+    },
+    [profile],
   );
 
   // Step local physics inside the Three.js frame loop when offline/solo
@@ -899,7 +1048,11 @@ export default function App() {
         soundEngine.playCountdown(true);
       }
 
-      if (snapshotRef.current.mode !== 'practice' && snapshotRef.current.phase === 'active') {
+      if (
+        snapshotRef.current.mode !== 'practice' &&
+        snapshotRef.current.mode !== 'survival' &&
+        snapshotRef.current.phase === 'active'
+      ) {
         const remCeil = Math.ceil(snapshotRef.current.timeRemaining);
         if (remCeil !== lastMatchTimerCeilRef.current) {
           lastMatchTimerCeilRef.current = remCeil;
@@ -1058,13 +1211,32 @@ export default function App() {
 
   const handleClaimEventReward = (ev: SeasonalEvent) => {
     if (profile.claimedEvents.includes(ev.id) || profile.wins < ev.targetWins) return;
+    const owned = new Set(profile.ownedParts ?? []);
+    if (ev.rewardUnlock) owned.add(ev.rewardUnlock);
     updateProfile({
       scrap: profile.scrap + ev.rewardScrap,
       skillPoints: profile.skillPoints + ev.rewardSkillPoints,
       pilotTitle: ev.badgeTitle || profile.pilotTitle,
       claimedEvents: [...profile.claimedEvents, ev.id],
+      ownedParts: [...owned],
     });
     soundEngine.playPickup();
+  };
+
+  const handleBuyPart = (cat: PartCategory, id: string): boolean => {
+    if (isPartOwned(profile, cat, id)) return true;
+    const price = getPartPrice(cat, id);
+    if (profile.scrap < price) return false;
+    updateProfile({
+      scrap: profile.scrap - price,
+      ownedParts: [...(profile.ownedParts ?? []), partKey(cat, id)],
+    });
+    soundEngine.playPickup();
+    return true;
+  };
+
+  const toggleModifier = (id: MatchModifierId) => {
+    setSelectedModifiers((prev) => (prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]));
   };
 
   const isTouchDevice = useMemo(() => {
@@ -1205,6 +1377,8 @@ export default function App() {
           activeLoadoutSlot={profile.activeLoadoutSlot ?? 0}
           onSelectLoadoutSlot={handleSelectLoadoutSlot}
           onChange={handleBotConfigChange}
+          profile={profile}
+          onBuyPart={handleBuyPart}
           onStartFight={() => setLauncherOpen(true)}
         />
       )}
@@ -1217,6 +1391,8 @@ export default function App() {
           cameraPreset={cameraPreset}
           muted={profile.muted}
           isMultiplayer={isMultiplayerMatch}
+          matchResult={matchResult}
+          campaignLevelId={activeCampaignIdRef.current}
           onCycleCamera={() =>
             setCameraPreset((c) => (c === 'chase' ? 'tactical' : c === 'tactical' ? 'cinematic' : 'chase'))
           }
@@ -1226,6 +1402,8 @@ export default function App() {
             if (isMultiplayerMatch) {
               handleExitArena();
               setLauncherOpen(true);
+            } else if (lastLocalMode === 'campaign') {
+              if (activeCampaignIdRef.current) startCampaignLevel(activeCampaignIdRef.current);
             } else {
               startLocalMatch(lastLocalMode, isClanWarMatch);
             }
@@ -1266,6 +1444,11 @@ export default function App() {
         selectedWingmanIndex={profile.selectedWingmanIndex ?? 3}
         savedLoadouts={profile.savedLoadouts}
         gauntletStage={profile.gauntletStage}
+        selectedModifiers={selectedModifiers}
+        onToggleModifier={toggleModifier}
+        campaignStars={profile.campaignStars ?? {}}
+        onStartCampaign={startCampaignLevel}
+        bestSurvivalWave={profile.bestSurvivalWave ?? 0}
         lobbyRoom={lobbyRoom}
         onSelectArena={setSelectedArena}
         onSelectRivalTier={setSelectedRivalTier}

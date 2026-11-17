@@ -14,13 +14,20 @@ import {
   type BotDecalEntry,
   type DamageDecalPack,
 } from './damageDecals';
-import { createArmorMaterial, createBotNameplateTexture } from './materials';
+import {
+  createArmorMaterial,
+  createBotNameplateTexture,
+  createLiveryTexture,
+  createRaceNumberTexture,
+} from './materials';
 
 export interface BuiltWeaponEntry {
   weaponId: WeaponId;
   pivot: THREE.Group;
   secondarySpinners: THREE.Object3D[];
   flameJets: THREE.Mesh[];
+  movingPart?: THREE.Object3D;
+  glowMat?: THREE.MeshStandardMaterial;
 }
 
 export interface BuiltBotRig {
@@ -39,6 +46,8 @@ export interface BuiltBotRig {
   decalPool: BotDecalEntry[];
   visorMat: THREE.MeshStandardMaterial;
   shadowPlane: THREE.Mesh;
+  fans: THREE.Object3D[];
+  isHover: boolean;
   applyDamageDecal: (
     decalPack: DamageDecalPack,
     localPos: THREE.Vector3,
@@ -768,12 +777,25 @@ export function buildBotRig(
   bodyPivot.add(nameplateMesh);
 
   // 4. Directional Armor Plates
+  const pattern = config.pattern ?? 'none';
+  const liveryTex = pattern !== 'none' ? createLiveryTexture(pattern, config.primaryColor, config.accentColor) : undefined;
+  if (liveryTex) texturesToDispose.push(liveryTex);
+  const makeArmorMat = () =>
+    createArmorMaterial(config.armor, config.primaryColor, weaveTexture, metalBrushBump, finishStyle, liveryTex);
   const armorMaterials: Record<keyof ArmorZones, THREE.MeshPhysicalMaterial> = {
-    front: createArmorMaterial(config.armor, config.primaryColor, weaveTexture, metalBrushBump, finishStyle),
-    left: createArmorMaterial(config.armor, config.primaryColor, weaveTexture, metalBrushBump, finishStyle),
-    right: createArmorMaterial(config.armor, config.primaryColor, weaveTexture, metalBrushBump, finishStyle),
-    rear: createArmorMaterial(config.armor, config.primaryColor, weaveTexture, metalBrushBump, finishStyle),
+    front: makeArmorMat(),
+    left: makeArmorMat(),
+    right: makeArmorMat(),
+    rear: makeArmorMat(),
   };
+  // Livery pattern also wraps the core hull, darkened so the plates still pop
+  if (liveryTex) {
+    const hullPaint = makeArmorMat();
+    hullPaint.color.setRGB(0.62, 0.64, 0.68);
+    hullPaint.userData.baseColor = `#${hullPaint.color.getHexString()}`;
+    materialsToDispose.push(hullPaint);
+    chassisMesh.material = hullPaint;
+  }
   Object.values(armorMaterials).forEach((m) => materialsToDispose.push(m));
 
   const frontPlateGeo = new THREE.BoxGeometry(1.32, 0.22, 0.18, 8, 3, 2);
@@ -824,11 +846,81 @@ export function buildBotRig(
     );
   }
 
+  // Race number roundels on both flanks
+  if (typeof config.raceNumber === 'number' && config.raceNumber >= 0) {
+    const numTex = createRaceNumberTexture(config.raceNumber, config.accentColor);
+    texturesToDispose.push(numTex);
+    const numGeo = new THREE.PlaneGeometry(0.34, 0.34);
+    const numMat = new THREE.MeshStandardMaterial({
+      map: numTex,
+      transparent: true,
+      roughness: 0.4,
+      metalness: 0.1,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    });
+    geometriesToDispose.push(numGeo);
+    materialsToDispose.push(numMat);
+    const sideX = sideOffset + 0.085;
+    [-1, 1].forEach((side) => {
+      const num = new THREE.Mesh(numGeo, numMat);
+      num.position.set(side * sideX, 0.38, -0.05);
+      num.rotation.y = side * Math.PI * 0.5;
+      bodyPivot.add(num);
+    });
+  }
+
   // 5. Wheel Placements & Drive Functions
   const wheels: THREE.Object3D[] = [];
+  const fans: THREE.Object3D[] = [];
   const wheelLayout = config.wheelLayout || '4wd_wide';
+  const isHover = config.drive === 'hover';
+  const glowHex = config.underglowColor && config.underglowColor !== 'none' ? config.underglowColor : config.accentColor;
 
-  if (config.drive === 'tracks' || config.drive === 'crawler_nuclear') {
+  if (isHover) {
+    // Ducted-fan hover skirt: rubber curtain ring + four lift fans + glowing cushion
+    const skirtGeo = new THREE.TorusGeometry(1.0, 0.13, 8, 32);
+    skirtGeo.rotateX(Math.PI / 2);
+    skirtGeo.scale(1.02, 1, 1.12);
+    const ductGeo = new THREE.CylinderGeometry(0.27, 0.27, 0.16, 16, 1, true);
+    const fanGeo = new THREE.BoxGeometry(0.46, 0.02, 0.07);
+    const cushionGeo = new THREE.CircleGeometry(1.05, 32);
+    cushionGeo.rotateX(-Math.PI / 2);
+    const cushionMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(glowHex),
+      transparent: true,
+      opacity: 0.35,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    geometriesToDispose.push(skirtGeo, ductGeo, fanGeo, cushionGeo);
+    materialsToDispose.push(cushionMat);
+    const skirt = new THREE.Mesh(skirtGeo, rubberMat);
+    skirt.position.y = 0.12;
+    skirt.castShadow = castShadow;
+    bodyPivot.add(skirt);
+    const cushion = new THREE.Mesh(cushionGeo, cushionMat);
+    cushion.position.y = 0.03;
+    bodyPivot.add(cushion);
+    [
+      [-0.62, -0.55],
+      [0.62, -0.55],
+      [-0.62, 0.52],
+      [0.62, 0.52],
+    ].forEach(([fx, fz]) => {
+      const duct = new THREE.Mesh(ductGeo, bareSteelMat);
+      duct.position.set(fx * 1.25, 0.2, fz);
+      bodyPivot.add(duct);
+      const fan = new THREE.Group();
+      fan.position.set(fx * 1.25, 0.2, fz);
+      const b1 = new THREE.Mesh(fanGeo, chassisDarkMat);
+      const b2 = new THREE.Mesh(fanGeo, chassisDarkMat);
+      b2.rotation.y = Math.PI / 2;
+      fan.add(b1, b2);
+      bodyPivot.add(fan);
+      fans.push(fan);
+    });
+  } else if (config.drive === 'tracks' || config.drive === 'crawler_nuclear') {
     const trackX = wheelLayout === 'outboard' ? 1.12 : wheelLayout === '4wd_tucked' ? 0.84 : 0.98;
     const trackGeo = new THREE.BoxGeometry(0.26, 0.34, 1.62);
     const treadRollerGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.3, 12);
@@ -1060,6 +1152,8 @@ export function buildBotRig(
     const pivot = new THREE.Group();
     const spinners: THREE.Object3D[] = [];
     const flameJets: THREE.Mesh[] = [];
+    let movingPart: THREE.Object3D | undefined;
+    let glowMat: THREE.MeshStandardMaterial | undefined;
     bodyPivot.add(pivot);
 
     if (wId === 'vspinner') {
@@ -1298,6 +1392,91 @@ export function buildBotRig(
         tube.position.set(mx, 0.24, 0.12);
         pivot.add(tube);
       });
+    } else if (wId === 'missiles') {
+      // Shoulder rocket pod: 2x3 launch tubes angled slightly skyward
+      pivot.position.set(-0.5, deckTopY + 0.04, -0.12);
+      const podGeo = new THREE.BoxGeometry(0.46, 0.32, 0.62);
+      const tubeGeo = new THREE.CylinderGeometry(0.065, 0.065, 0.66, 10, 1, true);
+      tubeGeo.rotateX(Math.PI / 2);
+      const noseGeo = new THREE.ConeGeometry(0.05, 0.12, 8);
+      noseGeo.rotateX(Math.PI / 2);
+      const mountGeo = new THREE.CylinderGeometry(0.08, 0.1, 0.2, 8);
+      geometriesToDispose.push(podGeo, tubeGeo, noseGeo, mountGeo);
+      const mount = new THREE.Mesh(mountGeo, bareSteelMat);
+      mount.position.y = -0.06;
+      pivot.add(mount);
+      const pod = new THREE.Group();
+      pod.position.y = 0.2;
+      pod.rotation.x = -0.22;
+      const box = new THREE.Mesh(podGeo, weaponAccentMat);
+      box.castShadow = castShadow;
+      pod.add(box);
+      for (let r = 0; r < 2; r++) {
+        for (let c = 0; c < 3; c++) {
+          const tx = (c - 1) * 0.14;
+          const ty = (r - 0.5) * 0.14;
+          const tube = new THREE.Mesh(tubeGeo, chassisDarkMat);
+          tube.position.set(tx, ty, 0.02);
+          const nose = new THREE.Mesh(noseGeo, visorMat);
+          nose.position.set(tx, ty, 0.3);
+          pod.add(tube, nose);
+        }
+      }
+      pivot.add(pod);
+      movingPart = pod;
+    } else if (wId === 'lance') {
+      // Pneumatic lance: sleeve cylinder with a sliding armor-piercing spike
+      const side = centerFrontTaken;
+      centerFrontTaken = true;
+      pivot.position.set(side ? -0.6 : 0, side ? 0.5 : 0.36, side ? 0.72 : 0.78);
+      const sleeveGeo = new THREE.CylinderGeometry(0.11, 0.13, 0.7, 12);
+      sleeveGeo.rotateX(Math.PI / 2);
+      const rodGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.9, 10);
+      rodGeo.rotateX(Math.PI / 2);
+      const spikeGeo = new THREE.ConeGeometry(0.11, 0.4, 10);
+      spikeGeo.rotateX(Math.PI / 2);
+      geometriesToDispose.push(sleeveGeo, rodGeo, spikeGeo);
+      const sleeve = new THREE.Mesh(sleeveGeo, chassisDarkMat);
+      sleeve.castShadow = castShadow;
+      const rodGroup = new THREE.Group();
+      const rod = new THREE.Mesh(rodGeo, bareSteelMat);
+      rod.position.z = 0.36;
+      const spike = new THREE.Mesh(spikeGeo, weaponAccentMat);
+      spike.position.z = 0.98;
+      spike.castShadow = castShadow;
+      rodGroup.add(rod, spike);
+      pivot.add(sleeve, rodGroup);
+      movingPart = rodGroup;
+    } else if (wId === 'magnet') {
+      // Grapple electromagnet dish on an articulated arm
+      const side = centerFrontTaken;
+      centerFrontTaken = true;
+      pivot.position.set(side ? 0.62 : 0, side ? 0.6 : 0.5, side ? 0.66 : 0.96);
+      const armGeo = new THREE.BoxGeometry(0.12, 0.12, 0.42);
+      const dishGeo = new THREE.CylinderGeometry(0.3, 0.24, 0.12, 20);
+      dishGeo.rotateX(Math.PI / 2);
+      const faceGeo = new THREE.CircleGeometry(0.24, 20);
+      const coilGeo = new THREE.TorusGeometry(0.17, 0.03, 6, 20);
+      geometriesToDispose.push(armGeo, dishGeo, faceGeo, coilGeo);
+      const magGlow = new THREE.MeshStandardMaterial({
+        color: 0xef4444,
+        emissive: 0xdc2626,
+        emissiveIntensity: 0.4,
+        roughness: 0.3,
+        metalness: 0.4,
+      });
+      materialsToDispose.push(magGlow);
+      const arm = new THREE.Mesh(armGeo, bareSteelMat);
+      arm.position.z = -0.12;
+      const dish = new THREE.Mesh(dishGeo, chassisDarkMat);
+      dish.position.z = 0.14;
+      dish.castShadow = castShadow;
+      const face = new THREE.Mesh(faceGeo, magGlow);
+      face.position.z = 0.205;
+      const coil = new THREE.Mesh(coilGeo, weaponAccentMat);
+      coil.position.z = 0.21;
+      pivot.add(arm, dish, face, coil);
+      glowMat = magGlow;
     } else {
       // Overhead Hammer
       const hammerY =
@@ -1329,6 +1508,8 @@ export function buildBotRig(
       pivot,
       secondarySpinners: spinners,
       flameJets,
+      movingPart,
+      glowMat,
     });
   }
 
@@ -1360,6 +1541,8 @@ export function buildBotRig(
     wheels,
     accessoryPivot,
     shieldBubble,
+    fans,
+    isHover,
     armorPlates,
     armorMaterials,
     damageableMeshes,
@@ -1399,8 +1582,10 @@ export function syncBotRigToState(
 ) {
   rig.root.position.set(state.x, 0, state.z);
   rig.root.scale.setScalar(state.scale || 1.0);
-  rig.bodyPivot.position.y = state.y;
+  const nowT = performance.now() * 0.001;
+  rig.bodyPivot.position.y = state.y + (rig.isHover && !state.isDead ? 0.1 + Math.sin(nowT * 4.2 + state.x) * 0.025 : 0);
   rig.bodyPivot.rotation.set(state.pitch, state.yaw, state.roll, 'YXZ');
+  for (const f of rig.fans) f.rotation.y += dt * (state.isDead ? 2 : 38);
 
   rig.shadowPlane.position.y = 0.025;
   const heightFade = Math.max(0.15, 1 - state.y * 0.18);
@@ -1464,6 +1649,14 @@ export function syncBotRigToState(
       entry.pivot.rotation.x = -spin * 0.25;
     } else if (entry.weaponId === 'hammer') {
       entry.pivot.rotation.x = spin > 0.5 ? -0.95 : spin * 1.3;
+    } else if (entry.weaponId === 'lance') {
+      if (entry.movingPart) entry.movingPart.position.z = spin > 0.55 ? 1.25 * spin : spin * 0.6;
+    } else if (entry.weaponId === 'missiles') {
+      if (entry.movingPart) entry.movingPart.position.z = -spin * 0.12;
+    } else if (entry.weaponId === 'magnet') {
+      if (entry.glowMat) {
+        entry.glowMat.emissiveIntensity = spin > 0.3 ? 2.8 * spin : 0.35 + Math.sin(nowT * 3) * 0.1;
+      }
     }
   });
 
@@ -1479,7 +1672,7 @@ export function syncBotRigToState(
       if ((state.freezeTimer ?? 0) > 0) {
         mat.color.setHex(0x7dd3fc).multiplyScalar(tint);
       } else {
-        mat.color.set(state.config.primaryColor).multiplyScalar(tint);
+        mat.color.set((mat.userData.baseColor as string | undefined) ?? state.config.primaryColor).multiplyScalar(tint);
       }
       mat.roughness = Math.min(0.85, 0.25 + (1 - ratio) * 0.5);
     }

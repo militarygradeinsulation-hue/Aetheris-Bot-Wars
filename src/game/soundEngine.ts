@@ -119,8 +119,10 @@ class SoundEngine {
         toxic_scrapyard: 4,
         volcano_caldera: 0,
         cyber_grid: 5,
+        skyforge: 1,
+        storm: 2,
       };
-      this.battleTrackIndex = startMap[arenaId] ?? 0;
+      this.battleTrackIndex = (startMap[arenaId] ?? 0) % BATTLE_TRACKS.length;
     } else {
       this.battleTrackIndex = (this.battleTrackIndex + 1) % BATTLE_TRACKS.length;
     }
@@ -738,6 +740,80 @@ class SoundEngine {
       osc.start(now + idx * 0.08);
       osc.stop(now + idx * 0.08 + 0.4);
     });
+  }
+
+  private tone(type: OscillatorType, from: number, to: number, start: number, dur: number, vol: number) {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const t0 = ctx.currentTime + start;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(from, t0);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + dur);
+    gain.gain.setValueAtTime(vol, t0);
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  }
+
+  private noiseBurst(type: BiquadFilterType, from: number, to: number, start: number, dur: number, vol: number) {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const t0 = ctx.currentTime + start;
+    const noise = ctx.createBufferSource();
+    noise.buffer = this.getNoiseBuffer(ctx);
+    const filter = ctx.createBiquadFilter();
+    filter.type = type;
+    filter.frequency.setValueAtTime(from, t0);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    noise.connect(filter);
+    filter.connect(g);
+    g.connect(ctx.destination);
+    noise.start(t0);
+    noise.stop(t0 + dur + 0.02);
+  }
+
+  public playZap(intensity = 1) {
+    this.tone('square', 1800, 220, 0, 0.12, 0.07 * intensity);
+    this.tone('sawtooth', 960, 120, 0.03, 0.16, 0.06 * intensity);
+    this.noiseBurst('highpass', 4200, 1800, 0, 0.14, 0.12 * intensity);
+  }
+
+  public playThunder() {
+    this.noiseBurst('highpass', 6000, 2400, 0, 0.08, 0.3);
+    this.noiseBurst('lowpass', 900, 60, 0.05, 1.4, 0.42);
+    this.tone('sine', 70, 30, 0.05, 1.0, 0.28);
+  }
+
+  public playMissileLaunch() {
+    this.noiseBurst('bandpass', 600, 2400, 0, 0.45, 0.22);
+    this.tone('sawtooth', 180, 620, 0, 0.35, 0.06);
+  }
+
+  public playMagnetHum() {
+    this.tone('sine', 90, 60, 0, 0.45, 0.16);
+    this.tone('triangle', 180, 120, 0, 0.4, 0.06);
+  }
+
+  public playLanceThrust() {
+    this.noiseBurst('bandpass', 2400, 600, 0, 0.12, 0.2);
+    this.tone('square', 300, 90, 0, 0.14, 0.12);
+  }
+
+  public playPitFall() {
+    this.tone('sine', 520, 60, 0, 0.9, 0.16);
+    this.noiseBurst('lowpass', 1200, 120, 0.6, 0.5, 0.25);
+  }
+
+  public playAnnouncerSting(kind: 'event' | 'wave' | 'hill' = 'event') {
+    const notes = kind === 'wave' ? [330, 392, 494, 659] : kind === 'hill' ? [523, 659] : [392, 523, 784];
+    notes.forEach((f, i) => this.tone('triangle', f, f * 0.98, i * 0.09, 0.26, 0.11));
   }
 }
 
