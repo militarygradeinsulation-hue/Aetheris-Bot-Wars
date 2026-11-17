@@ -1,3 +1,4 @@
+import { OnlinePvpPanel, type OpenRoomSummary } from './OnlinePvpPanel';
 import React, { useState } from 'react';
 import {
   Clock,
@@ -34,6 +35,8 @@ import {
   type BotConfig,
   type MatchModifierId,
   type TimedBattleDuration,
+  type OnlinePresence,
+  type PvpRecord,
 } from '../shared/types';
 
 export type RivalTier = 'mixed' | 'lightweight' | 'middleweight' | 'heavyweight' | 'titan';
@@ -74,7 +77,12 @@ interface ArenaLauncherModalProps {
   onSelectDuration: (seconds: TimedBattleDuration) => void;
   onSelectWingman: (idx: number) => void;
   onStartOffline: (mode: LocalLaunchMode) => void;
-  onFindOnlineMatch: (mode: 'duel_1v1' | 'brawl_4bot') => void;
+  onFindOnlineMatch: (mode: 'duel_1v1' | 'brawl_4bot', roomId?: string) => void;
+  playerId: string;
+  presence: OnlinePresence | null;
+  openRooms: OpenRoomSummary[];
+  pvpBoard: PvpRecord[];
+  onOpenLadder: () => void;
   onStartOnlineNow: () => void;
   onCancelLobby: () => void;
   onClose: () => void;
@@ -109,11 +117,16 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
   onSelectWingman,
   onStartOffline,
   onFindOnlineMatch,
+  playerId,
+  presence,
+  openRooms,
+  pvpBoard,
+  onOpenLadder,
   onStartOnlineNow,
   onCancelLobby,
   onClose,
 }) => {
-  const [tab, setTab] = useState<'quick' | 'campaign'>('quick');
+  const [tab, setTab] = useState<'quick' | 'campaign' | 'online'>('quick');
   const [expandedLevel, setExpandedLevel] = useState<string | null>(null);
   if (!open) return null;
 
@@ -149,6 +162,11 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
               [
                 { id: 'quick', label: 'Quick Battle', Icon: Swords },
                 { id: 'campaign', label: `Campaign ${totalStars}/${maxStars}★`, Icon: MapIcon },
+                {
+                  id: 'online',
+                  label: presence ? `Online PvP · ${presence.online} on` : 'Online PvP',
+                  Icon: Globe,
+                },
               ] as const
             ).map(({ id, label, Icon }) => (
               <button
@@ -212,6 +230,17 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
               </button>
             </div>
           </div>
+        ) : tab === 'online' ? (
+          <OnlinePvpPanel
+            isOnline={isOnline}
+            playerId={playerId}
+            presence={presence}
+            openRooms={openRooms}
+            pvpBoard={pvpBoard}
+            selectedArena={selectedArena}
+            onFind={onFindOnlineMatch}
+            onOpenLadder={onOpenLadder}
+          />
         ) : tab === 'campaign' ? (
           <div className="mt-4 space-y-4 max-h-[68vh] overflow-y-auto pr-1">
             {CAMPAIGN_CHAPTERS.map((ch) => {
@@ -615,42 +644,24 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
                 })}
               </div>
             </div>
-            {/* Online Multiplayer Section */}
+            {/* Online Multiplayer shortcut */}
             <div className="mt-4 pt-3 border-t border-slate-800">
-              <div className="flex items-center justify-between text-xs font-semibold text-slate-300 mb-2">
-                <span>Real-Time Multiplayer (WebSocket Server)</span>
-                {!isOnline && (
-                  <span className="flex items-center gap-1 text-amber-400">
-                    <WifiOff className="h-3.5 w-3.5" /> Offline Mode
-                  </span>
-                )}
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  disabled={!isOnline}
-                  onClick={() => onFindOnlineMatch('duel_1v1')}
-                  className="flex items-center gap-3 rounded-xl border border-slate-700 bg-[#192029] p-3 text-left hover:border-amber-500 disabled:opacity-45 transition"
-                >
+              <button
+                type="button"
+                onClick={() => setTab('online')}
+                className="flex w-full items-center justify-between gap-3 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3 text-left hover:bg-amber-500/20 transition"
+              >
+                <span className="flex items-center gap-3">
                   <Globe className="h-5 w-5 text-amber-400 shrink-0" />
-                  <div>
-                    <div className="text-sm font-bold text-white">Online 1v1 Duel</div>
-                    <div className="text-xs text-slate-400">Ranked WebSocket arena match</div>
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  disabled={!isOnline}
-                  onClick={() => onFindOnlineMatch('brawl_4bot')}
-                  className="flex items-center gap-3 rounded-xl border border-slate-700 bg-[#192029] p-3 text-left hover:border-amber-500 disabled:opacity-45 transition"
-                >
-                  <Users className="h-5 w-5 text-sky-400 shrink-0" />
-                  <div>
-                    <div className="text-sm font-bold text-white">Online 4-Bot Brawl</div>
-                    <div className="text-xs text-slate-400">Multi-bot free-for-all arena</div>
-                  </div>
-                </button>
-              </div>
+                  <span>
+                    <span className="block text-sm font-bold text-white">Fight real pilots online</span>
+                    <span className="block text-xs text-slate-400">Ranked 1v1 and brawls with a live win/loss ladder</span>
+                  </span>
+                </span>
+                <span className="text-xs font-semibold text-amber-300">
+                  {!isOnline ? 'Offline' : presence ? `${presence.online} online` : 'Open'}
+                </span>
+              </button>
             </div>
           </>
         )}

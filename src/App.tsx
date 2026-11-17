@@ -11,6 +11,7 @@ import { PWAInstallButton } from './components/PWAInstallButton';
 import { SocialAndRankingsPanel, type HubModalTab } from './components/SocialAndRankingsPanel';
 import { TouchControls } from './components/TouchControls';
 import { WorkshopDock } from './components/WorkshopDock';
+import type { OpenRoomSummary } from './components/OnlinePvpPanel';
 import { BattleArenaCanvas } from './game/BattleArenaCanvas';
 import { soundEngine } from './game/soundEngine';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
@@ -55,6 +56,9 @@ import {
   type SeasonalEvent,
   type SkillTree,
   type TimedBattleDuration,
+  type OnlinePresence,
+  type PvpMatchResult,
+  type PvpRecord,
 } from './shared/types';
 
 export const OFFLINE_FALLBACK_CLANS: ClanInfo[] = [
@@ -345,6 +349,10 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(OFFLINE_FALLBACK_LEADERBOARD);
   const [clans, setClans] = useState<ClanInfo[]>(OFFLINE_FALLBACK_CLANS);
   const [seasonalEvents, setSeasonalEvents] = useState<SeasonalEvent[]>(OFFLINE_FALLBACK_EVENTS);
+  const [pvpBoard, setPvpBoard] = useState<PvpRecord[]>([]);
+  const [presence, setPresence] = useState<OnlinePresence | null>(null);
+  const [openRooms, setOpenRooms] = useState<OpenRoomSummary[]>([]);
+  const helloRef = useRef({ id: '', name: '', clanTag: '' });
 
   // Active Match State
   const snapshotRef = useRef<ArenaSnapshot | null>(null);
@@ -358,6 +366,7 @@ export default function App() {
 
   // Multiplayer WebSocket & Lobby
   const wsRef = useRef<WebSocket | null>(null);
+  const pvpResultRef = useRef<PvpMatchResult | null>(null);
   const activeRoomIdRef = useRef<string | null>(null);
   const [lobbyRoom, setLobbyRoom] = useState<{
     id: string;
@@ -485,10 +494,16 @@ export default function App() {
       if (res.ok) {
         const data = (await res.json()) as {
           leaderboard: LeaderboardEntry[];
+          pvpBoard?: PvpRecord[];
+          presence?: OnlinePresence;
+          activeRooms?: OpenRoomSummary[];
           clans: ClanInfo[];
           seasonalEvents: SeasonalEvent[];
         };
         if (data.leaderboard?.length) setLeaderboard(data.leaderboard);
+        if (Array.isArray(data.pvpBoard)) setPvpBoard(data.pvpBoard);
+        if (data.presence) setPresence(data.presence);
+        if (Array.isArray(data.activeRooms)) setOpenRooms(data.activeRooms);
         if (data.clans?.length) setClans(data.clans);
         if (data.seasonalEvents?.length) setSeasonalEvents(data.seasonalEvents);
       }
@@ -522,6 +537,10 @@ export default function App() {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
       wsRef.current = ws;
+      ws.onopen = () => {
+        const h = helloRef.current;
+        if (h.id) ws.send(JSON.stringify({ type: 'hello', playerId: h.id, name: h.name, clanTag: h.clanTag }));
+      };
 
       ws.onmessage = (ev) => {
         try {
@@ -538,13 +557,41 @@ export default function App() {
             snapshot?: ArenaSnapshot;
             clanId?: string;
             message?: ClanChatMessage;
+            presence?: OnlinePresence;
+            rooms?: OpenRoomSummary[];
+            board?: PvpRecord[];
+            results?: PvpMatchResult[];
           };
+
+          if (msg.type === 'presence') {
+            if (msg.presence) setPresence(msg.presence);
+            if (Array.isArray(msg.rooms)) setOpenRooms(msg.rooms);
+            return;
+          }
+          if (msg.type === 'pvp:board' && Array.isArray(msg.board)) {
+            setPvpBoard(msg.board);
+            return;
+          }
+          if (msg.type === 'match:result' && Array.isArray(msg.results)) {
+            const mine = msg.results.find((r) => r.playerId === helloRef.current.id);
+            if (mine) {
+              pvpResultRef.current = mine;
+              setMatchResult((prev) => (prev ? { ...prev, ratingDelta: mine.ratingDelta, pvp: mine } : prev));
+              setPvpBoard((prev) => {
+                const next = prev.filter((r) => r.id !== mine.record.id);
+                if (mine.ranked) next.push(mine.record);
+                return next.sort((a, b) => b.rating - a.rating || b.wins - a.wins);
+              });
+            }
+            return;
+          }
 
           if (msg.type === 'room:lobby' && msg.room) {
             activeRoomIdRef.current = msg.room.id;
             setLobbyRoom(msg.room);
           } else if ((msg.type === 'match:started' || msg.type === 'match:snapshot') && msg.snapshot) {
             if (msg.type === 'match:started') {
+              pvpResultRef.current = null;
               matchRewardAppliedRef.current = false;
               lastCountdownCeilRef.current = 3;
               setLauncherOpen(false);
@@ -591,6 +638,15 @@ export default function App() {
       wsRef.current = null;
     };
   }, [isOnline]);
+
+  // Tell the server who is connected (presence list + PvP ladder identity)
+  useEffect(() => {
+    helloRef.current = { id: profile.id, name: profile.callsign, clanTag: profile.clanTag };
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'hello', playerId: profile.id, name: profile.callsign, clanTag: profile.clanTag }));
+    }
+  }, [profile.id, profile.callsign, profile.clanTag]);
 
   // Keyboard Driving & Combat Bindings
   useEffect(() => {
@@ -726,7 +782,8 @@ export default function App() {
       wavesCleared: mode === 'survival' ? wavesCleared : undefined,
       newRecord,
       levelTitle: level?.title,
-      ratingDelta,
+      ratingDelta: isMultiplayerMatch && pvpResultRef.current ? pvpResultRef.current.ratingDelta : ratingDelta,
+      pvp: isMultiplayerMatch ? pvpResultRef.current ?? undefined : undefined,
     });
 
     setProfile((prev) => {
@@ -1069,7 +1126,7 @@ export default function App() {
     [isMultiplayerMatch, lastLocalMode, profile.gauntletStage, profile.id],
   );
 
-  const handleFindOnlineMatch = (mode: 'duel_1v1' | 'brawl_4bot') => {
+  const handleFindOnlineMatch = (mode: 'duel_1v1' | 'brawl_4bot', roomId?: string) => {
     soundEngine.unlock();
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -1080,6 +1137,7 @@ export default function App() {
         name: profile.callsign,
         clanTag: profile.clanTag,
         mode,
+        roomId,
         arenaId: selectedArena,
         durationSeconds: selectedDuration,
         config: profile.botConfig,
@@ -1456,6 +1514,14 @@ export default function App() {
         onSelectWingman={(idx) => updateProfile({ selectedWingmanIndex: idx })}
         onStartOffline={(mode) => startLocalMatch(mode, false)}
         onFindOnlineMatch={handleFindOnlineMatch}
+        playerId={profile.id}
+        presence={presence}
+        openRooms={openRooms}
+        pvpBoard={pvpBoard}
+        onOpenLadder={() => {
+          setLauncherOpen(false);
+          setHubTab('pvp');
+        }}
         onStartOnlineNow={handleStartOnlineNow}
         onCancelLobby={handleCancelLobby}
         onClose={() => {
@@ -1469,6 +1535,8 @@ export default function App() {
         activeTab={hubTab}
         profile={profile}
         leaderboard={leaderboard}
+        pvpBoard={pvpBoard}
+        presence={presence}
         clans={clans}
         seasonalEvents={seasonalEvents}
         isOnline={isOnline}

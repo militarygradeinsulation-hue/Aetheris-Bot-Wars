@@ -48,6 +48,10 @@ export interface BuiltBotRig {
   shadowPlane: THREE.Mesh;
   fans: THREE.Object3D[];
   isHover: boolean;
+  /** Drive-unit corner (0 FL, 1 FR, 2 RL, 3 RR) for each entry in wheels. */
+  wheelCorners: number[];
+  iceShell: THREE.Mesh;
+  heatMats: THREE.MeshPhysicalMaterial[];
   applyDamageDecal: (
     decalPack: DamageDecalPack,
     localPos: THREE.Vector3,
@@ -1021,6 +1025,45 @@ export function buildBotRig(
     }
   }
 
+  const wheelCorners = wheels.map((w) => {
+    const left = w.position.x <= 0;
+    const front = w.position.z > 0.05;
+    return (front ? 0 : 2) + (left ? 0 : 1);
+  });
+
+  // Ice shell grows over the hull as cryo load builds
+  const iceGeo = new THREE.BoxGeometry(2.25, 0.95, 2.35, 3, 2, 3);
+  {
+    const pos = iceGeo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setXYZ(
+        i,
+        pos.getX(i) * (1 + (Math.random() - 0.5) * 0.08),
+        pos.getY(i) * (1 + (Math.random() - 0.5) * 0.12),
+        pos.getZ(i) * (1 + (Math.random() - 0.5) * 0.08),
+      );
+    }
+    iceGeo.computeVertexNormals();
+  }
+  const iceMat = new THREE.MeshPhysicalMaterial({
+    color: 0xcdefff,
+    emissive: 0x38bdf8,
+    emissiveIntensity: 0.15,
+    roughness: 0.08,
+    metalness: 0,
+    transparent: true,
+    opacity: 0.4,
+    clearcoat: 1,
+    clearcoatRoughness: 0.05,
+    depthWrite: false,
+  });
+  geometriesToDispose.push(iceGeo);
+  materialsToDispose.push(iceMat);
+  const iceShell = new THREE.Mesh(iceGeo, iceMat);
+  iceShell.position.y = 0.42;
+  iceShell.visible = false;
+  bodyPivot.add(iceShell);
+
   // 6. Rear Twin Exhaust Nozzles + Whip Antenna + Cosmetic Dorsal Accessories
   const exhaustGeo = new THREE.CylinderGeometry(0.08, 0.11, 0.26, 10);
   exhaustGeo.rotateX(Math.PI / 2.6);
@@ -1543,6 +1586,15 @@ export function buildBotRig(
     shieldBubble,
     fans,
     isHover,
+    wheelCorners,
+    iceShell,
+    heatMats: Array.from(
+      new Set<THREE.MeshPhysicalMaterial>([
+        ...(chassisMesh.material instanceof THREE.MeshPhysicalMaterial ? [chassisMesh.material] : []),
+        chassisDarkMat,
+        ...Object.values(armorMaterials),
+      ]),
+    ),
     armorPlates,
     armorMaterials,
     damageableMeshes,
@@ -1583,8 +1635,55 @@ export function syncBotRigToState(
   rig.root.position.set(state.x, 0, state.z);
   rig.root.scale.setScalar(state.scale || 1.0);
   const nowT = performance.now() * 0.001;
-  rig.bodyPivot.position.y = state.y + (rig.isHover && !state.isDead ? 0.1 + Math.sin(nowT * 4.2 + state.x) * 0.025 : 0);
-  rig.bodyPivot.rotation.set(state.pitch, state.yaw, state.roll, 'YXZ');
+  const flipA = state.flipAngle ?? 0;
+  rig.bodyPivot.position.y =
+    state.y +
+    (rig.isHover && !state.isDead && !state.flipped ? 0.1 + Math.sin(nowT * 4.2 + state.x) * 0.025 : 0) +
+    0.66 * (1 - Math.cos(flipA)) * 0.5;
+  rig.bodyPivot.rotation.set(state.pitch, state.yaw, state.roll + flipA, 'YXZ');
+
+  // Lost parts are gone from the hull (they are lying on the floor as debris)
+  const comp = state.components;
+  if (comp) {
+    rig.wheels.forEach((w, i) => {
+      w.visible = (comp.wheels[rig.wheelCorners[i]] ?? 100) > 0;
+    });
+    rig.weaponEntries.forEach((entry, slot) => {
+      const h = comp.weapons[slot] ?? 100;
+      entry.pivot.visible = h > 0;
+      // Badly damaged weapons wobble on bent mounts
+      if (h > 0 && h < 35) entry.pivot.rotation.z = Math.sin(nowT * 23 + slot) * 0.06 * (1 - h / 35);
+    });
+  }
+
+  // Heat: plates glow cherry red, then sag as they melt
+  const heat = state.heat ?? 0;
+  const glow = Math.max(0, (heat - 28) / 72);
+  for (const m of rig.heatMats) {
+    if (m.userData.baseEmissive === undefined) {
+      m.userData.baseEmissive = m.emissive.getHex();
+      m.userData.baseEmissiveIntensity = m.emissiveIntensity;
+    }
+    if (glow > 0.01) {
+      // Dull cherry red first, brighter orange as it approaches melting point
+      m.emissive.setRGB(0.9, 0.08 + glow * 0.22, 0.01);
+      m.emissiveIntensity = glow * (0.85 + Math.sin(nowT * 9) * 0.1);
+    } else if (m.emissive.getHex() !== m.userData.baseEmissive) {
+      m.emissive.setHex(m.userData.baseEmissive as number);
+      m.emissiveIntensity = m.userData.baseEmissiveIntensity as number;
+    }
+  }
+
+  // Cryo: ice shell builds up, full block when frozen solid
+  const chill = state.chill ?? 0;
+  const frozenSolid = (state.frozenTimer ?? 0) > 0;
+  rig.iceShell.visible = !state.isDead && (chill > 10 || frozenSolid);
+  if (rig.iceShell.visible) {
+    const iceMat = rig.iceShell.material as THREE.MeshPhysicalMaterial;
+    iceMat.opacity = frozenSolid ? 0.78 : 0.12 + (chill / 100) * 0.45;
+    const sc = frozenSolid ? 1.06 : 0.8 + (chill / 100) * 0.22;
+    rig.iceShell.scale.set(sc, frozenSolid ? 1.1 : 0.55 + (chill / 100) * 0.5, sc);
+  }
   for (const f of rig.fans) f.rotation.y += dt * (state.isDead ? 2 : 38);
 
   rig.shadowPlane.position.y = 0.025;
@@ -1644,9 +1743,9 @@ export function syncBotRigToState(
         c.rotation.y += dt * (active ? 8 : 2.5);
       });
     } else if (entry.weaponId === 'railgun') {
-      entry.pivot.position.z = 0.18 - spin * 0.18;
+      entry.pivot.position.z = 0.18 - spin * 0.42;
     } else if (entry.weaponId === 'mortar') {
-      entry.pivot.rotation.x = -spin * 0.25;
+      entry.pivot.rotation.x = -spin * 0.55;
     } else if (entry.weaponId === 'hammer') {
       entry.pivot.rotation.x = spin > 0.5 ? -0.95 : spin * 1.3;
     } else if (entry.weaponId === 'lance') {
@@ -1668,7 +1767,10 @@ export function syncBotRigToState(
       plate.visible = false;
     } else {
       plate.visible = true;
-      const tint = 0.45 + ratio * 0.55;
+      const melt = state.meltZones?.[zone] ?? 0;
+      const tint = (0.45 + ratio * 0.55) * (1 - melt * 0.45);
+      plate.scale.y = 1 - melt * 0.5;
+      plate.position.y = (plate.userData.baseY ??= plate.position.y) - melt * 0.07;
       if ((state.freezeTimer ?? 0) > 0) {
         mat.color.setHex(0x7dd3fc).multiplyScalar(tint);
       } else {

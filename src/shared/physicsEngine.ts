@@ -23,6 +23,19 @@ import {
   getBotChassisStyles,
   getBotWeapons,
 } from './types.ts';
+import {
+  addChill,
+  addHeat,
+  applyComponentDamage,
+  dropArmorPlate,
+  initComponents,
+  isWeaponSlotOnline,
+  shatterWreck,
+  stepConditions,
+  stepDebris,
+  trySelfRight,
+  tryFlip,
+} from './damageModel.ts';
 
 const BASE_BOT_RADIUS = 1.15;
 const BASE_GRAVITY = 28;
@@ -449,6 +462,10 @@ export const AI_RIVAL_PRESETS: RivalArchetypePreset[] = [
 ];
 
 let nextEventId = 1;
+const emitInto = (events: CombatEvent[]) => (p: Omit<CombatEvent, 'id'>) => {
+  events.push(makeEvent(p));
+};
+
 function makeEvent(partial: Omit<CombatEvent, 'id'>): CombatEvent {
   return {
     id: nextEventId++,
@@ -620,7 +637,7 @@ function makeBotState(
   const maxShield = Math.round(stats.maxShieldHp * (entry.hpMult ?? 1));
   const zoneHp = modifiers.includes('armor_off') ? 0 : stats.armorZoneHp;
   const giant = modifiers.includes('giants') ? 1.25 : 1;
-  return {
+  const state: BotPhysicsState = {
     id: entry.id,
     name: entry.name,
     clanTag: entry.clanTag,
@@ -682,6 +699,8 @@ function makeBotState(
     dmgMult: entry.dmgMult ?? 1,
     speedMult: entry.speedMult ?? 1,
   };
+  initComponents(state);
+  return state;
 }
 
 /** Team-aware spawns: free-for-all uses the four corners; squads line up on opposite sides. */
@@ -895,6 +914,7 @@ export function createInitialSnapshot(
     winnerId: null,
     winningTeam: null,
     projectiles: [],
+    debris: [],
     modifiers,
     arenaEvent: null,
     nextArenaEventAt: modifiers.includes('chaos_events') ? 8 : 20 + Math.random() * 6,
@@ -1051,6 +1071,8 @@ function applyDamage(
   if (zoneArmor <= 0) {
     mult *= 1.2;
   }
+  // Softened (melted) plates give way more easily
+  mult *= 1 + (victim.meltZones?.[zone] ?? 0) * 0.35;
 
   let finalDamage = Math.max(2, Math.round(rawDamage * mult));
 
@@ -1116,6 +1138,7 @@ function applyDamage(
     const nextZone = Math.max(0, zoneArmor - finalDamage * armorShredMult);
     victim.armorZones[zone] = nextZone;
     if (nextZone === 0) {
+      dropArmorPlate(activeSnap, victim, zone);
       events.push(
         makeEvent({
           type: 'armor_break',
@@ -1142,6 +1165,9 @@ function applyDamage(
   }
 
   victim.hp = Math.max(0, victim.hp - finalDamage);
+  if (eventTypeOverride !== 'flame' || weaponId) {
+    applyComponentDamage(activeSnap, victim, finalDamage, zone, zoneArmor, hy, hz, dmgKind, weaponId, emitInto(events));
+  }
 
   if (attacker) {
     attacker.hitsDealt += 1;
@@ -1182,6 +1208,8 @@ function applyDamage(
     victim.vy = 5.6;
     victim.angularVel += (Math.random() - 0.5) * 6;
     victim.isBounty = false;
+    victim.flipped = false;
+    shatterWreck(activeSnap, victim);
     if (attacker) {
       attacker.kos += 1;
       if (activeSnap && activeSnap.mode === 'survival' && attacker.team === 0) {
@@ -1506,9 +1534,10 @@ export function stepArenaPhysics(
     const classDmgMult =
       bot.weightClass === 'Titan' ? 1.24 : bot.weightClass === 'Heavyweight' ? 1.14 : bot.weightClass === 'Lightweight' ? 0.8 : 1.0;
 
-    const input = bot.isBot
+    const rawInput = bot.isBot
       ? computeAiInput(bot, snapshot, aiDifficulty)
       : inputsByBotId[bot.id] ?? { throttle: 0, steer: 0, fireWeapon: false, boost: false, overdrive: false };
+    const input: PlayerInputState = { ...rawInput, fireWeapons: rawInput.fireWeapons ? [...rawInput.fireWeapons] : undefined };
 
     bot.weaponCooldown = Math.max(0, bot.weaponCooldown - clampedDt);
     bot.boostCooldown = Math.max(0, bot.boostCooldown - clampedDt);
@@ -1521,6 +1550,21 @@ export function stepArenaPhysics(
     bot.burnTickTimer = Math.max(0, (bot.burnTickTimer ?? 0) - clampedDt);
     bot.pinnedTimer = Math.max(0, (bot.pinnedTimer ?? 0) - clampedDt);
     const speedMod = (1 + ((bot.speedMult ?? 1) - 1) * 0.5) * turboMult;
+    const emit = emitInto(events);
+    const cond = stepConditions(snapshot, bot, clampedDt, emit);
+    if (!bot.isDead && (cond.frozen || bot.flipped)) {
+      // Frozen bots are statues; inverted bots spend boost on the self-righting kick
+      const wantsRight = bot.flipped && input.boost;
+      input.boost = false;
+      if (cond.frozen) {
+        input.throttle = 0;
+        input.steer = 0;
+        input.fireWeapon = false;
+        input.fireWeapons = input.fireWeapons?.map(() => false);
+        input.overdrive = false;
+      }
+      if (wantsRight) trySelfRight(bot, emit);
+    }
 
     // Passive Nanoweave Armor & Nanite Repair Skill Regeneration
     const naniteRank = bot.skills.naniteRepair ?? 0;
@@ -1594,7 +1638,7 @@ export function stepArenaPhysics(
 
     bot.energy = Math.min(
       bot.maxEnergy,
-      bot.energy + stats.energyRegen * arena.energyRegenMult * (arenaEventKind === 'power_surge' ? 2.5 : 1) * clampedDt,
+      bot.energy + stats.energyRegen * arena.energyRegenMult * (arenaEventKind === 'power_surge' ? 2.5 : 1) * cond.regen * clampedDt,
     );
 
     const overclockRank = bot.skills.overclockCore ?? 0;
@@ -1616,13 +1660,14 @@ export function stepArenaPhysics(
       );
     }
 
-    const freezeSlowMult = (bot.freezeTimer ?? 0) > 0 ? 0.58 : 1.0;
+    const freezeSlowMult = cond.frozen ? 0 : 1 - 0.65 * ((bot.chill ?? 0) / 100);
     const shockTurnMult = (bot.shockTimer ?? 0) > 0 ? 0.52 : 1.0;
     const overdriveMult = (bot.overdriveTimer > 0 ? 1.22 : 1.0) * freezeSlowMult;
 
     const hasExplicitSlotArray = Array.isArray(input.fireWeapons);
     const isSlotFiring = (slotIdx: number) =>
-      hasExplicitSlotArray ? Boolean(input.fireWeapons![slotIdx]) : Boolean(input.fireWeapon);
+      (hasExplicitSlotArray ? Boolean(input.fireWeapons![slotIdx]) : Boolean(input.fireWeapon)) &&
+      isWeaponSlotOnline(bot, slotIdx, botWeapons[slotIdx]);
 
     const firedDiscreteSlots: Array<{ slotIdx: number; weaponId: WeaponId }> = [];
     let flameFiringSlotIdx = -1;
@@ -1639,7 +1684,8 @@ export function stepArenaPhysics(
 
       if (isRotorWeapon(wId)) {
         const baseTarget = wId === 'drum' ? 28 : 24;
-        const targetSpin = slotFiring ? baseTarget * overdriveMult : 9 * freezeSlowMult;
+        const slotAlive = isWeaponSlotOnline(bot, slotIdx, wId);
+        const targetSpin = !slotAlive ? 0 : slotFiring ? baseTarget * overdriveMult : 9 * freezeSlowMult;
         bot.weaponSpins[slotIdx] += (targetSpin - bot.weaponSpins[slotIdx]) * Math.min(1, clampedDt * 5);
         bot.weaponAngles[slotIdx] += bot.weaponSpins[slotIdx] * clampedDt;
         bot.weaponActives[slotIdx] = slotFiring;
@@ -1677,13 +1723,15 @@ export function stepArenaPhysics(
 
     const fx = Math.sin(bot.yaw);
     const fz = Math.cos(bot.yaw);
-    const steerFactor = Math.max(-1, Math.min(1, input.steer)) * shockTurnMult;
+    const steerFactor = Math.max(-1, Math.min(1, input.steer)) * shockTurnMult * cond.turn * Math.max(0.2, freezeSlowMult);
     const pinned = (bot.pinnedTimer ?? 0) > 0;
     const throttleFactor = Math.max(-1, Math.min(1, input.throttle)) * (pinned ? 0.15 : 1);
 
     const rotDamp = Math.exp(-(6.5 + bot.skills.gyroStabilizer * 0.9) * clampedDt);
     bot.angularVel *= rotDamp;
-    bot.yaw = normalizeAngle(bot.yaw + (steerFactor * stats.turnRate + bot.angularVel) * clampedDt);
+    // Uneven traction drags the bot toward its damaged side under power
+    const tractionPull = bot.y <= 0.15 ? throttleFactor * cond.pull : 0;
+    bot.yaw = normalizeAngle(bot.yaw + (steerFactor * stats.turnRate + bot.angularVel + tractionPull) * clampedDt);
 
     if (input.boost && bot.boostCooldown <= 0 && bot.energy >= 24) {
       bot.energy -= 24;
@@ -1695,7 +1743,7 @@ export function stepArenaPhysics(
     }
 
     if (bot.y <= 0.15) {
-      const driveForce = throttleFactor * stats.accel * overdriveMult * classSpeedMult * speedMod;
+      const driveForce = throttleFactor * stats.accel * overdriveMult * classSpeedMult * speedMod * cond.drive;
       bot.vx += fx * driveForce * clampedDt;
       bot.vz += fz * driveForce * clampedDt;
 
@@ -1719,7 +1767,7 @@ export function stepArenaPhysics(
       bot.vz = fz * dampedForward + rz * dampedLateral;
 
       const speed = Math.hypot(bot.vx, bot.vz);
-      const cap = stats.maxSpeed * overdriveMult * classSpeedMult * speedMod;
+      const cap = stats.maxSpeed * overdriveMult * classSpeedMult * speedMod * Math.max(0.25, cond.drive);
       if (speed > cap && bot.boostCooldown < 1.8) {
         const blend = cap + (speed - cap) * Math.exp(-7 * clampedDt);
         bot.vx = (bot.vx / speed) * blend;
@@ -1827,8 +1875,10 @@ export function stepArenaPhysics(
             const resistMult = other.config.armor === 'ceramic' ? 0.6 : 1.0;
             if (isCryo) {
               other.freezeTimer = Math.max(other.freezeTimer ?? 0, 2.6 * resistMult);
+              addChill(other, 19 * (1 - Math.max(0, dist - 1.5) / (streamRange * 2)), emitInto(events));
             } else {
               other.burnTimer = Math.max(other.burnTimer, 2.2 * resistMult);
+              addHeat(other, 10 * (1 - Math.max(0, dist - 1.5) / (streamRange * 2)));
             }
             applyDamage(
               other,
@@ -1862,56 +1912,57 @@ export function stepArenaPhysics(
       const slotImpBase = strikeSpec.impulse * (1 + bot.skills.weaponTorque * 0.05);
 
       if (strikeWeapon === 'mortar') {
-        // Artillery Mortar: shells land 5.2m ahead (or on nearest enemy in front)
+        // Artillery Mortar: lob a ballistic shell; it lands where the target is heading
         let targetX = bot.x + fx * 5.2;
         let targetZ = bot.z + fz * 5.2;
+        const flight = 0.95;
         for (const other of snapshot.bots) {
           if (other.id === bot.id || other.isDead || other.team === bot.team) continue;
           const dx = other.x - bot.x;
           const dz = other.z - bot.z;
           const d = Math.hypot(dx, dz);
           if (d >= 2.0 && d <= strikeSpec.range && (dx * fx + dz * fz) / d > 0.45) {
-            targetX = other.x;
-            targetZ = other.z;
+            targetX = other.x + other.vx * flight * 0.7;
+            targetZ = other.z + other.vz * flight * 0.7;
             break;
           }
         }
         targetX = Math.max(-botHalf, Math.min(botHalf, targetX));
         targetZ = Math.max(-botHalf, Math.min(botHalf, targetZ));
-
+        const sx = bot.x + fx * 0.3;
+        const sy = bot.y + 1.0;
+        const sz = bot.z + fz * 0.3;
+        const projs = snapshot.projectiles ?? (snapshot.projectiles = []);
+        projs.push({
+          id: `s${nextProjectileId++}`,
+          ownerId: bot.id,
+          team: bot.team,
+          kind: 'shell',
+          x: sx,
+          y: sy,
+          z: sz,
+          vx: (targetX - sx) / flight,
+          vz: (targetZ - sz) / flight,
+          vy: (0.3 - sy + 0.5 * gravity * flight * flight) / flight,
+          yaw: bot.yaw,
+          life: flight + 0.6,
+          damage: slotDmg,
+        });
+        bot.pitch = 0.1;
         events.push(
           makeEvent({
-            type: 'mortar_blast',
-            x: targetX,
-            y: 0.4,
-            z: targetZ,
-            intensity: 1.4,
+            type: 'mortar_launch',
+            x: sx,
+            y: sy,
+            z: sz,
+            targetX,
+            targetY: 0.3,
+            targetZ,
+            intensity: 1,
             weapon: 'mortar',
             sourceId: bot.id,
           }),
         );
-
-        for (const other of snapshot.bots) {
-          if (other.id === bot.id || other.isDead || other.team === bot.team) continue;
-          const bdx = other.x - targetX;
-          const bdz = other.z - targetZ;
-          const bDist = Math.hypot(bdx, bdz);
-          if (bDist < 4.2) {
-            const falloff = Math.max(0.35, 1 - bDist / 4.2);
-            const nx = bDist > 0.01 ? bdx / bDist : fx;
-            const nz = bDist > 0.01 ? bdz / bDist : fz;
-            other.vx += nx * slotImpBase * falloff;
-            other.vz += nz * slotImpBase * falloff;
-            other.vy = Math.max(other.vy, strikeSpec.lift * falloff);
-            const zone = getHitZone(other, nx, nz);
-            const geo = worldDirToVictimLocal(other, -nx, -nz, 0.5, 0.55, 0.35);
-            applyDamage(other, bot, slotDmg * falloff, zone, events, falloff > 0.75, 'mortar_blast', 'mortar', {
-              ...geo,
-              force: slotImpBase * falloff,
-              damageKind: 'scorch',
-            });
-          }
-        }
         continue;
       }
 
@@ -2180,6 +2231,16 @@ export function stepArenaPhysics(
                 damageKind: strikeWeapon === 'hammer' || strikeWeapon === 'crush_jaw' ? 'crush' : 'kinetic',
               },
             );
+            if (strikeWeapon === 'flipper' || strikeWeapon === 'hammer') {
+              tryFlip(
+                other,
+                strikeWeapon === 'flipper' ? strikeSpec.lift * overdriveMult * 1.7 : strikeSpec.lift * 0.6,
+                victimEffMass,
+                crossYaw,
+                emitInto(events),
+                strikeWeapon === 'flipper' ? bot.config.name.toUpperCase() : '',
+              );
+            }
             if (strikeWeapon === 'flipper') {
               events.push(
                 makeEvent({
@@ -2206,6 +2267,19 @@ export function stepArenaPhysics(
     for (let i = projs.length - 1; i >= 0; i--) {
       const p = projs[i];
       p.life -= clampedDt;
+      if (p.kind === 'shell') {
+        p.vy = (p.vy ?? 0) - gravity * clampedDt;
+        p.x += p.vx * clampedDt;
+        p.y += (p.vy ?? 0) * clampedDt;
+        p.z += p.vz * clampedDt;
+        p.yaw = Math.atan2(p.vx, p.vz);
+        if (p.y <= 0.3 || p.life <= 0) {
+          p.y = 0.3;
+          detonateMortar(snapshot, p, events);
+          projs.splice(i, 1);
+        }
+        continue;
+      }
       const tgt = p.targetId ? snapshot.bots.find((b) => b.id === p.targetId && !b.isDead) : undefined;
       if (tgt) {
         const desired = Math.atan2(tgt.x - p.x, tgt.z - p.z);
@@ -2246,6 +2320,8 @@ export function stepArenaPhysics(
       }
     }
   }
+
+  stepDebris(snapshot, arena.halfSize, gravity, clampedDt, emitInto(events));
 
   // Bot-to-Bot Collisions & Continuous Rotor/Saw/Drum Power Hits
   for (let i = 0; i < snapshot.bots.length; i++) {
@@ -2340,6 +2416,7 @@ export function stepArenaPhysics(
             for (let slotIdx = 0; slotIdx < weaponsA.length; slotIdx++) {
               const rotorA = weaponsA[slotIdx];
               if (!isRotor(rotorA)) continue;
+              if (!isWeaponSlotOnline(a, slotIdx, rotorA)) continue;
               const slotCd = a.weaponCooldowns?.[slotIdx] ?? a.weaponCooldown;
               if (slotCd > 0) continue;
 
@@ -2377,6 +2454,7 @@ export function stepArenaPhysics(
               }
               b.roll += (Math.random() - 0.5) * Math.min(0.85, imp * 0.1);
               b.pitch -= Math.min(0.55, wSpec.lift * 0.06);
+              tryFlip(b, wSpec.lift * powerMult * (rotorA === 'drum' || rotorA === 'vspinner' ? 1.25 : 0.7), massB, b.roll, emitInto(events), a.config.name.toUpperCase());
 
               const recoilA = (imp * 0.28 * massB) / Math.max(0.75, massA);
               a.vx -= nx * recoilA;
@@ -2410,6 +2488,7 @@ export function stepArenaPhysics(
             for (let slotIdx = 0; slotIdx < weaponsB.length; slotIdx++) {
               const rotorB = weaponsB[slotIdx];
               if (!isRotor(rotorB)) continue;
+              if (!isWeaponSlotOnline(b, slotIdx, rotorB)) continue;
               const slotCd = b.weaponCooldowns?.[slotIdx] ?? b.weaponCooldown;
               if (slotCd > 0) continue;
 
@@ -2447,6 +2526,7 @@ export function stepArenaPhysics(
               }
               a.roll += (Math.random() - 0.5) * Math.min(0.85, imp * 0.1);
               a.pitch -= Math.min(0.55, wSpec.lift * 0.06);
+              tryFlip(a, wSpec.lift * powerMult * (rotorB === 'drum' || rotorB === 'vspinner' ? 1.25 : 0.7), massA, a.roll, emitInto(events), b.config.name.toUpperCase());
 
               const recoilB = (imp * 0.28 * massA) / Math.max(0.75, massB);
               b.vx += nx * recoilB;
@@ -3022,6 +3102,49 @@ function launchMissileSalvo(
   events.push(makeEvent({ type: 'missile_launch', x: bot.x, y: bot.y + 1, z: bot.z, intensity: 0.8, sourceId: bot.id, weapon: 'missiles' }));
 }
 
+function detonateMortar(snapshot: ArenaSnapshot, p: Projectile, events: CombatEvent[]) {
+  const owner = snapshot.bots.find((b) => b.id === p.ownerId) ?? null;
+  const spec = WEAPON_CATALOG.mortar;
+  const impBase = spec.impulse * (1 + (owner?.skills.weaponTorque ?? 0) * 0.05);
+  events.push(
+    makeEvent({ type: 'mortar_blast', x: p.x, y: 0.4, z: p.z, intensity: 1.4, weapon: 'mortar', sourceId: p.ownerId }),
+  );
+  // Blast also throws loose parts around
+  for (const d of snapshot.debris ?? []) {
+    const dd = Math.hypot(d.x - p.x, d.z - p.z);
+    if (dd < 4) {
+      const f = 1 - dd / 4;
+      d.vx += ((d.x - p.x) / (dd || 1)) * 7 * f;
+      d.vz += ((d.z - p.z) / (dd || 1)) * 7 * f;
+      d.vy += 5 * f;
+      d.settled = false;
+    }
+  }
+  for (const other of snapshot.bots) {
+    if (other.isDead || other.team === p.team) continue;
+    const bdx = other.x - p.x;
+    const bdz = other.z - p.z;
+    const bDist = Math.hypot(bdx, bdz);
+    if (bDist >= 4.2) continue;
+    const falloff = Math.max(0.35, 1 - bDist / 4.2);
+    const nx = bDist > 0.01 ? bdx / bDist : Math.sin(p.yaw);
+    const nz = bDist > 0.01 ? bdz / bDist : Math.cos(p.yaw);
+    const vStats = computeBotStats(other.config, other.skills);
+    const mass = vStats.mass * Math.pow(other.scale, 1.35);
+    other.vx += nx * impBase * falloff;
+    other.vz += nz * impBase * falloff;
+    other.vy = Math.max(other.vy, spec.lift * falloff);
+    tryFlip(other, spec.lift * falloff * 1.3, mass, (Math.random() - 0.5) * 2, emitInto(events), 'MORTAR');
+    const zone = getHitZone(other, nx, nz);
+    const geo = worldDirToVictimLocal(other, -nx, -nz, 0.5, 0.85, 0.35);
+    applyDamage(other, owner, p.damage * falloff, zone, events, falloff > 0.75, 'mortar_blast', 'mortar', {
+      ...geo,
+      force: impBase * falloff,
+      damageKind: 'scorch',
+    });
+  }
+}
+
 function explodeProjectile(snapshot: ArenaSnapshot, p: Projectile, events: CombatEvent[]) {
   const owner = snapshot.bots.find((b) => b.id === p.ownerId) ?? null;
   events.push(makeEvent({ type: 'explosion', x: p.x, y: p.y, z: p.z, intensity: 0.55, weapon: 'missiles' }));
@@ -3042,6 +3165,7 @@ function explodeProjectile(snapshot: ArenaSnapshot, p: Projectile, events: Comba
     victim.vz += nz * imp;
     victim.vy = Math.max(victim.vy, (WEAPON_CATALOG.missiles.lift * falloff) / Math.max(0.8, mass));
     victim.roll += (Math.random() - 0.5) * 0.4 * falloff;
+    tryFlip(victim, WEAPON_CATALOG.missiles.lift * falloff * 1.2, mass, victim.roll, emitInto(events), 'MISSILES');
     const zone = getHitZone(victim, nx, nz);
     const geo = worldDirToVictimLocal(victim, -nx, -nz, 0.3, 0.45, 0.4);
     applyDamage(victim, owner, p.damage * (0.45 + 0.55 * falloff), zone, events, falloff > 0.8, undefined, 'missiles', {
