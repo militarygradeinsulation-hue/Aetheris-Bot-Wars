@@ -7,6 +7,26 @@ const WORKSHOP_TRACK = {
 
 const BATTLE_TRACKS: Array<{ title: string; src: string }> = [
   {
+    title: 'Angry Maiden Nu-Metal',
+    src: '/assets/aistudio/nickpanek-angry-maiden-nu-metal-flute-instrumental-391312_a51d1e19.mp3',
+  },
+  {
+    title: 'Sports Metal Surge',
+    src: '/assets/aistudio/vibedepot-sports-metal-free-536615_d29bae06.mp3',
+  },
+  {
+    title: 'Heavy Grunge Overdrive',
+    src: '/assets/aistudio/nickpanek-coffee-first-heavy-grunge-metal-instrumental-391308_deb6f515.mp3',
+  },
+  {
+    title: 'Modern Metal Clash',
+    src: '/assets/aistudio/alec_koff-modern-metal-metal-rock-484512_790c8d89.mp3',
+  },
+  {
+    title: 'Heavy Force Metal',
+    src: '/assets/aistudio/strawberry_candy-powerful-heavy-metal-heavy-force-572627_b4bc76cd.mp3',
+  },
+  {
     title: 'Battle Clash',
     src: '/assets/aistudio/jonasblakewood-battle-battle-music-595522_05b98af0.mp3',
   },
@@ -32,17 +52,42 @@ const BATTLE_TRACKS: Array<{ title: string; src: string }> = [
   },
 ];
 
+const CHEER_SAMPLES = [
+  '/assets/aistudio/pretex-applause-cheer-345912_ccd21709.mp3',
+  '/assets/aistudio/dennish18-crowd-cheering-143103_7dd61809.mp3',
+];
+const EXPLOSION_SAMPLE =
+  '/assets/aistudio/explosion-blast-heavy-wood-crash-epic-stock-media-1-1-00-01_cea13ecd.mp3';
+const CRASH_SAMPLE =
+  '/assets/aistudio/car-crash-into-wall-heavy-smartsound-fx-1-00-06_a1ac8eae.mp3';
+
 class SoundEngine {
   private ctx: AudioContext | null = null;
+  private sfxBusGain: GainNode | null = null;
   private muted = false;
   private noiseBuffer: AudioBuffer | null = null;
+
+  // User-adjustable Volume Mix (0.0 .. 1.0)
+  private masterVolume = 0.85;
+  private musicVolume = 0.65;
+  private sfxVolume = 0.85;
+  private crowdVolume = 0.7;
+  private baseMusicGain = 0.28;
+  private currentTrackTitle = 'Garage Rock Intro';
 
   // Background music playback (Workshop customization & Rotating Battle playlist)
   private musicEl: HTMLAudioElement | null = null;
   private musicMode: 'none' | 'workshop' | 'battle' = 'none';
-  private battleTrackIndex = -1;
+  private workshopTrackIndex = -1;
+  private battleDeck: number[] = [];
+  private lastBattleSrc = '';
   private currentMusicSrc = '';
   private musicBlockedPendingUnlock = false;
+
+  // Sampled SFX pool & rate-limiting timestamps
+  private sfxLastPlayed: Record<string, number> = {};
+  private activeSfxEls = new Set<HTMLAudioElement>();
+  private cheerIndex = 0;
 
   // Continuous driving & weapon audio loops
   private loopsInitialized = false;
@@ -57,28 +102,106 @@ class SoundEngine {
   private weaponNoiseFilter: BiquadFilterNode | null = null;
   private weaponNoiseGain: GainNode | null = null;
 
+  private stopActiveSfx() {
+    this.activeSfxEls.forEach((el) => {
+      try {
+        el.pause();
+        el.currentTime = 0;
+      } catch {
+        // Ignore cleanup errors
+      }
+    });
+    this.activeSfxEls.clear();
+  }
+
+  private playSample(
+    src: string,
+    volume = 0.45,
+    playbackRate = 1.0,
+    cooldownKey = src,
+    minIntervalMs = 350,
+    maxDurationMs = 1800,
+  ) {
+    if (this.muted || typeof window === 'undefined' || typeof Audio === 'undefined') return;
+    const nowMs = performance.now();
+    const prevMs = this.sfxLastPlayed[cooldownKey] ?? 0;
+    if (minIntervalMs > 0 && nowMs - prevMs < minIntervalMs) return;
+    this.sfxLastPlayed[cooldownKey] = nowMs;
+
+    try {
+      const isCrowd = cooldownKey.includes('cheer');
+      const channelMult = this.masterVolume * (isCrowd ? this.crowdVolume : this.sfxVolume);
+      if (channelMult <= 0.005) return;
+      const audio = new Audio(src);
+      const startVol = Math.max(0, Math.min(1, volume * channelMult * 1.25));
+      audio.volume = startVol;
+      audio.playbackRate = Math.max(0.5, Math.min(1.6, playbackRate));
+      this.activeSfxEls.add(audio);
+
+      const cleanup = () => {
+        this.activeSfxEls.delete(audio);
+      };
+      audio.addEventListener('ended', cleanup, { once: true });
+
+      audio.play().catch(() => {
+        cleanup();
+      });
+
+      if (maxDurationMs > 0) {
+        const fadeStartMs = Math.max(100, maxDurationMs - 650);
+        window.setTimeout(() => {
+          if (!this.activeSfxEls.has(audio)) return;
+          const steps = 6;
+          let step = 0;
+          const fadeTimer = window.setInterval(() => {
+            step++;
+            if (!this.activeSfxEls.has(audio) || step >= steps) {
+              clearInterval(fadeTimer);
+              try {
+                audio.pause();
+              } catch {
+                // Ignore
+              }
+              cleanup();
+              return;
+            }
+            audio.volume = Math.max(0, startVol * (1 - step / steps));
+          }, 100);
+        }, fadeStartMs);
+      }
+    } catch {
+      // Ignore sample playback errors if blocked by browser autoplay policy
+    }
+  }
+
   private ensureMusicElement(): HTMLAudioElement | null {
     if (typeof window === 'undefined' || typeof Audio === 'undefined') return null;
     if (!this.musicEl) {
       this.musicEl = new Audio();
       this.musicEl.preload = 'auto';
       this.musicEl.addEventListener('ended', () => {
-        if (this.musicMode === 'battle' && !this.muted) {
-          this.playNextBattleMusic();
+        if (!this.muted) {
+          if (this.musicMode === 'battle') {
+            this.playNextBattleMusic();
+          } else if (this.musicMode === 'workshop') {
+            this.playWorkshopMusic(true);
+          }
         }
       });
     }
     return this.musicEl;
   }
 
-  private startTrack(src: string, loop: boolean, volume: number) {
+  private startTrack(src: string, loop: boolean, volume: number, title?: string) {
     const el = this.ensureMusicElement();
     if (!el) return;
 
+    this.baseMusicGain = volume;
+    if (title) this.currentTrackTitle = title;
     const srcChanged = this.currentMusicSrc !== src;
     this.currentMusicSrc = src;
     el.loop = loop;
-    el.volume = volume;
+    el.volume = Math.max(0, Math.min(1, volume * 1.45 * this.masterVolume * this.musicVolume));
     el.muted = this.muted;
 
     if (srcChanged) {
@@ -86,7 +209,7 @@ class SoundEngine {
       el.currentTime = 0;
     }
 
-    if (this.muted) {
+    if (this.muted || this.masterVolume * this.musicVolume <= 0.005) {
       el.pause();
       return;
     }
@@ -102,32 +225,152 @@ class SoundEngine {
     }
   }
 
-  public playWorkshopMusic() {
-    this.musicMode = 'workshop';
-    this.startTrack(WORKSHOP_TRACK.src, true, 0.24);
+  public setVolumes(vols: {
+    master?: number;
+    music?: number;
+    sfx?: number;
+    crowd?: number;
+  }) {
+    if (typeof vols.master === 'number') this.masterVolume = Math.max(0, Math.min(1, vols.master));
+    if (typeof vols.music === 'number') this.musicVolume = Math.max(0, Math.min(1, vols.music));
+    if (typeof vols.sfx === 'number') this.sfxVolume = Math.max(0, Math.min(1, vols.sfx));
+    if (typeof vols.crowd === 'number') this.crowdVolume = Math.max(0, Math.min(1, vols.crowd));
+
+    if (this.musicEl) {
+      const targetMusicVol = Math.max(0, Math.min(1, this.baseMusicGain * 1.45 * this.masterVolume * this.musicVolume));
+      this.musicEl.volume = targetMusicVol;
+      if (targetMusicVol <= 0.005) {
+        this.musicEl.pause();
+      } else if (!this.muted && this.musicMode !== 'none' && this.musicEl.paused && this.currentMusicSrc) {
+        this.musicEl.play().catch(() => {});
+      }
+    }
+
+    if (this.sfxBusGain && this.ctx) {
+      this.sfxBusGain.gain.setTargetAtTime(
+        Math.max(0.0001, this.masterVolume * this.sfxVolume * 1.2),
+        this.ctx.currentTime,
+        0.04,
+      );
+    }
   }
 
-  public playNextBattleMusic(arenaId?: ArenaId) {
-    this.musicMode = 'battle';
-    if (this.battleTrackIndex < 0 && arenaId) {
-      const startMap: Record<ArenaId, number> = {
-        foundry: 0,
-        cryo: 1,
-        reactor: 2,
-        colosseum: 3,
-        aether_nexus: 2,
-        toxic_scrapyard: 4,
-        volcano_caldera: 0,
-        cyber_grid: 5,
-        skyforge: 1,
-        storm: 2,
-      };
-      this.battleTrackIndex = (startMap[arenaId] ?? 0) % BATTLE_TRACKS.length;
+  public getVolumes() {
+    return {
+      master: this.masterVolume,
+      music: this.musicVolume,
+      sfx: this.sfxVolume,
+      crowd: this.crowdVolume,
+    };
+  }
+
+  public getCurrentTrackTitle(): string {
+    return this.currentTrackTitle;
+  }
+
+  public skipMusicTrack() {
+    if (this.musicMode === 'battle') {
+      this.playNextBattleMusic();
     } else {
-      this.battleTrackIndex = (this.battleTrackIndex + 1) % BATTLE_TRACKS.length;
+      this.playWorkshopMusic(true);
     }
-    const track = BATTLE_TRACKS[this.battleTrackIndex];
-    this.startTrack(track.src, false, 0.28);
+  }
+
+  public playWorkshopMusic(advance = false) {
+    this.stopActiveSfx();
+    const wasWorkshop = this.musicMode === 'workshop';
+    this.musicMode = 'workshop';
+    const menuPlaylist = [WORKSHOP_TRACK, ...BATTLE_TRACKS];
+    if (advance || !wasWorkshop || this.workshopTrackIndex < 0) {
+      this.workshopTrackIndex = (this.workshopTrackIndex + 1) % menuPlaylist.length;
+    }
+    const track = menuPlaylist[this.workshopTrackIndex % menuPlaylist.length] || WORKSHOP_TRACK;
+    this.startTrack(track.src, false, 0.24, track.title);
+  }
+
+  private refillBattleDeck(avoidSrc: string) {
+    const indices = BATTLE_TRACKS.map((_, i) => i);
+    // Fisher-Yates shuffle
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = indices[i];
+      indices[i] = indices[j];
+      indices[j] = tmp;
+    }
+    // Ensure the very first track of the new deck is never the same as the last played track or current workshop track
+    if (
+      indices.length > 1 &&
+      (BATTLE_TRACKS[indices[0]].src === avoidSrc || BATTLE_TRACKS[indices[0]].src === this.currentMusicSrc)
+    ) {
+      const swapIdx = indices.findIndex(
+        (idx) =>
+          BATTLE_TRACKS[idx].src !== avoidSrc && BATTLE_TRACKS[idx].src !== this.currentMusicSrc,
+      );
+      if (swapIdx > 0) {
+        const first = indices[0];
+        indices[0] = indices[swapIdx];
+        indices[swapIdx] = first;
+      }
+    }
+    this.battleDeck = indices;
+  }
+
+  public playNextBattleMusic(_arenaId?: ArenaId) {
+    this.musicMode = 'battle';
+    let savedLastSrc = this.lastBattleSrc;
+    if (!savedLastSrc && typeof window !== 'undefined') {
+      try {
+        savedLastSrc = window.localStorage.getItem('aetheris_last_battle_track_v1') || '';
+      } catch {
+        // Ignore storage error
+      }
+    }
+
+    if (this.battleDeck.length === 0) {
+      this.refillBattleDeck(savedLastSrc);
+    }
+
+    let nextIdx = this.battleDeck.shift() ?? 0;
+    if (
+      BATTLE_TRACKS.length > 1 &&
+      (BATTLE_TRACKS[nextIdx].src === savedLastSrc || BATTLE_TRACKS[nextIdx].src === this.currentMusicSrc)
+    ) {
+      if (this.battleDeck.length === 0) {
+        this.refillBattleDeck(savedLastSrc);
+      }
+      const altPos = this.battleDeck.findIndex(
+        (idx) =>
+          BATTLE_TRACKS[idx].src !== savedLastSrc && BATTLE_TRACKS[idx].src !== this.currentMusicSrc,
+      );
+      if (altPos >= 0) {
+        nextIdx = this.battleDeck.splice(altPos, 1)[0];
+      }
+    }
+
+    const track = BATTLE_TRACKS[nextIdx] || BATTLE_TRACKS[0];
+    this.lastBattleSrc = track.src;
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem('aetheris_last_battle_track_v1', track.src);
+      } catch {
+        // Ignore storage error
+      }
+    }
+    this.startTrack(track.src, false, 0.28, track.title);
+  }
+
+  public playCustomTrack(
+    src: string,
+    title = 'Custom Track',
+    target: 'workshop' | 'battle' | 'both' = 'both',
+  ) {
+    if (target === 'battle' || target === 'both') {
+      if (!BATTLE_TRACKS.some((t) => t.src === src)) {
+        BATTLE_TRACKS.unshift({ title, src });
+        this.battleDeck = [];
+      }
+    }
+    this.startTrack(src, true, 0.28, title);
   }
 
   public stopMusic() {
@@ -142,6 +385,7 @@ class SoundEngine {
     this.muted = muted;
     if (muted) {
       this.stopLoops();
+      this.stopActiveSfx();
       if (this.musicEl) {
         this.musicEl.muted = true;
         this.musicEl.pause();
@@ -161,18 +405,25 @@ class SoundEngine {
   }
 
   private ensureContext(): AudioContext | null {
-    if (this.muted || typeof window === 'undefined') return null;
+    if (this.muted || this.masterVolume * this.sfxVolume <= 0.005 || typeof window === 'undefined') return null;
     if (!this.ctx) {
       const AudioCtx =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return null;
       this.ctx = new AudioCtx();
+      this.sfxBusGain = this.ctx.createGain();
+      this.sfxBusGain.gain.value = Math.max(0.0001, this.masterVolume * this.sfxVolume * 1.2);
+      this.sfxBusGain.connect(this.ctx.destination);
     }
     if (this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
     return this.ctx;
+  }
+
+  private getSfxDestination(ctx: AudioContext): AudioNode {
+    return this.sfxBusGain || ctx.destination;
   }
 
   private getNoiseBuffer(ctx: AudioContext): AudioBuffer {
@@ -217,7 +468,7 @@ class SoundEngine {
     this.driveOscMain.connect(this.driveFilter);
     this.driveOscSub.connect(this.driveFilter);
     this.driveFilter.connect(this.driveGain);
-    this.driveGain.connect(ctx.destination);
+    this.driveGain.connect(this.getSfxDestination(ctx));
     this.driveOscMain.start();
     this.driveOscSub.start();
 
@@ -229,7 +480,7 @@ class SoundEngine {
     this.weaponGain = ctx.createGain();
     this.weaponGain.gain.value = 0.0001;
     this.weaponOsc.connect(this.weaponGain);
-    this.weaponGain.connect(ctx.destination);
+    this.weaponGain.connect(this.getSfxDestination(ctx));
     this.weaponOsc.start();
 
     this.weaponNoiseSrc = ctx.createBufferSource();
@@ -246,7 +497,7 @@ class SoundEngine {
 
     this.weaponNoiseSrc.connect(this.weaponNoiseFilter);
     this.weaponNoiseFilter.connect(this.weaponNoiseGain);
-    this.weaponNoiseGain.connect(ctx.destination);
+    this.weaponNoiseGain.connect(this.getSfxDestination(ctx));
     this.weaponNoiseSrc.start();
   }
 
@@ -285,6 +536,9 @@ class SoundEngine {
     weaponActive: boolean;
     weaponSpin: number;
     boosting: boolean;
+    hazards?: unknown[];
+    playerX?: number;
+    playerZ?: number;
   }) {
     if (this.muted || !params.active) {
       this.stopLoops();
@@ -352,124 +606,178 @@ class SoundEngine {
     }
   }
 
+  /**
+   * Generates a wave-shaped distortion curve so low-frequency body punches sound like
+   * real explosive/ballistic pressure waves rather than clean oscillator beeps.
+   */
+  private makeDistortionCurve(amount = 28): Float32Array<ArrayBuffer> {
+    const n = 256;
+    const curve = new Float32Array(new ArrayBuffer(n * 4));
+    for (let i = 0; i < n; i++) {
+      const x = (i * 2) / n - 1;
+      curve[i] = ((3 + amount) * x * 20 * (Math.PI / 180)) / (Math.PI + amount * Math.abs(x));
+    }
+    return curve;
+  }
+
+  /**
+   * Multi-layered pyrotechnic / ballistic blast (filtered noise crack + sub-bass pressure thump, no synth beeps).
+   */
+  private triggerBallisticBlast(
+    ctx: AudioContext,
+    opts: {
+      crackFreq: number;
+      crackDur: number;
+      crackVol: number;
+      bodyFreq: number;
+      bodyDur: number;
+      bodyVol: number;
+      subStartHz?: number;
+      subEndHz?: number;
+      subDur?: number;
+      subVol?: number;
+    },
+  ) {
+    const now = ctx.currentTime;
+    const noiseBuf = this.getNoiseBuffer(ctx);
+
+    // Layer 1: High-velocity muzzle / detonation crack (broadband noise transient)
+    const crackSrc = ctx.createBufferSource();
+    crackSrc.buffer = noiseBuf;
+    const crackFilter = ctx.createBiquadFilter();
+    crackFilter.type = 'bandpass';
+    crackFilter.frequency.setValueAtTime(opts.crackFreq, now);
+    crackFilter.frequency.exponentialRampToValueAtTime(Math.max(120, opts.crackFreq * 0.28), now + opts.crackDur);
+    crackFilter.Q.value = 0.85;
+    const crackGain = ctx.createGain();
+    crackGain.gain.setValueAtTime(opts.crackVol, now);
+    crackGain.gain.exponentialRampToValueAtTime(0.001, now + opts.crackDur);
+    crackSrc.connect(crackFilter);
+    crackFilter.connect(crackGain);
+    crackGain.connect(this.getSfxDestination(ctx));
+    crackSrc.start(now);
+    crackSrc.stop(now + opts.crackDur + 0.02);
+
+    // Layer 2: Low-pass explosion / cannon rumble tail
+    const bodySrc = ctx.createBufferSource();
+    bodySrc.buffer = noiseBuf;
+    const bodyFilter = ctx.createBiquadFilter();
+    bodyFilter.type = 'lowpass';
+    bodyFilter.frequency.setValueAtTime(opts.bodyFreq, now);
+    bodyFilter.frequency.exponentialRampToValueAtTime(75, now + opts.bodyDur);
+    bodyFilter.Q.value = 1.1;
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = this.makeDistortionCurve(32);
+    const bodyGain = ctx.createGain();
+    bodyGain.gain.setValueAtTime(opts.bodyVol, now);
+    bodyGain.gain.exponentialRampToValueAtTime(0.001, now + opts.bodyDur);
+    bodySrc.connect(bodyFilter);
+    bodyFilter.connect(shaper);
+    shaper.connect(bodyGain);
+    bodyGain.connect(this.getSfxDestination(ctx));
+    bodySrc.start(now);
+    bodySrc.stop(now + opts.bodyDur + 0.03);
+
+    // Layer 3: Sub-bass chest thump (below 95Hz only — never audible as a pitched beep)
+    if ((opts.subVol ?? 0) > 0) {
+      const subOsc = ctx.createOscillator();
+      const subGain = ctx.createGain();
+      subOsc.type = 'sine';
+      const startHz = Math.min(92, opts.subStartHz ?? 78);
+      const endHz = Math.max(22, opts.subEndHz ?? 26);
+      const dur = opts.subDur ?? 0.28;
+      subOsc.frequency.setValueAtTime(startHz, now);
+      subOsc.frequency.exponentialRampToValueAtTime(endHz, now + dur);
+      subGain.gain.setValueAtTime(opts.subVol!, now);
+      subGain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+      subOsc.connect(subGain);
+      subGain.connect(this.getSfxDestination(ctx));
+      subOsc.start(now);
+      subOsc.stop(now + dur + 0.02);
+    }
+  }
+
   public playHammerStrike(intensity = 1.2) {
+    this.playSample(
+      CRASH_SAMPLE,
+      Math.min(0.55, 0.24 + intensity * 0.12),
+      0.88 + Math.random() * 0.18,
+      'crash_hammer',
+      220,
+      1500,
+    );
     const ctx = this.ensureContext();
     if (!ctx) return;
-    const now = ctx.currentTime;
-    const vol = Math.min(0.38, 0.18 + intensity * 0.12);
-
-    // 1. Sub-bass kinetic slam
-    const sub = ctx.createOscillator();
-    const subGain = ctx.createGain();
-    sub.type = 'sine';
-    sub.frequency.setValueAtTime(115, now);
-    sub.frequency.exponentialRampToValueAtTime(28, now + 0.24);
-    subGain.gain.setValueAtTime(vol, now);
-    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
-    sub.connect(subGain);
-    subGain.connect(ctx.destination);
-    sub.start(now);
-    sub.stop(now + 0.27);
-
-    // 2. Heavy steel anvil partials
-    [215, 485, 920].forEach((freq, idx) => {
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = idx === 0 ? 'square' : 'triangle';
-      osc.frequency.setValueAtTime(freq * (0.96 + Math.random() * 0.08), now);
-      osc.frequency.exponentialRampToValueAtTime(freq * 0.65, now + 0.28);
-      g.gain.setValueAtTime(vol * (0.35 / (idx + 1)), now);
-      g.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
-      osc.connect(g);
-      g.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.31);
+    const vol = Math.min(0.45, 0.22 + intensity * 0.12);
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 1350,
+      crackDur: 0.18,
+      crackVol: vol * 0.85,
+      bodyFreq: 520,
+      bodyDur: 0.38,
+      bodyVol: vol * 0.9,
+      subStartHz: 82,
+      subEndHz: 26,
+      subDur: 0.3,
+      subVol: vol,
     });
-
-    // 3. Pneumatic burst + crunch noise
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.getNoiseBuffer(ctx);
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(1400, now);
-    filter.Q.value = 1.4;
-    const ng = ctx.createGain();
-    ng.gain.setValueAtTime(vol * 0.55, now);
-    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
-    noise.connect(filter);
-    filter.connect(ng);
-    ng.connect(ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.18);
   }
 
   public playSawGrind(intensity = 1.0) {
+    this.playSample(
+      CRASH_SAMPLE,
+      Math.min(0.38, 0.16 + intensity * 0.08),
+      1.18 + Math.random() * 0.15,
+      'saw_crash',
+      320,
+      1100,
+    );
     const ctx = this.ensureContext();
     if (!ctx) return;
     const now = ctx.currentTime;
-    const vol = Math.min(0.28, 0.12 + intensity * 0.1);
-
-    // Screeching metal-on-metal circular saw bite
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(520 + Math.random() * 140, now);
-    osc.frequency.linearRampToValueAtTime(860, now + 0.08);
-    osc.frequency.exponentialRampToValueAtTime(340, now + 0.2);
-    g.gain.setValueAtTime(vol * 0.45, now);
-    g.gain.exponentialRampToValueAtTime(0.001, now + 0.21);
-    osc.connect(g);
-    g.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.22);
+    const vol = Math.min(0.32, 0.14 + intensity * 0.1);
 
     const noise = ctx.createBufferSource();
     noise.buffer = this.getNoiseBuffer(ctx);
     const filter = ctx.createBiquadFilter();
     filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(2800, now);
-    filter.Q.value = 4.2;
+    filter.frequency.setValueAtTime(2100, now);
+    filter.frequency.exponentialRampToValueAtTime(680, now + 0.22);
+    filter.Q.value = 2.4;
     const ng = ctx.createGain();
-    ng.gain.setValueAtTime(vol * 0.75, now);
-    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
+    ng.gain.setValueAtTime(vol * 0.9, now);
+    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.23);
     noise.connect(filter);
     filter.connect(ng);
-    ng.connect(ctx.destination);
+    ng.connect(this.getSfxDestination(ctx));
     noise.start(now);
-    noise.stop(now + 0.2);
+    noise.stop(now + 0.24);
   }
 
   public playSpinnerSlash(intensity = 1.1) {
+    this.playSample(
+      CRASH_SAMPLE,
+      Math.min(0.48, 0.2 + intensity * 0.1),
+      0.96 + Math.random() * 0.18,
+      'spinner_crash',
+      240,
+      1250,
+    );
     const ctx = this.ensureContext();
     if (!ctx) return;
-    const now = ctx.currentTime;
-    const vol = Math.min(0.34, 0.14 + intensity * 0.12);
-
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(360 + Math.random() * 60, now);
-    osc.frequency.exponentialRampToValueAtTime(75, now + 0.2);
-    g.gain.setValueAtTime(vol * 0.65, now);
-    g.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-    osc.connect(g);
-    g.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.23);
-
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.getNoiseBuffer(ctx);
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'highpass';
-    filter.frequency.setValueAtTime(1200, now);
-    const ng = ctx.createGain();
-    ng.gain.setValueAtTime(vol * 0.6, now);
-    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-    noise.connect(filter);
-    filter.connect(ng);
-    ng.connect(ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.16);
+    const vol = Math.min(0.38, 0.16 + intensity * 0.12);
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 1650,
+      crackDur: 0.16,
+      crackVol: vol * 0.85,
+      bodyFreq: 620,
+      bodyDur: 0.28,
+      bodyVol: vol * 0.75,
+      subStartHz: 76,
+      subEndHz: 28,
+      subDur: 0.22,
+      subVol: vol * 0.85,
+    });
   }
 
   public playFlameBurst() {
@@ -479,47 +787,77 @@ class SoundEngine {
     const noise = ctx.createBufferSource();
     noise.buffer = this.getNoiseBuffer(ctx);
     const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(520, now);
-    filter.frequency.exponentialRampToValueAtTime(240, now + 0.24);
-    filter.Q.value = 0.9;
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(680, now);
+    filter.frequency.exponentialRampToValueAtTime(190, now + 0.32);
+    filter.Q.value = 0.8;
     const ng = ctx.createGain();
-    ng.gain.setValueAtTime(0.18, now);
-    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    ng.gain.setValueAtTime(0.28, now);
+    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
     noise.connect(filter);
     filter.connect(ng);
-    ng.connect(ctx.destination);
+    ng.connect(this.getSfxDestination(ctx));
     noise.start(now);
-    noise.stop(now + 0.26);
+    noise.stop(now + 0.35);
   }
 
-  public playCrowdCheer(intensity = 1.0) {
+  public playCrowdCheer(intensity = 1.0, force = false) {
+    if (this.musicMode !== 'battle') return;
+    const sample = CHEER_SAMPLES[this.cheerIndex % CHEER_SAMPLES.length];
+    this.cheerIndex = (this.cheerIndex + 1) % CHEER_SAMPLES.length;
+    this.playSample(
+      sample,
+      Math.min(0.4, 0.15 + intensity * 0.1),
+      0.98 + Math.random() * 0.06,
+      'cheer_sfx',
+      force ? 1200 : 7500,
+      force ? 3400 : 2600,
+    );
+  }
+
+  public playRailgunShot() {
+    // Heavy cannon detonation + high-velocity ballistic crack
+    this.playSample(
+      EXPLOSION_SAMPLE,
+      0.56,
+      1.18 + Math.random() * 0.1,
+      'railgun_shot',
+      140,
+      1450,
+    );
+    this.playSample(
+      CRASH_SAMPLE,
+      0.42,
+      1.26,
+      'railgun_crack',
+      140,
+      950,
+    );
     const ctx = this.ensureContext();
     if (!ctx) return;
-    const now = ctx.currentTime;
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.getNoiseBuffer(ctx);
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(750, now);
-    filter.frequency.linearRampToValueAtTime(1050, now + 0.35);
-    filter.frequency.linearRampToValueAtTime(680, now + 1.15);
-    filter.Q.value = 1.3;
-
-    const gain = ctx.createGain();
-    const peak = Math.min(0.14, 0.05 + intensity * 0.05);
-    gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(peak, now + 0.2);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
-
-    noise.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    noise.start(now);
-    noise.stop(now + 1.25);
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 2600,
+      crackDur: 0.22,
+      crackVol: 0.48,
+      bodyFreq: 880,
+      bodyDur: 0.55,
+      bodyVol: 0.45,
+      subStartHz: 88,
+      subEndHz: 24,
+      subDur: 0.42,
+      subVol: 0.52,
+    });
   }
 
-  public playImpact(intensity = 1, isCrit = false, weaponId?: WeaponId) {
+  public playImpact(intensity = 1, isCrit = false, weaponId?: WeaponId, _damageKind?: string) {
+    if (weaponId === 'railgun') {
+      this.playRailgunShot();
+      return;
+    }
+    if (weaponId === 'mortar') {
+      this.playExplosion();
+      return;
+    }
     if (weaponId === 'hammer' || weaponId === 'crush_jaw') {
       this.playHammerStrike(intensity);
       return;
@@ -528,235 +866,153 @@ class SoundEngine {
       this.playSawGrind(intensity);
       return;
     }
-    if (weaponId === 'vspinner' || weaponId === 'hbar' || weaponId === 'drum' || weaponId === 'tesla') {
+    if (weaponId === 'vspinner' || weaponId === 'hbar' || weaponId === 'drum') {
       this.playSpinnerSlash(intensity);
+      return;
+    }
+    if (weaponId === 'tesla') {
+      this.playZap(intensity);
       return;
     }
     if (weaponId === 'flame' || weaponId === 'cryo_jet') {
       this.playFlameBurst();
       return;
     }
-    if (weaponId === 'railgun' || weaponId === 'mortar') {
-      this.playExplosion();
-      return;
-    }
+
+    this.playSample(
+      isCrit ? EXPLOSION_SAMPLE : CRASH_SAMPLE,
+      Math.min(0.48, 0.18 + intensity * 0.12),
+      0.88 + Math.random() * 0.24,
+      isCrit ? 'crit_crash_sfx' : 'crash_sfx',
+      220,
+      1350,
+    );
 
     const ctx = this.ensureContext();
     if (!ctx) return;
-    const now = ctx.currentTime;
-    const vol = Math.min(0.32, 0.11 + intensity * 0.12);
-
-    // Metallic hull slam
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = isCrit ? 'sawtooth' : 'triangle';
-    const baseFreq = isCrit ? 260 : 145 + Math.random() * 55;
-    osc.frequency.setValueAtTime(baseFreq, now);
-    osc.frequency.exponentialRampToValueAtTime(38, now + 0.18);
-    gain.gain.setValueAtTime(vol, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.2);
-
-    // Steel crunch transient
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.getNoiseBuffer(ctx);
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(isCrit ? 1900 : 1100, now);
-    filter.Q.value = 1.8;
-    const ng = ctx.createGain();
-    ng.gain.setValueAtTime(vol * 0.5, now);
-    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-    noise.connect(filter);
-    filter.connect(ng);
-    ng.connect(ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.13);
+    const vol = Math.min(0.4, 0.15 + intensity * 0.14);
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: isCrit ? 1900 : 1200,
+      crackDur: 0.16,
+      crackVol: vol * 0.85,
+      bodyFreq: isCrit ? 680 : 460,
+      bodyDur: 0.3,
+      bodyVol: vol * 0.8,
+      subStartHz: 78,
+      subEndHz: 26,
+      subDur: 0.24,
+      subVol: vol * 0.9,
+    });
   }
 
   public playFlip() {
+    this.playSample(CRASH_SAMPLE, 0.36, 1.08, 'flip_crash', 260, 1100);
     const ctx = this.ensureContext();
     if (!ctx) return;
-    const now = ctx.currentTime;
-
-    // Pneumatic CO2 blast + upward hydraulic whistle
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.getNoiseBuffer(ctx);
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'highpass';
-    filter.frequency.setValueAtTime(1600, now);
-    const ng = ctx.createGain();
-    ng.gain.setValueAtTime(0.22, now);
-    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-    noise.connect(filter);
-    filter.connect(ng);
-    ng.connect(ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.19);
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(135, now);
-    osc.frequency.exponentialRampToValueAtTime(640, now + 0.19);
-    gain.gain.setValueAtTime(0.18, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.23);
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 1500,
+      crackDur: 0.2,
+      crackVol: 0.32,
+      bodyFreq: 520,
+      bodyDur: 0.32,
+      bodyVol: 0.3,
+      subStartHz: 74,
+      subEndHz: 28,
+      subDur: 0.25,
+      subVol: 0.34,
+    });
   }
 
   public playExplosion() {
+    this.playSample(
+      EXPLOSION_SAMPLE,
+      0.64,
+      0.92 + Math.random() * 0.16,
+      `explosion_sfx_${Math.floor(Math.random() * 3)}`,
+      120,
+      1950,
+    );
     const ctx = this.ensureContext();
     if (!ctx) return;
-    const now = ctx.currentTime;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(125, now);
-    osc.frequency.exponentialRampToValueAtTime(24, now + 0.5);
-    gain.gain.setValueAtTime(0.35, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.52);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.54);
-
-    // Rumbling blast noise tail
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.getNoiseBuffer(ctx);
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(1500, now);
-    filter.frequency.exponentialRampToValueAtTime(140, now + 0.65);
-    const ng = ctx.createGain();
-    ng.gain.setValueAtTime(0.32, now);
-    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.68);
-    noise.connect(filter);
-    filter.connect(ng);
-    ng.connect(ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.7);
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 1850,
+      crackDur: 0.26,
+      crackVol: 0.5,
+      bodyFreq: 740,
+      bodyDur: 0.82,
+      bodyVol: 0.52,
+      subStartHz: 85,
+      subEndHz: 22,
+      subDur: 0.65,
+      subVol: 0.58,
+    });
   }
 
   public playPickup() {
     const ctx = this.ensureContext();
     if (!ctx) return;
-    const now = ctx.currentTime;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(520, now);
-    osc.frequency.setValueAtTime(780, now + 0.07);
-    gain.gain.setValueAtTime(0.14, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.21);
+    this.noiseBurst('bandpass', 1400, 620, 0, 0.16, 0.22);
   }
 
   public playCountdown(final = false) {
     const ctx = this.ensureContext();
     if (!ctx) return;
-    const now = ctx.currentTime;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(final ? 880 : 440, now);
-    gain.gain.setValueAtTime(0.14, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + (final ? 0.28 : 0.14));
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + (final ? 0.3 : 0.15));
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: final ? 1600 : 900,
+      crackDur: final ? 0.22 : 0.12,
+      crackVol: final ? 0.3 : 0.18,
+      bodyFreq: 420,
+      bodyDur: final ? 0.3 : 0.16,
+      bodyVol: 0.24,
+      subStartHz: 72,
+      subEndHz: 32,
+      subDur: 0.18,
+      subVol: 0.25,
+    });
   }
 
   public playCrusherSlam() {
-    this.playHammerStrike(1.45);
-    const ctx = this.ensureContext();
-    if (!ctx) return;
-    const now = ctx.currentTime;
-
-    // Hydraulic air release hiss + heavy floor thud
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.getNoiseBuffer(ctx);
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(950, now);
-    filter.frequency.exponentialRampToValueAtTime(160, now + 0.36);
-    const ng = ctx.createGain();
-    ng.gain.setValueAtTime(0.24, now);
-    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
-    noise.connect(filter);
-    filter.connect(ng);
-    ng.connect(ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.4);
+    this.playHammerStrike(1.55);
   }
 
   public playHazardWarning() {
     const ctx = this.ensureContext();
     if (!ctx) return;
-    const now = ctx.currentTime;
-
-    [0, 0.12].forEach((offset, idx) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(idx === 0 ? 640 : 820, now + offset);
-      gain.gain.setValueAtTime(0.08, now + offset);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.09);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now + offset);
-      osc.stop(now + offset + 0.1);
-    });
+    this.noiseBurst('bandpass', 950, 380, 0, 0.18, 0.16);
   }
 
   public playKo() {
+    this.playSample(
+      EXPLOSION_SAMPLE,
+      0.72,
+      0.86,
+      'ko_explosion_sfx',
+      80,
+      2300,
+    );
+    this.playSample(
+      CRASH_SAMPLE,
+      0.52,
+      0.92,
+      'ko_crash_sfx',
+      80,
+      1800,
+    );
+    this.playCrowdCheer(1.6, true);
     const ctx = this.ensureContext();
     if (!ctx) return;
-    const now = ctx.currentTime;
-    this.playExplosion();
-    this.playCrowdCheer(1.6);
-
-    [440, 554, 659].forEach((freq, idx) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(freq, now + idx * 0.08);
-      gain.gain.setValueAtTime(0.16, now + idx * 0.08);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.38);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now + idx * 0.08);
-      osc.stop(now + idx * 0.08 + 0.4);
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 2100,
+      crackDur: 0.32,
+      crackVol: 0.56,
+      bodyFreq: 820,
+      bodyDur: 0.95,
+      bodyVol: 0.58,
+      subStartHz: 88,
+      subEndHz: 20,
+      subDur: 0.78,
+      subVol: 0.64,
     });
-  }
-
-  private tone(type: OscillatorType, from: number, to: number, start: number, dur: number, vol: number) {
-    const ctx = this.ensureContext();
-    if (!ctx) return;
-    const t0 = ctx.currentTime + start;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(from, t0);
-    osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + dur);
-    gain.gain.setValueAtTime(vol, t0);
-    gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.02);
   }
 
   private noiseBurst(type: BiquadFilterType, from: number, to: number, start: number, dur: number, vol: number) {
@@ -768,72 +1024,176 @@ class SoundEngine {
     const filter = ctx.createBiquadFilter();
     filter.type = type;
     filter.frequency.setValueAtTime(from, t0);
-    filter.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + dur);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(40, to), t0 + dur);
     const g = ctx.createGain();
     g.gain.setValueAtTime(vol, t0);
     g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
     noise.connect(filter);
     filter.connect(g);
-    g.connect(ctx.destination);
+    g.connect(this.getSfxDestination(ctx));
     noise.start(t0);
     noise.stop(t0 + dur + 0.02);
   }
 
   public playZap(intensity = 1) {
-    this.tone('square', 1800, 220, 0, 0.12, 0.07 * intensity);
-    this.tone('sawtooth', 960, 120, 0.03, 0.16, 0.06 * intensity);
-    this.noiseBurst('highpass', 4200, 1800, 0, 0.14, 0.12 * intensity);
+    // High-voltage thunderous arc snap (noise crack + sub punch, no square-wave beep)
+    this.playSample(CRASH_SAMPLE, Math.min(0.4, 0.22 * intensity), 1.32, 'zap_crack', 200, 900);
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 3200,
+      crackDur: 0.16,
+      crackVol: 0.36 * intensity,
+      bodyFreq: 920,
+      bodyDur: 0.26,
+      bodyVol: 0.28 * intensity,
+      subStartHz: 75,
+      subEndHz: 28,
+      subDur: 0.2,
+      subVol: 0.3 * intensity,
+    });
   }
 
   public playThunder() {
-    this.noiseBurst('highpass', 6000, 2400, 0, 0.08, 0.3);
-    this.noiseBurst('lowpass', 900, 60, 0.05, 1.4, 0.42);
-    this.tone('sine', 70, 30, 0.05, 1.0, 0.28);
+    this.playSample(EXPLOSION_SAMPLE, 0.58, 0.85, 'thunder_sfx', 250, 2100);
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 2800,
+      crackDur: 0.22,
+      crackVol: 0.45,
+      bodyFreq: 680,
+      bodyDur: 1.1,
+      bodyVol: 0.5,
+      subStartHz: 76,
+      subEndHz: 22,
+      subDur: 0.85,
+      subVol: 0.52,
+    });
   }
 
   public playMissileLaunch() {
-    this.noiseBurst('bandpass', 600, 2400, 0, 0.45, 0.22);
-    this.tone('sawtooth', 180, 620, 0, 0.35, 0.06);
+    // Rocket salvo ignition blast + propellant whoosh (no sawtooth beep)
+    this.playSample(
+      EXPLOSION_SAMPLE,
+      0.46,
+      1.28 + Math.random() * 0.12,
+      'missile_launch_sfx',
+      150,
+      1150,
+    );
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 1950,
+      crackDur: 0.22,
+      crackVol: 0.38,
+      bodyFreq: 860,
+      bodyDur: 0.44,
+      bodyVol: 0.38,
+      subStartHz: 82,
+      subEndHz: 30,
+      subDur: 0.28,
+      subVol: 0.38,
+    });
   }
 
   public playMagnetHum() {
-    this.tone('sine', 90, 60, 0, 0.45, 0.16);
-    this.tone('triangle', 180, 120, 0, 0.4, 0.06);
+    this.noiseBurst('lowpass', 360, 110, 0, 0.35, 0.26);
   }
 
   public playLanceThrust() {
-    this.noiseBurst('bandpass', 2400, 600, 0, 0.12, 0.2);
-    this.tone('square', 300, 90, 0, 0.14, 0.12);
+    // Heavy pneumatic breach shot
+    this.playSample(CRASH_SAMPLE, 0.44, 1.16, 'lance_shot_sfx', 180, 1050);
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 2100,
+      crackDur: 0.16,
+      crackVol: 0.38,
+      bodyFreq: 640,
+      bodyDur: 0.28,
+      bodyVol: 0.34,
+      subStartHz: 80,
+      subEndHz: 28,
+      subDur: 0.22,
+      subVol: 0.38,
+    });
   }
 
   public playPitFall() {
-    this.tone('sine', 520, 60, 0, 0.9, 0.16);
-    this.noiseBurst('lowpass', 1200, 120, 0.6, 0.5, 0.25);
+    this.playSample(CRASH_SAMPLE, 0.5, 0.85, 'pit_crash_sfx', 250, 1600);
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 1200,
+      crackDur: 0.25,
+      crackVol: 0.38,
+      bodyFreq: 480,
+      bodyDur: 0.6,
+      bodyVol: 0.42,
+      subStartHz: 75,
+      subEndHz: 22,
+      subDur: 0.5,
+      subVol: 0.45,
+    });
   }
 
   public playMortarThump() {
-    this.tone('sine', 140, 45, 0, 0.32, 0.3);
-    this.noiseBurst('lowpass', 1400, 200, 0, 0.25, 0.22);
+    // Heavy artillery cannon firing blast
+    this.playSample(
+      EXPLOSION_SAMPLE,
+      0.52,
+      1.08 + Math.random() * 0.1,
+      'mortar_fire_sfx',
+      150,
+      1350,
+    );
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 1650,
+      crackDur: 0.2,
+      crackVol: 0.44,
+      bodyFreq: 620,
+      bodyDur: 0.48,
+      bodyVol: 0.46,
+      subStartHz: 86,
+      subEndHz: 25,
+      subDur: 0.38,
+      subVol: 0.5,
+    });
   }
 
   public playPartRip() {
-    this.noiseBurst('bandpass', 3200, 700, 0, 0.3, 0.28);
-    this.tone('square', 420, 70, 0, 0.28, 0.1);
-    this.tone('triangle', 1300, 900, 0.05, 0.4, 0.05);
+    this.playSample(EXPLOSION_SAMPLE, 0.5, 1.12, 'part_rip_sfx', 180, 1500);
+    this.playSample(CRASH_SAMPLE, 0.44, 0.98, 'part_crash_sfx', 180, 1300);
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    this.triggerBallisticBlast(ctx, {
+      crackFreq: 2200,
+      crackDur: 0.22,
+      crackVol: 0.42,
+      bodyFreq: 680,
+      bodyDur: 0.45,
+      bodyVol: 0.4,
+      subStartHz: 80,
+      subEndHz: 26,
+      subDur: 0.35,
+      subVol: 0.44,
+    });
   }
 
   public playFreeze() {
-    this.noiseBurst('highpass', 7000, 3000, 0, 0.5, 0.18);
-    [1568, 2093, 2637].forEach((f, i) => this.tone('sine', f, f * 1.02, i * 0.05, 0.4, 0.05));
+    this.noiseBurst('highpass', 5200, 1800, 0, 0.42, 0.24);
   }
 
   public playSizzle() {
-    this.noiseBurst('highpass', 5000, 2500, 0, 0.7, 0.14);
+    this.noiseBurst('highpass', 4500, 2000, 0, 0.55, 0.18);
   }
 
-  public playAnnouncerSting(kind: 'event' | 'wave' | 'hill' = 'event') {
-    const notes = kind === 'wave' ? [330, 392, 494, 659] : kind === 'hill' ? [523, 659] : [392, 523, 784];
-    notes.forEach((f, i) => this.tone('triangle', f, f * 0.98, i * 0.09, 0.26, 0.11));
+  public playAnnouncerSting(_kind: 'event' | 'wave' | 'hill' = 'event') {
+    this.playSample(EXPLOSION_SAMPLE, 0.36, 1.05, 'sting_blast_sfx', 600, 1300);
   }
 }
 

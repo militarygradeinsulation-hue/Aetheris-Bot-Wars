@@ -23,6 +23,10 @@ import { createProceduralTextures, type ProceduralTexturePack } from './material
 import { EffectsManager } from './particlesAndDebris';
 import { CombatOverlay } from './combatOverlay';
 import { soundEngine } from './soundEngine';
+import { voiceCommentator } from './voiceCommentator';
+
+import type { StudioLightingPreset } from '../components/LiveVoiceCopilot';
+import type { WorkshopCameraAngle } from '../components/ThreeSceneInspectorDock';
 
 export interface BattleArenaCanvasProps {
   mode: 'workshop' | 'combat';
@@ -34,7 +38,13 @@ export interface BattleArenaCanvasProps {
   inputRef: React.MutableRefObject<PlayerInputState>;
   onStepLocalPhysics?: (dt: number) => void;
   onCombatEvents?: (events: CombatEvent[]) => void;
-  cameraPreset?: 'chase' | 'tactical' | 'cinematic';
+  cameraPreset?: 'chase' | 'first_person' | 'pilot_booth' | 'tactical' | 'cinematic';
+  explodedRatio?: number;
+  lightingPreset?: StudioLightingPreset;
+  turntableSpeed?: number;
+  workshopCameraAngle?: WorkshopCameraAngle;
+  onWorkshopCameraManualOrbit?: () => void;
+  weaponTestBurstSignal?: number;
 }
 
 const _camGoal = new THREE.Vector3();
@@ -69,6 +79,12 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   onStepLocalPhysics,
   onCombatEvents,
   cameraPreset = 'chase',
+  explodedRatio = 0,
+  lightingPreset = 'arena',
+  turntableSpeed = 1,
+  workshopCameraAngle = 'free',
+  onWorkshopCameraManualOrbit,
+  weaponTestBurstSignal = 0,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const [contextLost, setContextLost] = useState(false);
@@ -82,6 +98,12 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   const stepLocalRef = useRef(onStepLocalPhysics);
   const onEventsRef = useRef(onCombatEvents);
   const camPresetRef = useRef(cameraPreset);
+  const explodedRatioRef = useRef(explodedRatio);
+  const lightingPresetRef = useRef<StudioLightingPreset>(lightingPreset);
+  const turntableSpeedRef = useRef(turntableSpeed);
+  const workshopCameraAngleRef = useRef<WorkshopCameraAngle>(workshopCameraAngle);
+  const onManualOrbitRef = useRef(onWorkshopCameraManualOrbit);
+  const weaponTestSignalRef = useRef(weaponTestBurstSignal);
 
   modeRef.current = mode;
   arenaIdRef.current = arenaId;
@@ -91,6 +113,12 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   stepLocalRef.current = onStepLocalPhysics;
   onEventsRef.current = onCombatEvents;
   camPresetRef.current = cameraPreset;
+  explodedRatioRef.current = explodedRatio;
+  lightingPresetRef.current = lightingPreset;
+  turntableSpeedRef.current = turntableSpeed;
+  workshopCameraAngleRef.current = workshopCameraAngle;
+  onManualOrbitRef.current = onWorkshopCameraManualOrbit;
+  weaponTestSignalRef.current = weaponTestBurstSignal;
 
   // Imperative scene rebuild hooks stored in refs
   const rebuildWorkshopBotRef = useRef<(() => void) | null>(null);
@@ -221,6 +249,12 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     orbit.minPolarAngle = 0.25;
     orbit.target.set(0, 0.45, 0);
     orbit.enabled = modeRef.current === 'workshop';
+    orbit.addEventListener('start', () => {
+      if (workshopCameraAngleRef.current !== 'free') {
+        workshopCameraAngleRef.current = 'free';
+        onManualOrbitRef.current?.();
+      }
+    });
 
     const maxAnisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     let textures: ProceduralTexturePack = createProceduralTextures(maxAnisotropy, arenaIdRef.current);
@@ -231,7 +265,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     const baseHemi = hemiLight.intensity;
     const baseKey = keyLight.intensity;
     let blackoutLevel = 0;
-    // Workshop framing: shift the render up so the bot sits in the open space above the dock
+    // Workshop framing: shift the render right so the bot sits in the open space beside the left vertical tile
     let viewShift = 0;
     let viewShiftTarget = 0;
     let viewShiftProbe = 0;
@@ -239,7 +273,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       const w = renderer.domElement.clientWidth || window.innerWidth;
       const h = renderer.domElement.clientHeight || window.innerHeight;
       if (Math.abs(viewShift) < 0.5) camera.clearViewOffset();
-      else camera.setViewOffset(w, h, 0, viewShift, w, h);
+      else camera.setViewOffset(w, h, viewShift, 0, w, h);
     };
 
     // Workshop turntable pedestal
@@ -247,6 +281,23 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     const pedGeo = new THREE.CylinderGeometry(1.9, 2.15, 0.22, 32);
     const pedRingGeo = new THREE.TorusGeometry(1.92, 0.04, 8, 48);
     pedRingGeo.rotateX(Math.PI / 2);
+    const pedBrandGeo = new THREE.PlaneGeometry(2.65, 0.74);
+    pedBrandGeo.rotateX(-Math.PI / 2);
+    const pedBrandTex = new THREE.TextureLoader().load(
+      '/assets/aistudio/WhatsApp_Image_2026-11-16_at_3.53.53_PM_9a533155.jpeg',
+    );
+    pedBrandTex.colorSpace = THREE.SRGBColorSpace;
+    pedBrandTex.anisotropy = maxAnisotropy;
+    const pedBrandMat = new THREE.MeshStandardMaterial({
+      map: pedBrandTex,
+      emissive: 0xffffff,
+      emissiveMap: pedBrandTex,
+      emissiveIntensity: 0.62,
+      roughness: 0.22,
+      metalness: 0.3,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    });
     const pedMat = new THREE.MeshStandardMaterial({ color: 0x161b22, roughness: 0.45, metalness: 0.78 });
     const pedRingMat = new THREE.MeshStandardMaterial({
       color: 0xf59e0b,
@@ -259,7 +310,9 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     pedMesh.receiveShadow = true;
     const pedRing = new THREE.Mesh(pedRingGeo, pedRingMat);
     pedRing.position.y = 0.01;
-    turntableGroup.add(pedMesh, pedRing);
+    const pedBrandMesh = new THREE.Mesh(pedBrandGeo, pedBrandMat);
+    pedBrandMesh.position.set(0, 0.008, 1.05);
+    turntableGroup.add(pedMesh, pedRing, pedBrandMesh);
     scene.add(turntableGroup);
 
     let workshopBotRig: BuiltBotRig | null = null;
@@ -301,6 +354,20 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       overlay.clearDynamic();
     };
 
+    interface WorkshopBaseOffsets {
+      armorFront: THREE.Vector3;
+      armorRear: THREE.Vector3;
+      armorLeft: THREE.Vector3;
+      armorRight: THREE.Vector3;
+      weaponMounts: THREE.Vector3[];
+      wheels: THREE.Vector3[];
+      accessory?: THREE.Vector3;
+      shield?: THREE.Vector3;
+    }
+    let workshopBaseOffsets: WorkshopBaseOffsets | null = null;
+    let currentExploded = 0;
+    let lastHandledTestBurst = weaponTestSignalRef.current;
+
     const rebuildWorkshopBot = () => {
       if (workshopBotRig) {
         scene.remove(workshopBotRig.root);
@@ -317,6 +384,16 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       const previewScale = computeBotStats(playerConfigRef.current, DEFAULT_SKILLS).bodyScale;
       workshopBotRig.root.scale.setScalar(previewScale);
       workshopBotRig.root.visible = modeRef.current === 'workshop';
+      workshopBaseOffsets = {
+        armorFront: workshopBotRig.armorPlates.front.position.clone(),
+        armorRear: workshopBotRig.armorPlates.rear.position.clone(),
+        armorLeft: workshopBotRig.armorPlates.left.position.clone(),
+        armorRight: workshopBotRig.armorPlates.right.position.clone(),
+        weaponMounts: workshopBotRig.weaponEntries.map((w) => w.mountGroup.position.clone()),
+        wheels: workshopBotRig.wheels.map((w) => w.position.clone()),
+        accessory: workshopBotRig.accessoryPivot?.position.clone(),
+        shield: workshopBotRig.shieldBubble?.position.clone(),
+      };
       scene.add(workshopBotRig.root);
     };
 
@@ -378,6 +455,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       for (const ev of events) {
         if (ev.id <= lastProcessedEventId) continue;
         lastProcessedEventId = ev.id;
+        voiceCommentator.onCombatEvent(ev);
 
         if (ev.type === 'hit' || ev.type === 'crit') {
           const isCrit = ev.type === 'crit';
@@ -389,11 +467,11 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
             impactFlashLight.color.setHex(0xff9e44);
             impactFlashLight.intensity = 10;
             crowdExcitement = Math.min(1.0, crowdExcitement + 0.45);
-            if (ev.intensity > 1.15) soundEngine.playCrowdCheer(0.8);
+            if (ev.intensity > 1.48) soundEngine.playCrowdCheer(0.75);
           }
           applyEventDecal(ev);
           screenShake = Math.min(0.65, screenShake + ev.intensity * 0.14);
-          soundEngine.playImpact(ev.intensity, isCrit, ev.weapon);
+          soundEngine.playImpact(ev.intensity, isCrit, ev.weapon, ev.damageKind);
         } else if (ev.type === 'flame') {
           effects.spawnFlames(ev.x, ev.y, ev.z, 6, 0, 0, 3.8, 0.95);
           effects.spawnSparks(ev.x, ev.y, ev.z, 8, 0xf97316, 6);
@@ -442,6 +520,32 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           impactFlashLight.intensity = 15;
           screenShake = Math.min(0.85, screenShake + 0.35);
           soundEngine.playImpact(1.5, true, 'railgun');
+        } else if (ev.type === 'laser_beam') {
+          const tx = ev.targetX ?? ev.x;
+          const tz = ev.targetZ ?? ev.z;
+          overlay.addBeam(ev.x, ev.y + 0.25, ev.z, tx, (ev.targetY ?? ev.y) + 0.25, tz, 0xf43f5e, 0.22, 0.065);
+          effects.spawnSparks(tx, ev.y + 0.2, tz, 14, 0xf43f5e, 10);
+          effects.spawnSmoke(tx, ev.y + 0.3, tz, 3, 0.7, 0.2);
+          impactFlashLight.position.set(tx, ev.y + 0.6, tz);
+          impactFlashLight.color.setHex(0xf43f5e);
+          impactFlashLight.intensity = Math.max(impactFlashLight.intensity, 10);
+          applyEventDecal(ev);
+          soundEngine.playZap(0.85);
+        } else if (ev.type === 'bomb_blast') {
+          effects.spawnShockwave(ev.x, 0.15, ev.z, 6.8, 0xf97316);
+          effects.spawnFlames(ev.x, 0.2, ev.z, 22, 0, 0, 6.2, 1.45);
+          effects.spawnSmoke(ev.x, 0.5, ev.z, 16, 1.55, 0.16);
+          effects.spawnSparks(ev.x, 0.3, ev.z, 36, 0xfbbf24, 16);
+          effects.spawnDebris(ev.x, 0.3, ev.z, 8, '#ea580c', 1.15);
+          impactFlashLight.position.set(ev.x, 2.2, ev.z);
+          impactFlashLight.color.setHex(0xff6b2c);
+          impactFlashLight.intensity = 22;
+          crowdExcitement = Math.min(1, crowdExcitement + 0.65);
+          screenShake = Math.min(0.95, screenShake + 0.5);
+          soundEngine.playExplosion();
+        } else if (ev.type === 'oil_slip') {
+          effects.spawnSmoke(ev.x, 0.15, ev.z, 5, 0.75, 0.12);
+          effects.spawnSparks(ev.x, 0.15, ev.z, 6, 0x64748b, 4);
         } else if (ev.type === 'mortar_blast' || ev.type === 'era_blast') {
           const isEra = ev.type === 'era_blast';
           effects.spawnShockwave(ev.x, ev.y, ev.z, isEra ? 4.2 : 5.6, isEra ? 0xf59e0b : 0xf97316);
@@ -463,6 +567,21 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           crowdExcitement = Math.min(1.0, crowdExcitement + 0.55);
           soundEngine.playFlip();
           soundEngine.playCrowdCheer(0.95);
+        } else if (ev.type === 'weapon_clash') {
+          effects.spawnShockwave(ev.x, ev.y + 0.25, ev.z, 4.6, 0xfbbf24);
+          effects.spawnSparks(ev.x, ev.y + 0.3, ev.z, 28, 0xfef08a, 14);
+          impactFlashLight.position.set(ev.x, ev.y + 0.8, ev.z);
+          impactFlashLight.color.setHex(0xfde047);
+          impactFlashLight.intensity = 14;
+          screenShake = Math.min(0.65, screenShake + 0.25);
+          soundEngine.playImpact(1.35, true);
+        } else if (ev.type === 'thermal_shock') {
+          effects.spawnShockwave(ev.x, ev.y + 0.25, ev.z, 5.2, 0x38bdf8);
+          effects.spawnShockwave(ev.x, ev.y + 0.35, ev.z, 3.8, 0xf97316);
+          effects.spawnSparks(ev.x, ev.y + 0.3, ev.z, 26, 0x7dd3fc, 13);
+          effects.spawnSmoke(ev.x, ev.y + 0.4, ev.z, 8, 1.2, 0.65);
+          screenShake = Math.min(0.75, screenShake + 0.3);
+          soundEngine.playExplosion();
         } else if (ev.type === 'explosion') {
           const k = Math.max(0.35, Math.min(1, (ev.intensity || 1) / 1.5));
           effects.spawnShockwave(ev.x, ev.y, ev.z, 7.2 * k, 0xef4444);
@@ -476,7 +595,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           crowdExcitement = Math.min(1, crowdExcitement + k);
           screenShake = Math.min(0.95, screenShake + 0.55 * k);
           soundEngine.playExplosion();
-          if (k > 0.6) soundEngine.playCrowdCheer(1.2);
+          if (k > 0.78) soundEngine.playCrowdCheer(1.1);
         } else if (ev.type === 'crate_break') {
           effects.spawnDebris(ev.x, ev.y, ev.z, 6, '#926239', 1.0);
           effects.spawnSparks(ev.x, ev.y, ev.z, 10, 0xfbbf24, 7);
@@ -494,7 +613,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           effects.spawnSmoke(ev.x, ev.y, ev.z, 5, 1.0, 0.22);
           applyEventDecal(ev);
           crowdExcitement = Math.min(1.0, crowdExcitement + 0.5);
-          soundEngine.playImpact(1.4, true, ev.weapon);
+          soundEngine.playImpact(1.4, true, ev.weapon, ev.damageKind);
+          soundEngine.playCrowdCheer(0.85);
         } else if (ev.type === 'pickup') {
           effects.spawnShockwave(ev.x, ev.y, ev.z, 2.8, 0x10b981);
           soundEngine.playPickup();
@@ -590,6 +710,16 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
         } else if (ev.type === 'hill_move') {
           effects.spawnShockwave(ev.x, 0.12, ev.z, 5, 0xe2e8f0);
           soundEngine.playAnnouncerSting('hill');
+        } else if (ev.type === 'ring_out') {
+          effects.spawnShockwave(ev.x, ev.y, ev.z, 9.2, 0x38bdf8);
+          effects.spawnSparks(ev.x, ev.y, ev.z, 48, 0x38bdf8, 18);
+          effects.spawnFlames(ev.x, ev.y, ev.z, 16, 0, 0, 5.5, 1.4);
+          impactFlashLight.position.set(ev.x, ev.y + 1.5, ev.z);
+          impactFlashLight.color.setHex(0x38bdf8);
+          impactFlashLight.intensity = 22;
+          crowdExcitement = 1.0;
+          screenShake = Math.min(1.0, screenShake + 0.75);
+          soundEngine.playKo();
         } else if (ev.type === 'ko') {
           effects.spawnShockwave(ev.x, ev.y, ev.z, 7.8, 0xef4444);
           effects.spawnFlames(ev.x, ev.y, ev.z, 20, 0, 0, 6.0, 1.5);
@@ -657,11 +787,15 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
         if (--viewShiftProbe <= 0) {
           viewShiftProbe = 20;
           const dock = document.getElementById('workshop-dock');
-          const h = renderer.domElement.clientHeight || window.innerHeight;
-          if (dock) {
-            const dockTop = dock.getBoundingClientRect().top;
-            const visibleCenter = (64 + dockTop) / 2;
-            viewShiftTarget = Math.max(0, Math.min(h * 0.3, h / 2 - visibleCenter));
+          const dockRightEl = document.getElementById('workshop-dock-right');
+          const w = renderer.domElement.clientWidth || window.innerWidth;
+          if (dock && dockRightEl && w >= 1024) {
+            // Dual left & right customization panels: keep 3D bot centered in the middle!
+            viewShiftTarget = 0;
+          } else if (dock && w >= 640) {
+            const rect = dock.getBoundingClientRect();
+            const dockRight = rect.width > 240 ? rect.right : 0;
+            viewShiftTarget = -Math.min(w * 0.24, dockRight * 0.46);
           } else {
             viewShiftTarget = 0;
           }
@@ -672,18 +806,177 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
         }
         if (blackoutLevel > 0) {
           blackoutLevel = 0;
-          hemiLight.intensity = baseHemi;
-          keyLight.intensity = baseKey;
         }
+
+        // Studio PBR Lighting Rig Presets (Arena, Cyber Neon, Golden Forge, Cryo Lab)
+        const lPreset = lightingPresetRef.current;
+        if (lPreset === 'cyber_neon') {
+          hemiLight.color.setHex(0xe879f9);
+          hemiLight.groundColor.setHex(0x0f172a);
+          hemiLight.intensity = 1.1;
+          keyLight.color.setHex(0x38bdf8);
+          keyLight.intensity = 2.6;
+          rimLight.color.setHex(0xf43f5e);
+          rimLight.intensity = 1.85;
+          pedRingMat.color.setHex(0xec4899);
+          pedRingMat.emissive.setHex(0xec4899);
+        } else if (lPreset === 'golden_forge') {
+          hemiLight.color.setHex(0xfde68a);
+          hemiLight.groundColor.setHex(0x27170d);
+          hemiLight.intensity = 0.95;
+          keyLight.color.setHex(0xffb74d);
+          keyLight.intensity = 2.85;
+          rimLight.color.setHex(0xf97316);
+          rimLight.intensity = 1.5;
+          pedRingMat.color.setHex(0xf59e0b);
+          pedRingMat.emissive.setHex(0xf59e0b);
+        } else if (lPreset === 'cryo_lab') {
+          hemiLight.color.setHex(0xe0f2fe);
+          hemiLight.groundColor.setHex(0x0c1928);
+          hemiLight.intensity = 1.15;
+          keyLight.color.setHex(0xbae6fd);
+          keyLight.intensity = 2.5;
+          rimLight.color.setHex(0x38bdf8);
+          rimLight.intensity = 1.75;
+          pedRingMat.color.setHex(0x38bdf8);
+          pedRingMat.emissive.setHex(0x38bdf8);
+        } else {
+          hemiLight.color.setHex(0xa5d8ff);
+          hemiLight.groundColor.setHex(0x1e293b);
+          hemiLight.intensity = baseHemi;
+          keyLight.color.setHex(0xfff3db);
+          keyLight.intensity = baseKey;
+          rimLight.color.setHex(0x60a5fa);
+          rimLight.intensity = 1.15;
+          pedRingMat.color.setHex(0xf59e0b);
+          pedRingMat.emissive.setHex(0xf59e0b);
+        }
+
+        // Trigger 3D turntable weapon spark burst when requested
+        if (weaponTestSignalRef.current !== lastHandledTestBurst) {
+          lastHandledTestBurst = weaponTestSignalRef.current;
+          effects.spawnSparks(0, 0.62, 0.85, 34, 0xfbbf24, 11);
+          effects.spawnFlames(0, 0.52, 0.9, 10, 0, 1, 5.2, 0.9);
+          effects.spawnShockwave(0, 0.12, 0, 3.2, 0xf59e0b);
+          impactFlashLight.position.set(0, 1.4, 0.9);
+          impactFlashLight.color.setHex(0xff9e44);
+          impactFlashLight.intensity = 14;
+          const primaryWeapon = getBotWeapons(playerConfigRef.current)[0] ?? 'vspinner';
+          soundEngine.playImpact(1.3, true, primaryWeapon);
+        }
+
+        // Damped 3D Camera Angle Presets in Workshop
+        const targetAngle = workshopCameraAngleRef.current;
+        if (targetAngle !== 'free') {
+          if (targetAngle === 'hero') {
+            _camGoal.set(3.2, 2.1, 3.6);
+            _lookGoal.set(0, 0.42, 0);
+          } else if (targetAngle === 'low_wedge') {
+            _camGoal.set(2.15, 0.72, 2.75);
+            _lookGoal.set(0, 0.35, 0.25);
+          } else if (targetAngle === 'weapon_macro') {
+            _camGoal.set(1.55, 1.15, 2.05);
+            _lookGoal.set(0, 0.48, 0.55);
+          } else if (targetAngle === 'top_blueprint') {
+            _camGoal.set(0.01, 5.4, 0.65);
+            _lookGoal.set(0, 0.2, 0);
+          }
+          camera.position.x = THREE.MathUtils.damp(camera.position.x, _camGoal.x, 6.5, dt);
+          camera.position.y = THREE.MathUtils.damp(camera.position.y, _camGoal.y, 6.5, dt);
+          camera.position.z = THREE.MathUtils.damp(camera.position.z, _camGoal.z, 6.5, dt);
+          orbit.target.x = THREE.MathUtils.damp(orbit.target.x, _lookGoal.x, 7.5, dt);
+          orbit.target.y = THREE.MathUtils.damp(orbit.target.y, _lookGoal.y, 7.5, dt);
+          orbit.target.z = THREE.MathUtils.damp(orbit.target.z, _lookGoal.z, 7.5, dt);
+          if (camera.position.distanceToSquared(_camGoal) < 0.002) {
+            workshopCameraAngleRef.current = 'free';
+            onManualOrbitRef.current?.();
+          }
+        }
+
         if (workshopBotRig) {
           workshopBotRig.root.visible = true;
-          workshopBotRig.root.rotation.y += dt * 0.42;
-          workshopWeaponAngle += dt * 7.5;
+          workshopBotRig.root.rotation.y += dt * 0.42 * turntableSpeedRef.current;
+          workshopWeaponAngle += dt * (7.5 + explodedRatioRef.current * 4);
+
+          // Smooth exponential damping for 3D Exploded-View part separation
+          currentExploded = THREE.MathUtils.damp(
+            currentExploded,
+            explodedRatioRef.current,
+            7.5,
+            dt,
+          );
+          if (workshopBaseOffsets) {
+            const e = currentExploded;
+            workshopBotRig.armorPlates.front.position.set(
+              workshopBaseOffsets.armorFront.x,
+              workshopBaseOffsets.armorFront.y + e * 0.24,
+              workshopBaseOffsets.armorFront.z + e * 0.62,
+            );
+            workshopBotRig.armorPlates.rear.position.set(
+              workshopBaseOffsets.armorRear.x,
+              workshopBaseOffsets.armorRear.y + e * 0.24,
+              workshopBaseOffsets.armorRear.z - e * 0.62,
+            );
+            workshopBotRig.armorPlates.left.position.set(
+              workshopBaseOffsets.armorLeft.x - e * 0.56,
+              workshopBaseOffsets.armorLeft.y + e * 0.18,
+              workshopBaseOffsets.armorLeft.z,
+            );
+            workshopBotRig.armorPlates.right.position.set(
+              workshopBaseOffsets.armorRight.x + e * 0.56,
+              workshopBaseOffsets.armorRight.y + e * 0.18,
+              workshopBaseOffsets.armorRight.z,
+            );
+
+            workshopBotRig.weaponEntries.forEach((wEntry, idx) => {
+              const base = workshopBaseOffsets!.weaponMounts[idx];
+              if (!base) return;
+              const rx = Math.abs(base.x) > 0.08 ? Math.sign(base.x) * 0.45 : idx === 1 ? -0.35 : idx === 2 ? 0.35 : 0;
+              const rz = base.z >= 0 ? 0.55 : -0.45;
+              wEntry.mountGroup.position.set(
+                base.x + rx * e,
+                base.y + (0.42 + idx * 0.14) * e,
+                base.z + rz * e,
+              );
+            });
+
+            workshopBotRig.wheels.forEach((wheel, idx) => {
+              const base = workshopBaseOffsets!.wheels[idx];
+              if (!base) return;
+              const dirX = Math.sign(base.x) || (idx % 2 === 0 ? -1 : 1);
+              wheel.position.set(
+                base.x + dirX * 0.52 * e,
+                base.y - 0.06 * e,
+                base.z + Math.sign(base.z) * 0.18 * e,
+              );
+            });
+
+            if (workshopBotRig.accessoryPivot && workshopBaseOffsets.accessory) {
+              workshopBotRig.accessoryPivot.position.set(
+                workshopBaseOffsets.accessory.x,
+                workshopBaseOffsets.accessory.y + 0.68 * e,
+                workshopBaseOffsets.accessory.z,
+              );
+            }
+            if (workshopBotRig.shieldBubble && workshopBaseOffsets.shield) {
+              workshopBotRig.shieldBubble.position.set(
+                workshopBaseOffsets.shield.x,
+                workshopBaseOffsets.shield.y + 0.85 * e,
+                workshopBaseOffsets.shield.z,
+              );
+            }
+          }
+
           for (const entry of workshopBotRig.weaponEntries) {
             const wType = entry.weaponId;
             if (wType === 'vspinner' || wType === 'drum') entry.pivot.rotation.x = workshopWeaponAngle;
             else if (wType === 'hbar') entry.pivot.rotation.y = workshopWeaponAngle;
-            else if (wType === 'sawblade') {
+            else if (wType === 'body_spinner') {
+              entry.pivot.rotation.y = workshopWeaponAngle * 1.35;
+              entry.secondarySpinners.forEach((s) => {
+                s.rotation.y = -workshopWeaponAngle * 0.95;
+              });
+            } else if (wType === 'sawblade') {
               entry.secondarySpinners.forEach((s, idx) => {
                 s.rotation.y = idx === 0 ? workshopWeaponAngle : -workshopWeaponAngle;
               });
@@ -761,7 +1054,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
 
             const botWeapons = getBotWeapons(b.config);
             const botStyles = getBotChassisStyles(b.config);
-            const cfgKey = `${b.config.name}_${botStyles.join('+')}_${b.config.armor}_${botWeapons.join('+')}_${b.config.wheelLayout}_${b.config.drive}_${b.config.primaryColor}_${b.config.accentColor}_${b.config.finishStyle || 'standard'}_${b.config.accessory || 'none'}_${b.config.underglowColor || 'none'}_${b.config.pattern || 'solid'}_${b.config.raceNumber ?? ''}`;
+            const placementKey = JSON.stringify(b.config.weaponPlacements ?? []);
+            const cfgKey = `${b.config.name}_${botStyles.join('+')}_${b.config.armor}_${botWeapons.join('+')}_${placementKey}_${b.config.wheelLayout}_${b.config.drive}_${b.config.primaryColor}_${b.config.accentColor}_${b.config.finishStyle || 'standard'}_${b.config.accessory || 'none'}_${b.config.underglowColor || 'none'}_${b.config.pattern || 'solid'}_${b.config.raceNumber ?? ''}`;
             let entry = combatBotRigs.get(b.id);
             if (!entry || entry.configKey !== cfgKey) {
               if (entry) {
@@ -839,15 +1133,29 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
             }
 
             // Boost exhaust flame & smoke puff
-            if (!b.isDead && b.boostCooldown > 2.05 && Math.random() < 0.65) {
+            if (!b.isDead && (b.isBoosting || b.boostCooldown > 2.05) && Math.random() < 0.72) {
               const bx = -Math.sin(b.yaw);
               const bz = -Math.cos(b.yaw);
               effects.spawnFlames(b.x + bx * 0.95, b.y + 0.42, b.z + bz * 0.95, 1, bx, bz, 4.5, 0.55);
               effects.spawnSmoke(b.x + bx * 1.0, b.y + 0.3, b.z + bz * 1.0, 1, 0.6, 0.35);
             }
+
+            // Drift tire sparks & smoke trail + Mini-Turbo release flash
+            if (!b.isDead && b.isDrifting && Math.random() < 0.82) {
+              const bx = -Math.sin(b.yaw);
+              const bz = -Math.cos(b.yaw);
+              const charge = b.driftCharge ?? 0;
+              const sparkColor = charge >= 0.75 ? 0x38bdf8 : charge >= 0.35 ? 0xf59e0b : 0xfde68a;
+              effects.spawnSparks(b.x + bx * 0.85, 0.12, b.z + bz * 0.85, 3, sparkColor, 5.5);
+              effects.spawnSmoke(b.x + bx * 0.9, 0.16, b.z + bz * 0.9, 1, 0.55, 0.45);
+            } else if (!b.isDead && (b.driftBoostTimer ?? 0) > 0 && Math.random() < 0.75) {
+              const bx = -Math.sin(b.yaw);
+              const bz = -Math.cos(b.yaw);
+              effects.spawnSparks(b.x + bx * 0.95, 0.25, b.z + bz * 0.95, 4, 0x38bdf8, 7.5);
+            }
           }
 
-          // Continuous driving & active weapon audio for player bot
+          // Continuous driving, active weapon, and arena hazard audio for player bot
           if (playerBot && snap.phase === 'active' && !playerBot.isDead) {
             const pStats = computeBotStats(playerBot.config, playerBot.skills);
             const pWeapons = getBotWeapons(playerBot.config);
@@ -858,11 +1166,14 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
               active: true,
               speed: Math.hypot(playerBot.vx, playerBot.vz),
               maxSpeed: pStats.maxSpeed,
-              weapon: audioWeapons[0],
+              weapon: audioWeapons[0] ?? 'vspinner',
               weapons: audioWeapons,
               weaponActive: activeSlotWeapons.length > 0,
               weaponSpin: maxSlotSpin,
-              boosting: playerBot.boostCooldown > 1.8,
+              boosting: Boolean(playerBot.isBoosting) || playerBot.boostCooldown > 1.8,
+              hazards: snap.hazards,
+              playerX: playerBot.x,
+              playerZ: playerBot.z,
             });
           } else {
             soundEngine.stopLoops();
@@ -876,6 +1187,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
               combatBotRigs.delete(id);
             }
           });
+
+          voiceCommentator.syncLiveFightContext(snap, playerIdRef.current);
 
           if (snap.events && snap.events.length > 0) {
             processEvents(snap.events);
@@ -897,7 +1210,29 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           // Smooth Camera Tracking
           if (playerBot) {
             const preset = camPresetRef.current;
-            if (preset === 'tactical') {
+            const isFirstPerson = preset === 'first_person';
+            const isPilotBooth = preset === 'pilot_booth';
+            const arenaHalf = ARENA_CATALOG[arenaIdRef.current]?.halfSize ?? 18;
+            if (isFirstPerson) {
+              const fx = Math.sin(playerBot.yaw);
+              const fz = Math.cos(playerBot.yaw);
+              const hoodDist = 0.58 * playerBot.scale;
+              const camHeight = (playerBot.flipped ? 0.48 : 0.95) * playerBot.scale;
+              _camGoal.set(
+                playerBot.x + fx * hoodDist,
+                playerBot.y + camHeight,
+                playerBot.z + fz * hoodDist,
+              );
+              _lookGoal.set(
+                playerBot.x + fx * 14,
+                playerBot.y + camHeight - 0.22 + Math.sin(playerBot.pitch) * 3.2,
+                playerBot.z + fz * 14,
+              );
+            } else if (isPilotBooth) {
+              // Elevated VIP RC Pilot Control Booth behind the upper Lexan blast glass (well above the perimeter wall & stands)
+              _camGoal.set(playerBot.x * 0.34, 10.8, arenaHalf + 0.65);
+              _lookGoal.set(playerBot.x * 0.78, playerBot.y + 0.45, playerBot.z * 0.72);
+            } else if (preset === 'tactical') {
               _camGoal.set(playerBot.x * 0.55, 22, playerBot.z * 0.55 + 15);
               _lookGoal.set(playerBot.x * 0.5, 0.2, playerBot.z * 0.5);
             } else if (preset === 'cinematic') {
@@ -919,16 +1254,20 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
             }
 
             // Clamp camera within arena overhead envelope
-            _camGoal.x = THREE.MathUtils.clamp(_camGoal.x, -21, 21);
-            _camGoal.z = THREE.MathUtils.clamp(_camGoal.z, -21, 21);
+            const maxCamBound = isPilotBooth ? arenaHalf + 1.2 : 21;
+            _camGoal.x = THREE.MathUtils.clamp(_camGoal.x, -maxCamBound, maxCamBound);
+            _camGoal.z = THREE.MathUtils.clamp(_camGoal.z, -maxCamBound, maxCamBound);
 
-            camera.position.x = THREE.MathUtils.damp(camera.position.x, _camGoal.x, 4.8, dt);
-            camera.position.y = THREE.MathUtils.damp(camera.position.y, _camGoal.y, 4.8, dt);
-            camera.position.z = THREE.MathUtils.damp(camera.position.z, _camGoal.z, 4.8, dt);
+            const posDamp = isFirstPerson ? 20 : isPilotBooth ? 7.5 : 4.8;
+            const lookDamp = isFirstPerson ? 24 : isPilotBooth ? 10 : 6.5;
 
-            _curLook.x = THREE.MathUtils.damp(_curLook.x, _lookGoal.x, 6.5, dt);
-            _curLook.y = THREE.MathUtils.damp(_curLook.y, _lookGoal.y, 6.5, dt);
-            _curLook.z = THREE.MathUtils.damp(_curLook.z, _lookGoal.z, 6.5, dt);
+            camera.position.x = THREE.MathUtils.damp(camera.position.x, _camGoal.x, posDamp, dt);
+            camera.position.y = THREE.MathUtils.damp(camera.position.y, _camGoal.y, posDamp, dt);
+            camera.position.z = THREE.MathUtils.damp(camera.position.z, _camGoal.z, posDamp, dt);
+
+            _curLook.x = THREE.MathUtils.damp(_curLook.x, _lookGoal.x, lookDamp, dt);
+            _curLook.y = THREE.MathUtils.damp(_curLook.y, _lookGoal.y, lookDamp, dt);
+            _curLook.z = THREE.MathUtils.damp(_curLook.z, _lookGoal.z, lookDamp, dt);
 
             if (screenShake > 0.01) {
               camera.position.x += (Math.random() - 0.5) * screenShake;
@@ -979,6 +1318,9 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       textures.dispose();
       pedGeo.dispose();
       pedRingGeo.dispose();
+      pedBrandGeo.dispose();
+      pedBrandTex.dispose();
+      pedBrandMat.dispose();
       pedMat.dispose();
       pedRingMat.dispose();
       envTexture.dispose();

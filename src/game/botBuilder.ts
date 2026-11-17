@@ -7,7 +7,9 @@ import {
   type DamageKind,
   type WeaponId,
   getBotChassisStyles,
+  getBotWeaponPlacements,
   getBotWeapons,
+  getDefaultWeaponPlacement,
 } from '../shared/types';
 import {
   applyImpactToBotMeshes,
@@ -23,7 +25,9 @@ import {
 
 export interface BuiltWeaponEntry {
   weaponId: WeaponId;
+  mountGroup: THREE.Group;
   pivot: THREE.Group;
+  baseZ: number;
   secondarySpinners: THREE.Object3D[];
   flameJets: THREE.Mesh[];
   movingPart?: THREE.Object3D;
@@ -443,6 +447,32 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
     return geo;
   }
 
+  if (chassis === 'shell_spinner') {
+    const steps = 24;
+    for (let i = 0; i < steps; i++) {
+      const a = (i / steps) * Math.PI * 2;
+      const r = i % 2 === 0 ? 1.18 : 0.96;
+      const px = Math.cos(a) * r;
+      const py = Math.sin(a) * r;
+      if (i === 0) shape.moveTo(px, py);
+      else shape.lineTo(px, py);
+    }
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, {
+      steps: 3,
+      depth: 0.44,
+      bevelEnabled: true,
+      bevelThickness: 0.06,
+      bevelSize: 0.05,
+      bevelSegments: 3,
+      curveSegments: 8,
+    });
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(0, 0.16, 0);
+    geo.computeVertexNormals();
+    return geo;
+  }
+
   // Brawler frame (chamfered heavy rectangle)
   shape.moveTo(-0.78, -0.95);
   shape.lineTo(0.78, -0.95);
@@ -583,11 +613,14 @@ function appendHybridChassisStyle(
       bodyPivot.add(blk);
       damageableMeshes.push(blk);
     });
-  } else if (style === 'ufo' || style === 'hover_disc') {
-    const ringGeo = new THREE.TorusGeometry(1.12, 0.09, 10, 28);
+  } else if (style === 'ufo' || style === 'hover_disc' || style === 'shell_spinner') {
+    const ringGeo =
+      style === 'shell_spinner'
+        ? makeToothedDiscGeometry(1.24, 12, 0.14)
+        : new THREE.TorusGeometry(1.12, 0.09, 10, 28);
     ringGeo.rotateX(Math.PI / 2);
     geometriesToDispose.push(ringGeo);
-    const ring = new THREE.Mesh(ringGeo, bareSteelMat);
+    const ring = new THREE.Mesh(ringGeo, style === 'shell_spinner' ? armorTrimMat : bareSteelMat);
     ring.position.set(0, 0.32, 0);
     ring.castShadow = castShadow;
     bodyPivot.add(ring);
@@ -1186,18 +1219,22 @@ export function buildBotRig(
   shieldBubble.visible = config.armor === 'aetherium';
   bodyPivot.add(shieldBubble);
 
-  // 7. Multi-Weapon Mounting Assemblies (supports all 12 weapons)
+  // 7. Multi-Weapon Mounting Assemblies (supports all weapons + full 3D placement customization)
   const weaponEntries: BuiltWeaponEntry[] = [];
   const allSecondarySpinners: THREE.Object3D[] = [];
+  const weaponPlacements = getBotWeaponPlacements(config);
   let centerFrontTaken = false;
 
-  for (const wId of equippedWeapons) {
+  for (let slotIdx = 0; slotIdx < equippedWeapons.length; slotIdx++) {
+    const wId = equippedWeapons[slotIdx];
+    const mountGroup = new THREE.Group();
     const pivot = new THREE.Group();
     const spinners: THREE.Object3D[] = [];
     const flameJets: THREE.Mesh[] = [];
     let movingPart: THREE.Object3D | undefined;
     let glowMat: THREE.MeshStandardMaterial | undefined;
-    bodyPivot.add(pivot);
+    bodyPivot.add(mountGroup);
+    mountGroup.add(pivot);
 
     if (wId === 'vspinner') {
       if (!centerFrontTaken) {
@@ -1218,8 +1255,8 @@ export function buildBotRig(
         geometriesToDispose.push(forkGeo);
         [-0.26, 0.26].forEach((fx) => {
           const fork = new THREE.Mesh(forkGeo, bareSteelMat);
-          fork.position.set(fx, 0.36, 0.94);
-          bodyPivot.add(fork);
+          fork.position.set(fx, -0.06, -0.14);
+          pivot.add(fork);
         });
       } else {
         pivot.position.set(0, 0.4, 0.86);
@@ -1271,6 +1308,34 @@ export function buildBotRig(
       tipR.position.set(0.82, 0, 0);
       const hub = new THREE.Mesh(hubGeo, chassisDarkMat);
       pivot.add(bar, tipL, tipR, hub);
+    } else if (wId === 'body_spinner') {
+      // Full-Body 360° Cyclone Shell Spinner encompassing the entire bot perimeter
+      pivot.position.set(0, 0.32, 0);
+      const outerShellGeo = makeToothedDiscGeometry(1.38, 12, 0.16);
+      outerShellGeo.rotateX(Math.PI / 2);
+      const upperRingGeo = makeToothedDiscGeometry(1.12, 8, 0.09);
+      upperRingGeo.rotateX(Math.PI / 2);
+      const toothBlockGeo = new THREE.BoxGeometry(0.28, 0.22, 0.18);
+      geometriesToDispose.push(outerShellGeo, upperRingGeo, toothBlockGeo);
+
+      const outerShell = new THREE.Mesh(outerShellGeo, weaponAccentMat);
+      outerShell.castShadow = castShadow;
+      pivot.add(outerShell);
+
+      for (let ti = 0; ti < 6; ti++) {
+        const ta = (ti / 6) * Math.PI * 2;
+        const tooth = new THREE.Mesh(toothBlockGeo, bareSteelMat);
+        tooth.position.set(Math.cos(ta) * 1.32, 0.02, Math.sin(ta) * 1.32);
+        tooth.rotation.y = -ta;
+        tooth.castShadow = castShadow;
+        pivot.add(tooth);
+      }
+
+      const upperRing = new THREE.Mesh(upperRingGeo, bareSteelMat);
+      upperRing.position.y = 0.18;
+      pivot.add(upperRing);
+      spinners.push(upperRing);
+      allSecondarySpinners.push(upperRing);
     } else if (wId === 'sawblade') {
       const wideWing = centerFrontTaken;
       if (!wideWing) centerFrontTaken = true;
@@ -1403,6 +1468,41 @@ export function buildBotRig(
         pivot.add(coilGroup);
         spinners.push(coilGroup);
       });
+    } else if (wId === 'laser') {
+      // Twin-lens Aether Ruby Laser Beam Emitter
+      pivot.position.set(0, deckTopY + 0.06, 0.24);
+      const housingGeo = new THREE.BoxGeometry(0.46, 0.22, 0.66);
+      const barrelGeo = new THREE.CylinderGeometry(0.055, 0.07, 0.88, 12);
+      barrelGeo.rotateX(Math.PI / 2);
+      const lensRingGeo = new THREE.TorusGeometry(0.068, 0.016, 8, 20);
+      const crystalGeo = new THREE.OctahedronGeometry(0.11, 0);
+      geometriesToDispose.push(housingGeo, barrelGeo, lensRingGeo, crystalGeo);
+
+      const laserGlowMat = new THREE.MeshStandardMaterial({
+        color: 0xf43f5e,
+        emissive: 0xe11d48,
+        emissiveIntensity: 1.6,
+        roughness: 0.15,
+        metalness: 0.5,
+      });
+      materialsToDispose.push(laserGlowMat);
+
+      const housing = new THREE.Mesh(housingGeo, chassisDarkMat);
+      housing.position.set(0, 0.12, -0.06);
+      housing.castShadow = castShadow;
+      const crystal = new THREE.Mesh(crystalGeo, laserGlowMat);
+      crystal.position.set(0, 0.26, -0.04);
+      pivot.add(housing, crystal);
+      spinners.push(crystal);
+
+      [-0.13, 0.13].forEach((lx) => {
+        const barrel = new THREE.Mesh(barrelGeo, bareSteelMat);
+        barrel.position.set(lx, 0.13, 0.42);
+        const lens = new THREE.Mesh(lensRingGeo, laserGlowMat);
+        lens.position.set(lx, 0.13, 0.86);
+        pivot.add(barrel, lens);
+      });
+      glowMat = laserGlowMat;
     } else if (wId === 'railgun') {
       // Long-barrel electromagnetic Gauss Railgun
       pivot.position.set(0, deckTopY + 0.06, 0.18);
@@ -1520,6 +1620,78 @@ export function buildBotRig(
       coil.position.z = 0.21;
       pivot.add(arm, dish, face, coil);
       glowMat = magGlow;
+    } else if (wId === 'lightning_strike') {
+      // Dorsal Orbital Lightning Strike Spire with triple corona rings & skyward plasma rod
+      pivot.position.set(0, deckTopY + 0.05, -0.04);
+      const baseGeo = new THREE.CylinderGeometry(0.24, 0.3, 0.14, 12);
+      const rodGeo = new THREE.CylinderGeometry(0.035, 0.065, 0.78, 10);
+      const ringGeo = new THREE.TorusGeometry(0.2, 0.032, 8, 24);
+      ringGeo.rotateX(Math.PI / 2);
+      const crownGeo = new THREE.OctahedronGeometry(0.13, 1);
+      geometriesToDispose.push(baseGeo, rodGeo, ringGeo, crownGeo);
+
+      const boltGlowMat = new THREE.MeshStandardMaterial({
+        color: 0x38bdf8,
+        emissive: 0x0284c7,
+        emissiveIntensity: 1.8,
+        roughness: 0.15,
+        metalness: 0.6,
+      });
+      materialsToDispose.push(boltGlowMat);
+
+      const base = new THREE.Mesh(baseGeo, chassisDarkMat);
+      base.position.y = 0.07;
+      const rod = new THREE.Mesh(rodGeo, bareSteelMat);
+      rod.position.y = 0.44;
+      const crown = new THREE.Mesh(crownGeo, boltGlowMat);
+      crown.position.y = 0.86;
+      pivot.add(base, rod, crown);
+      spinners.push(crown);
+
+      [0.24, 0.44, 0.64].forEach((ry, rIdx) => {
+        const ring = new THREE.Mesh(ringGeo, rIdx % 2 === 0 ? boltGlowMat : weaponAccentMat);
+        ring.position.y = ry;
+        ring.scale.setScalar(1 - rIdx * 0.16);
+        pivot.add(ring);
+        spinners.push(ring);
+      });
+      glowMat = boltGlowMat;
+    } else if (wId === 'bomb_drop') {
+      // Dorsal Aerial Bomb Bay Ordnance Rack with twin heavy finned bombs
+      pivot.position.set(0, deckTopY + 0.06, -0.14);
+      const rackGeo = new THREE.BoxGeometry(0.76, 0.12, 0.58);
+      const bombBodyGeo = new THREE.CylinderGeometry(0.11, 0.11, 0.48, 12);
+      bombBodyGeo.rotateX(Math.PI / 2);
+      const bombNoseGeo = new THREE.SphereGeometry(0.11, 12, 10);
+      const finGeo = new THREE.BoxGeometry(0.26, 0.24, 0.04);
+      geometriesToDispose.push(rackGeo, bombBodyGeo, bombNoseGeo, finGeo);
+
+      const warheadMat = new THREE.MeshStandardMaterial({
+        color: 0xef4444,
+        emissive: 0xdc2626,
+        emissiveIntensity: 0.9,
+        roughness: 0.25,
+        metalness: 0.5,
+      });
+      materialsToDispose.push(warheadMat);
+
+      const rack = new THREE.Mesh(rackGeo, chassisDarkMat);
+      rack.position.y = 0.08;
+      pivot.add(rack);
+
+      const bombPair = new THREE.Group();
+      [-0.24, 0.24].forEach((bx) => {
+        const body = new THREE.Mesh(bombBodyGeo, bareSteelMat);
+        body.position.set(bx, 0.22, 0.04);
+        const nose = new THREE.Mesh(bombNoseGeo, warheadMat);
+        nose.position.set(bx, 0.22, 0.28);
+        const fins = new THREE.Mesh(finGeo, weaponAccentMat);
+        fins.position.set(bx, 0.22, -0.2);
+        bombPair.add(body, nose, fins);
+      });
+      pivot.add(bombPair);
+      movingPart = bombPair;
+      glowMat = warheadMat;
     } else {
       // Overhead Hammer
       const hammerY =
@@ -1546,9 +1718,58 @@ export function buildBotRig(
       pivot.add(shaft, head, spike);
     }
 
+    const placement = weaponPlacements[slotIdx] ?? getDefaultWeaponPlacement(wId, slotIdx);
+    const defPlacement = getDefaultWeaponPlacement(wId, slotIdx);
+    if (placement.zone !== defPlacement.zone) {
+      let ax = 0;
+      let ay = 0.38;
+      let az = 0;
+      if (placement.zone === 'front') {
+        ax = 0;
+        ay = 0.36;
+        az = 1.02;
+      } else if (placement.zone === 'top_front') {
+        ax = 0;
+        ay = deckTopY + 0.06;
+        az = 0.34;
+      } else if (placement.zone === 'top_rear') {
+        ax = 0;
+        ay = deckTopY + 0.08;
+        az = -0.32;
+      } else if (placement.zone === 'left') {
+        ax = -0.9;
+        ay = 0.4;
+        az = 0.08;
+      } else if (placement.zone === 'right') {
+        ax = 0.9;
+        ay = 0.4;
+        az = 0.08;
+      } else if (placement.zone === 'rear') {
+        ax = 0;
+        ay = 0.38;
+        az = -0.98;
+      }
+      pivot.position.set(0, 0, 0);
+      mountGroup.position.set(
+        ax + (placement.offsetX || 0),
+        ay + (placement.offsetY || 0),
+        az + (placement.offsetZ || 0),
+      );
+    } else {
+      mountGroup.position.set(
+        placement.offsetX || 0,
+        placement.offsetY || 0,
+        placement.offsetZ || 0,
+      );
+    }
+    mountGroup.rotation.y = THREE.MathUtils.degToRad(placement.yawDeg || 0);
+    mountGroup.scale.setScalar(Math.max(0.65, Math.min(1.45, placement.scale || 1)));
+
     weaponEntries.push({
       weaponId: wId,
+      mountGroup,
       pivot,
+      baseZ: pivot.position.z,
       secondarySpinners: spinners,
       flameJets,
       movingPart,
@@ -1640,7 +1861,13 @@ export function syncBotRigToState(
     state.y +
     (rig.isHover && !state.isDead && !state.flipped ? 0.1 + Math.sin(nowT * 4.2 + state.x) * 0.025 : 0) +
     0.66 * (1 - Math.cos(flipA)) * 0.5;
-  rig.bodyPivot.rotation.set(state.pitch, state.yaw, state.roll + flipA, 'YXZ');
+  const fullBodySpinOffset =
+    !state.isDead &&
+    (state.config.chassis === 'shell_spinner' || state.config.weapon === 'body_spinner') &&
+    state.weaponSpin > 0.04
+      ? state.weaponAngle * 1.15
+      : 0;
+  rig.bodyPivot.rotation.set(state.pitch, state.yaw + fullBodySpinOffset, state.roll + flipA, 'YXZ');
 
   // Lost parts are gone from the hull (they are lying on the floor as debris)
   const comp = state.components;
@@ -1650,6 +1877,7 @@ export function syncBotRigToState(
     });
     rig.weaponEntries.forEach((entry, slot) => {
       const h = comp.weapons[slot] ?? 100;
+      entry.mountGroup.visible = h > 0;
       entry.pivot.visible = h > 0;
       // Badly damaged weapons wobble on bent mounts
       if (h > 0 && h < 35) entry.pivot.rotation.z = Math.sin(nowT * 23 + slot) * 0.06 * (1 - h / 35);
@@ -1720,6 +1948,11 @@ export function syncBotRigToState(
       entry.pivot.rotation.x = angle;
     } else if (entry.weaponId === 'hbar') {
       entry.pivot.rotation.y = angle;
+    } else if (entry.weaponId === 'body_spinner') {
+      entry.pivot.rotation.y = angle * 1.35;
+      entry.secondarySpinners.forEach((s) => {
+        s.rotation.y = -angle * 0.95;
+      });
     } else if (entry.weaponId === 'sawblade') {
       entry.secondarySpinners.forEach((s, idx) => {
         s.rotation.y = idx === 0 ? angle : -angle;
@@ -1742,8 +1975,15 @@ export function syncBotRigToState(
       entry.secondarySpinners.forEach((c) => {
         c.rotation.y += dt * (active ? 8 : 2.5);
       });
+    } else if (entry.weaponId === 'laser') {
+      entry.secondarySpinners.forEach((c) => {
+        c.rotation.y += dt * (active ? 10 : 3);
+      });
+      if (entry.glowMat) {
+        entry.glowMat.emissiveIntensity = active || spin > 0.25 ? 3.2 : 1.2 + Math.sin(nowT * 5) * 0.3;
+      }
     } else if (entry.weaponId === 'railgun') {
-      entry.pivot.position.z = 0.18 - spin * 0.42;
+      entry.pivot.position.z = entry.baseZ - spin * 0.42;
     } else if (entry.weaponId === 'mortar') {
       entry.pivot.rotation.x = -spin * 0.55;
     } else if (entry.weaponId === 'hammer') {

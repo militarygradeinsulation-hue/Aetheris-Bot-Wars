@@ -186,13 +186,13 @@ export function buildArenaEnvironment(
   floorMesh.receiveShadow = true;
   group.add(floorMesh);
 
-  // 3. Recessed Center Battle Ring Decal
-  const ringGeo = new THREE.RingGeometry(4.6, 5.1, 48);
+  // 3. Recessed Center Battle Ring Decal + Arena Floor Branding Murals
+  const ringGeo = new THREE.RingGeometry(5.2, 5.75, 64);
   ringGeo.rotateX(-Math.PI / 2);
   const ringMat = new THREE.MeshBasicMaterial({
     color: new THREE.Color(spec.accentHex),
     transparent: true,
-    opacity: 0.48,
+    opacity: 0.55,
     polygonOffset: true,
     polygonOffsetFactor: -1,
     polygonOffsetUnits: -1,
@@ -202,6 +202,76 @@ export function buildArenaEnvironment(
   const centerRing = new THREE.Mesh(ringGeo, ringMat);
   centerRing.position.y = 0.02;
   group.add(centerRing);
+
+  // Official Aetheris Bot Wars / Lovable Expert Partner '26 Brand Texture + THE ARCHITECT Developer Logo
+  const brandTex = new THREE.TextureLoader().load(
+    '/assets/aistudio/WhatsApp_Image_2026-11-16_at_3.53.53_PM_9a533155.jpeg',
+  );
+  brandTex.colorSpace = THREE.SRGBColorSpace;
+  brandTex.anisotropy = textures.armorWeave.anisotropy || 4;
+
+  const devLogoTex = new THREE.TextureLoader().load(
+    '/assets/aistudio/nano-banana-2_take_this_image_and_create_a_logo_out_of_it_Token_HSL_Usage_--background_220_15_-0_1__11fa74ed.jpg',
+  );
+  devLogoTex.colorSpace = THREE.SRGBColorSpace;
+  devLogoTex.anisotropy = textures.armorWeave.anisotropy || 4;
+
+  const floorBrandMat = new THREE.MeshStandardMaterial({
+    map: brandTex,
+    emissive: new THREE.Color(0xffffff),
+    emissiveMap: brandTex,
+    emissiveIntensity: 0.58,
+    roughness: 0.24,
+    metalness: 0.32,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  const wallBrandMat = new THREE.MeshStandardMaterial({
+    map: brandTex,
+    emissive: new THREE.Color(0xffffff),
+    emissiveMap: brandTex,
+    emissiveIntensity: 0.72,
+    roughness: 0.2,
+    metalness: 0.25,
+    side: THREE.DoubleSide,
+  });
+  const devBrandMat = new THREE.MeshStandardMaterial({
+    map: devLogoTex,
+    emissive: new THREE.Color(0xffffff),
+    emissiveMap: devLogoTex,
+    emissiveIntensity: 0.68,
+    roughness: 0.22,
+    metalness: 0.28,
+    side: THREE.DoubleSide,
+  });
+  materials.push(floorBrandMat, wallBrandMat, devBrandMat);
+
+  // Center Floor Giant Brand Mural + North/South Floor Apron Banners
+  const centerFloorBannerGeo = new THREE.PlaneGeometry(14.4, 4.0);
+  centerFloorBannerGeo.rotateX(-Math.PI / 2);
+  const deckLaneBannerGeo = new THREE.PlaneGeometry(11.2, 3.1);
+  deckLaneBannerGeo.rotateX(-Math.PI / 2);
+  const centerBannerFrameGeo = new THREE.RingGeometry(7.35, 7.55, 4);
+  centerBannerFrameGeo.rotateX(-Math.PI / 2);
+  centerBannerFrameGeo.rotateY(Math.PI / 4);
+  geometries.push(centerFloorBannerGeo, deckLaneBannerGeo, centerBannerFrameGeo);
+
+  const centerFloorBanner = new THREE.Mesh(centerFloorBannerGeo, floorBrandMat);
+  centerFloorBanner.position.set(0, 0.026, 0);
+  centerFloorBanner.receiveShadow = true;
+  group.add(centerFloorBanner);
+
+  const northFloorBanner = new THREE.Mesh(deckLaneBannerGeo, floorBrandMat);
+  northFloorBanner.position.set(0, 0.024, -8.2);
+  northFloorBanner.receiveShadow = true;
+  group.add(northFloorBanner);
+
+  const southFloorBanner = new THREE.Mesh(deckLaneBannerGeo, floorBrandMat);
+  southFloorBanner.position.set(0, 0.024, 8.2);
+  southFloorBanner.rotation.y = Math.PI;
+  southFloorBanner.receiveShadow = true;
+  group.add(southFloorBanner);
 
   // 4. Perimeter Steel Walls + Lexan Polycarbonate Blast Shields
   const wallMat = new THREE.MeshPhysicalMaterial({
@@ -242,7 +312,9 @@ export function buildArenaEnvironment(
   const lexanGeo = new THREE.BoxGeometry(half * 2, 2.2, 0.08);
   const pylonGeo = new THREE.BoxGeometry(1.6, 4.6, 1.6);
   const strutPostGeo = new THREE.BoxGeometry(0.18, 2.4, 0.22);
-  geometries.push(wallLongGeo, railGeo, lexanGeo, pylonGeo, strutPostGeo);
+  const wallBannerGeo = new THREE.PlaneGeometry(8.6, 2.38);
+  const wallBannerBackingGeo = new THREE.BoxGeometry(8.85, 2.58, 0.08);
+  geometries.push(wallLongGeo, railGeo, lexanGeo, pylonGeo, strutPostGeo, wallBannerGeo, wallBannerBackingGeo);
 
   const wallConfigs: Array<{ x: number; z: number; ry: number }> = [
     { x: 0, z: -half - 0.45, ry: 0 },
@@ -255,13 +327,15 @@ export function buildArenaEnvironment(
     wGroup.position.set(wc.x, 0, wc.z);
     wGroup.rotation.y = wc.ry;
 
+    const inwardSign = wc.z < 0 || wc.x < 0 ? 1 : -1;
+
     const base = new THREE.Mesh(wallLongGeo, wallMat);
     base.position.y = 0.675;
     base.castShadow = castShadow;
     base.receiveShadow = true;
 
     const strip = new THREE.Mesh(railGeo, bumperMat);
-    strip.position.set(0, 0.45, wc.z < 0 || wc.x < 0 ? 0.46 : -0.46);
+    strip.position.set(0, 0.45, inwardSign * 0.46);
 
     const glow = new THREE.Mesh(railGeo, railGlowMat);
     glow.position.set(0, 1.38, 0);
@@ -278,6 +352,26 @@ export function buildArenaEnvironment(
       post.position.set(px, 2.52, 0);
       wGroup.add(post);
     }
+
+    // Perimeter Ringside Brand Billboards + THE ARCHITECT Developer Medallions mounted along all 4 arena walls
+    for (const bx of [-6.2, 6.2]) {
+      const backing = new THREE.Mesh(wallBannerBackingGeo, wallMat);
+      backing.position.set(bx, 2.52, inwardSign * 0.1);
+      const banner = new THREE.Mesh(wallBannerGeo, wallBrandMat);
+      banner.position.set(bx, 2.52, inwardSign * 0.16);
+      if (inwardSign < 0) {
+        banner.rotation.y = Math.PI;
+      }
+      wGroup.add(backing, banner);
+    }
+    const devBadgeGeo = new THREE.CircleGeometry(1.18, 28);
+    geometries.push(devBadgeGeo);
+    const devBadge = new THREE.Mesh(devBadgeGeo, devBrandMat);
+    devBadge.position.set(0, 2.52, inwardSign * 0.17);
+    if (inwardSign < 0) {
+      devBadge.rotation.y = Math.PI;
+    }
+    wGroup.add(devBadge);
 
     wGroup.add(base, strip, glow, shield, topRail);
     group.add(wGroup);
@@ -493,7 +587,19 @@ export function buildArenaEnvironment(
   const standTierGeo = new THREE.BoxGeometry(standWidth, 1.05, 1.85);
   const benchPlankGeo = new THREE.BoxGeometry(standWidth - 0.6, 0.14, 0.52);
   const frontRailGeo = new THREE.BoxGeometry(standWidth, 0.08, 0.08);
-  geometries.push(standTierGeo, benchPlankGeo, frontRailGeo);
+  const jumboBoardGeo = new THREE.PlaneGeometry(16.8, 4.65);
+  const jumboCabinetGeo = new THREE.BoxGeometry(17.4, 5.15, 0.42);
+  const jumboTrimGeo = new THREE.BoxGeometry(17.5, 0.16, 0.48);
+  const jumboStrutGeo = new THREE.CylinderGeometry(0.22, 0.26, 6.2, 10);
+  geometries.push(
+    standTierGeo,
+    benchPlankGeo,
+    frontRailGeo,
+    jumboBoardGeo,
+    jumboCabinetGeo,
+    jumboTrimGeo,
+    jumboStrutGeo,
+  );
 
   const crowdSeeds: CrowdMemberSeed[] = [];
   const standSides = [
@@ -508,6 +614,30 @@ export function buildArenaEnvironment(
   let pennantCount = 0;
 
   for (const side of standSides) {
+    // Overhead Stadium Jumbo Brand Billboard above each bleacher stand
+    const jumboDist = half + 9.2;
+    const jumboGroup = new THREE.Group();
+    if (side.axis === 'z') {
+      jumboGroup.position.set(0, 6.4, side.sign * jumboDist);
+      jumboGroup.rotation.y = side.yaw;
+    } else {
+      jumboGroup.position.set(side.sign * jumboDist, 6.4, 0);
+      jumboGroup.rotation.y = side.yaw;
+    }
+    const cabinet = new THREE.Mesh(jumboCabinetGeo, wallMat);
+    const screen = new THREE.Mesh(jumboBoardGeo, wallBrandMat);
+    screen.position.z = 0.23;
+    const topTrim = new THREE.Mesh(jumboTrimGeo, railGlowMat);
+    topTrim.position.y = 2.6;
+    const botTrim = new THREE.Mesh(jumboTrimGeo, railGlowMat);
+    botTrim.position.y = -2.6;
+    const leftStrut = new THREE.Mesh(jumboStrutGeo, wallMat);
+    leftStrut.position.set(-6.8, -3.3, -0.1);
+    const rightStrut = new THREE.Mesh(jumboStrutGeo, wallMat);
+    rightStrut.position.set(6.8, -3.3, -0.1);
+    jumboGroup.add(cabinet, screen, topTrim, botTrim, leftStrut, rightStrut);
+    group.add(jumboGroup);
+
     // Front safety handrail along row 1
     const frontDist = half + 2.85;
     const rail = new THREE.Mesh(frontRailGeo, standRailMat);
@@ -930,6 +1060,8 @@ export function buildArenaEnvironment(
   const disposeCrowdTextures = () => {
     faceTex.dispose();
     jacketTex.dispose();
+    brandTex.dispose();
+    devLogoTex.dispose();
   };
 
   // 7. Hazard & Destructible Prop Registries
@@ -1092,7 +1224,7 @@ export function buildArenaEnvironment(
   });
   materials.push(sawMat, sawSlotMat, gantrySteelMat, chromePistonMat, hazardBladeMat, hazardTipMat);
 
-  // Drop pit & lightning strike shared geometries
+  // Drop pit, lightning strike, bomb drop, oil slick & laser grid shared geometries
   const pitHoleGeo = new THREE.CircleGeometry(1.0, 32);
   pitHoleGeo.rotateX(-Math.PI / 2);
   const pitRimGeo = new THREE.RingGeometry(1.0, 1.18, 32);
@@ -1102,7 +1234,27 @@ export function buildArenaEnvironment(
   const boltGeo = new THREE.CylinderGeometry(0.12, 0.35, 16, 6, 8, true);
   const targetRingGeo = new THREE.RingGeometry(0.85, 1.0, 40);
   targetRingGeo.rotateX(-Math.PI / 2);
-  geometries.push(pitHoleGeo, pitRimGeo, pitDoorGeo, boltGeo, targetRingGeo);
+  const bombBodyGeo = new THREE.CylinderGeometry(0.32, 0.22, 1.05, 12);
+  const bombNoseGeo = new THREE.SphereGeometry(0.32, 12, 10);
+  const bombFinGeo = new THREE.BoxGeometry(0.75, 0.32, 0.06);
+  const oilDiscGeo = new THREE.CircleGeometry(1.0, 32);
+  oilDiscGeo.rotateX(-Math.PI / 2);
+  const laserTurretGeo = new THREE.CylinderGeometry(0.38, 0.52, 0.62, 12);
+  const laserBeamBarGeo = new THREE.CylinderGeometry(0.055, 0.055, 1.0, 8);
+  laserBeamBarGeo.rotateZ(Math.PI / 2);
+  geometries.push(
+    pitHoleGeo,
+    pitRimGeo,
+    pitDoorGeo,
+    boltGeo,
+    targetRingGeo,
+    bombBodyGeo,
+    bombNoseGeo,
+    bombFinGeo,
+    oilDiscGeo,
+    laserTurretGeo,
+    laserBeamBarGeo,
+  );
 
   function ensurePropMesh(prop: DestructibleProp): THREE.Group {
     let pGroup = propMeshes.get(prop.id);
@@ -1155,6 +1307,56 @@ export function buildArenaEnvironment(
       const ring = new THREE.Mesh(pickupRingGeo, mat);
       ring.position.y = 0.14;
       pGroup.add(core, ring);
+    } else if (prop.kind === 'ramp') {
+      // Sloped steel launch ramp wedge with glowing directional chevrons
+      const rampShape = new THREE.Shape();
+      rampShape.moveTo(-1.35, 0);
+      rampShape.lineTo(1.35, 0);
+      rampShape.lineTo(1.35, 0.68);
+      rampShape.lineTo(-1.35, 0.06);
+      rampShape.closePath();
+      const rampGeo = new THREE.ExtrudeGeometry(rampShape, {
+        depth: 2.2,
+        bevelEnabled: true,
+        bevelThickness: 0.04,
+        bevelSize: 0.04,
+        bevelSegments: 2,
+      });
+      rampGeo.translate(0, 0, -1.1);
+      rampGeo.rotateY(-Math.PI / 2);
+      geometries.push(rampGeo);
+      const rampMesh = new THREE.Mesh(rampGeo, crateTrimMat);
+      rampMesh.castShadow = castShadow;
+      rampMesh.receiveShadow = true;
+      const stripGeo = new THREE.BoxGeometry(2.1, 0.06, 0.22);
+      geometries.push(stripGeo);
+      const strip = new THREE.Mesh(stripGeo, bumperMat);
+      strip.position.set(0, 0.68, 1.22);
+      pGroup.add(rampMesh, strip);
+      pGroup.rotation.y = prop.yaw ?? 0;
+    } else if (prop.kind === 'debris_chunk') {
+      // Persistent shattered obstacle rubble chunk on the arena floor that bumps/snags bots
+      const chunkGeo = new THREE.DodecahedronGeometry(prop.radius * 0.85, 0);
+      geometries.push(chunkGeo);
+      const chunkMat = new THREE.MeshStandardMaterial({
+        color: prop.color ? new THREE.Color(prop.color) : new THREE.Color(0x64748b),
+        roughness: 0.82,
+        metalness: 0.35,
+      });
+      materials.push(chunkMat);
+      const mainChunk = new THREE.Mesh(chunkGeo, chunkMat);
+      mainChunk.scale.set(1.25, 0.52, 1.05);
+      mainChunk.position.y = 0.18;
+      mainChunk.rotation.set(0.3, prop.yaw ?? 0.7, 0.2);
+      mainChunk.castShadow = castShadow;
+      mainChunk.receiveShadow = true;
+
+      const shardGeo = new THREE.BoxGeometry(prop.radius * 1.1, 0.14, prop.radius * 0.55);
+      geometries.push(shardGeo);
+      const shard = new THREE.Mesh(shardGeo, crateTrimMat);
+      shard.position.set(0.18, 0.09, -0.14);
+      shard.rotation.set(0.15, -0.5, 0.22);
+      pGroup.add(mainChunk, shard);
     }
 
     pGroup.position.set(prop.x, prop.y, prop.z);
@@ -1380,6 +1582,132 @@ export function buildArenaEnvironment(
       return entry;
     }
 
+    if (h.kind === 'bomb_drop') {
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0xf97316,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      });
+      const bombGlowMat = new THREE.MeshStandardMaterial({
+        color: 0xef4444,
+        emissive: 0xf97316,
+        emissiveIntensity: 1.5,
+        roughness: 0.3,
+        metalness: 0.6,
+      });
+      materials.push(ringMat, bombGlowMat);
+
+      const ring = new THREE.Mesh(targetRingGeo, ringMat);
+      ring.scale.setScalar(h.radius);
+      ring.position.y = 0.035;
+
+      const innerRing = new THREE.Mesh(targetRingGeo, ringMat);
+      innerRing.scale.setScalar(h.radius * 0.48);
+      innerRing.position.y = 0.038;
+
+      const bombGroup = new THREE.Group();
+      bombGroup.position.y = 14;
+      const body = new THREE.Mesh(bombBodyGeo, gantrySteelMat);
+      const nose = new THREE.Mesh(bombNoseGeo, bombGlowMat);
+      nose.position.y = -0.52;
+      const finA = new THREE.Mesh(bombFinGeo, hazardTipMat);
+      finA.position.y = 0.42;
+      const finB = new THREE.Mesh(bombFinGeo, hazardTipMat);
+      finB.position.y = 0.42;
+      finB.rotation.y = Math.PI / 2;
+      bombGroup.add(body, nose, finA, finB);
+
+      hRoot.add(ring, innerRing, bombGroup);
+      group.add(hRoot);
+      const entry: HazardMeshEntry = { root: hRoot, movingPart: bombGroup, ringMat, emissiveMat: bombGlowMat };
+      hazardMeshes.set(h.id, entry);
+      return entry;
+    }
+
+    if (h.kind === 'oil_slick') {
+      const oilMat = new THREE.MeshPhysicalMaterial({
+        color: 0x090b10,
+        emissive: 0x1e1b4b,
+        emissiveIntensity: 0.25,
+        roughness: 0.06,
+        metalness: 0.92,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.04,
+        iridescence: 0.95,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      });
+      const fireRingMat = new THREE.MeshBasicMaterial({
+        color: 0xf97316,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      materials.push(oilMat, fireRingMat);
+
+      const puddle = new THREE.Mesh(oilDiscGeo, oilMat);
+      puddle.scale.setScalar(h.radius);
+      puddle.position.y = 0.022;
+
+      const fireRing = new THREE.Mesh(targetRingGeo, fireRingMat);
+      fireRing.scale.setScalar(h.radius * 0.95);
+      fireRing.position.y = 0.08;
+
+      hRoot.add(puddle, fireRing);
+      group.add(hRoot);
+      const entry: HazardMeshEntry = { root: hRoot, movingPart: fireRing, ringMat: fireRingMat, emissiveMat: oilMat };
+      hazardMeshes.set(h.id, entry);
+      return entry;
+    }
+
+    if (h.kind === 'laser_grid') {
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0xf43f5e,
+        transparent: true,
+        opacity: 0.25,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      });
+      const beamMat = new THREE.MeshStandardMaterial({
+        color: 0xff2a55,
+        emissive: 0xf43f5e,
+        emissiveIntensity: 2.4,
+        roughness: 0.1,
+        metalness: 0.2,
+      });
+      materials.push(ringMat, beamMat);
+
+      const arm = h.armLength ?? 3.6;
+      const sweepRing = new THREE.Mesh(targetRingGeo, ringMat);
+      sweepRing.scale.setScalar(arm);
+      sweepRing.position.y = 0.032;
+
+      const turretGroup = new THREE.Group();
+      const base = new THREE.Mesh(laserTurretGeo, gantrySteelMat);
+      base.position.y = 0.31;
+      const cap = new THREE.Mesh(sbladeCapGeo, beamMat);
+      cap.position.y = 0.64;
+
+      const beamBar = new THREE.Mesh(laserBeamBarGeo, beamMat);
+      beamBar.scale.y = arm * 2;
+      beamBar.position.y = 0.46;
+
+      turretGroup.add(base, cap, beamBar);
+      hRoot.add(sweepRing, turretGroup);
+      group.add(hRoot);
+      const entry: HazardMeshEntry = { root: hRoot, movingPart: turretGroup, ringMat, emissiveMat: beamMat };
+      hazardMeshes.set(h.id, entry);
+      return entry;
+    }
+
     const rMat = new THREE.MeshBasicMaterial({
       color: 0xa855f7,
       transparent: true,
@@ -1407,15 +1735,25 @@ export function buildArenaEnvironment(
       for (const prop of props) {
         const mesh = ensurePropMesh(prop);
         mesh.visible = !prop.destroyed;
-        if (
-          !prop.destroyed &&
-          (prop.kind === 'pickup_repair' ||
+        mesh.position.set(prop.x, prop.y, prop.z);
+        if (!prop.destroyed) {
+          if (
+            prop.kind === 'pickup_repair' ||
             prop.kind === 'pickup_energy' ||
             prop.kind === 'pickup_overcharge' ||
-            prop.kind === 'pickup_shield')
-        ) {
-          mesh.children[0].rotation.y = time * 2.4;
-          mesh.children[0].position.y = 0.72 + Math.sin(time * 3.5) * 0.14;
+            prop.kind === 'pickup_shield'
+          ) {
+            mesh.children[0].rotation.y = time * 2.4;
+            mesh.children[0].position.y = 0.72 + Math.sin(time * 3.5) * 0.14;
+          } else if (prop.kind === 'crate' || prop.kind === 'barrel' || prop.kind === 'pillar') {
+            const hpRatio = prop.maxHp > 0 ? Math.max(0.2, prop.hp / prop.maxHp) : 1;
+            const dmg = 1 - hpRatio;
+            mesh.rotation.z = dmg * 0.24;
+            mesh.rotation.x = -dmg * 0.16;
+            mesh.scale.set(1 + dmg * 0.06, 1 - dmg * 0.18, 1 + dmg * 0.06);
+          } else if (prop.kind === 'debris_chunk') {
+            mesh.rotation.y = prop.yaw ?? 0;
+          }
         }
       }
     },
@@ -1489,6 +1827,41 @@ export function buildArenaEnvironment(
           if (entry.ringMat) {
             entry.ringMat.color.setHex(h.active ? 0xffffff : 0x60a5fa);
             entry.ringMat.opacity = h.active ? 0.95 : h.warning ? 0.35 + Math.abs(Math.sin(nowSec * 14)) * 0.55 : 0;
+          }
+        } else if (h.kind === 'bomb_drop') {
+          entry.root.position.set(h.x, 0, h.z);
+          const by = h.bombY ?? 1;
+          entry.movingPart.visible = Boolean(h.warning);
+          entry.movingPart.position.y = 0.6 + by * 13.5;
+          entry.movingPart.rotation.y += dt * 6;
+          if (entry.ringMat) {
+            entry.ringMat.color.setHex(h.active ? 0xef4444 : 0xf97316);
+            entry.ringMat.opacity = h.active ? 0.95 : h.warning ? 0.4 + Math.abs(Math.sin(nowSec * 16)) * 0.55 : 0;
+          }
+        } else if (h.kind === 'oil_slick') {
+          const ignited = Boolean(h.ignited);
+          if (entry.ringMat) {
+            entry.ringMat.opacity = ignited ? 0.65 + Math.sin(nowSec * 18) * 0.25 : 0;
+            entry.movingPart.rotation.y += dt * 2.5;
+          }
+          if (entry.emissiveMat) {
+            entry.emissiveMat.emissive.setHex(ignited ? 0xf97316 : 0x1e1b4b);
+            entry.emissiveMat.emissiveIntensity = ignited ? 1.8 : 0.25;
+          }
+        } else if (h.kind === 'laser_grid') {
+          entry.movingPart.rotation.y = h.sweepAngle ?? 0;
+          const beamMesh = entry.movingPart.children[2];
+          if (beamMesh) {
+            beamMesh.visible = h.active || Boolean(h.warning);
+            beamMesh.scale.x = h.active ? 1.0 : 0.35;
+            beamMesh.scale.z = h.active ? 1.0 : 0.35;
+          }
+          if (entry.ringMat) {
+            entry.ringMat.color.setHex(h.active ? 0xf43f5e : h.warning ? 0xf59e0b : 0x64748b);
+            entry.ringMat.opacity = h.active ? 0.65 : h.warning ? 0.35 + Math.abs(Math.sin(nowSec * 12)) * 0.4 : 0.14;
+          }
+          if (entry.emissiveMat) {
+            entry.emissiveMat.emissiveIntensity = h.active ? 2.8 : h.warning ? 1.2 : 0.25;
           }
         } else if (h.kind === 'spinner_blade') {
           const targetY = h.active ? 0.14 : h.warning ? -0.14 : -0.44;

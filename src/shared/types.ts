@@ -14,7 +14,8 @@ export type ChassisId =
   | 'scorpion'
   | 'juggernaut'
   | 'hover_disc'
-  | 'hydra';
+  | 'hydra'
+  | 'shell_spinner';
 
 export type ArmorId =
   | 'titanium'
@@ -34,6 +35,7 @@ export type WeaponId =
   | 'hammer'
   | 'flame'
   | 'tesla'
+  | 'laser'
   | 'railgun'
   | 'cryo_jet'
   | 'crush_jaw'
@@ -41,7 +43,10 @@ export type WeaponId =
   | 'mortar'
   | 'lance'
   | 'magnet'
-  | 'missiles';
+  | 'missiles'
+  | 'body_spinner'
+  | 'lightning_strike'
+  | 'bomb_drop';
 
 export type WheelLayoutId =
   | '4wd_wide'
@@ -121,6 +126,7 @@ export const PATTERN_CATALOG: Record<PatternId, { id: PatternId; label: string }
 
 // ---- Match modifiers (mutators) ----
 export type MatchModifierId =
+  | 'traditional_rules'
   | 'low_gravity'
   | 'double_damage'
   | 'armor_off'
@@ -131,6 +137,11 @@ export type MatchModifierId =
   | 'vampire';
 
 export const MATCH_MODIFIERS: Record<MatchModifierId, { id: MatchModifierId; label: string; note: string }> = {
+  traditional_rules: {
+    id: 'traditional_rules',
+    label: 'Traditional Mode',
+    note: 'Classic BattleBox rules: normal arenas & mechanical weapons only',
+  },
   low_gravity: { id: 'low_gravity', label: 'Low Gravity', note: 'Flips send bots sky-high' },
   double_damage: { id: 'double_damage', label: 'Double Damage', note: 'Every hit counts twice' },
   armor_off: { id: 'armor_off', label: 'Naked Chassis', note: 'All armor zones start stripped' },
@@ -141,8 +152,58 @@ export const MATCH_MODIFIERS: Record<MatchModifierId, { id: MatchModifierId; lab
   vampire: { id: 'vampire', label: 'Vampire Cores', note: 'Heal 20% of damage dealt' },
 };
 
+export const TRADITIONAL_WEAPON_IDS: WeaponId[] = [
+  'vspinner',
+  'hbar',
+  'drum',
+  'sawblade',
+  'flipper',
+  'hammer',
+  'crush_jaw',
+  'flame',
+  'body_spinner',
+  'lance',
+];
+
+export const TRADITIONAL_ARENA_IDS: ArenaId[] = [
+  'colosseum',
+  'foundry',
+  'toxic_scrapyard',
+];
+
+export function isTraditionalWeapon(id: WeaponId): boolean {
+  return TRADITIONAL_WEAPON_IDS.includes(id);
+}
+
+export function isTraditionalArena(id: ArenaId): boolean {
+  return TRADITIONAL_ARENA_IDS.includes(id);
+}
+
+export function sanitizeConfigForTraditionalMode(config: BotConfig): BotConfig {
+  const curWeapons = getBotWeapons(config);
+  const tradWeapons = curWeapons.filter((w) => isTraditionalWeapon(w));
+  const finalWeapons: WeaponId[] =
+    tradWeapons.length > 0 ? tradWeapons : ['vspinner'];
+  const tradArmors: ArmorId[] = ['titanium', 'steel', 'kevlar', 'ceramic', 'tungsten'];
+  const finalArmor: ArmorId = tradArmors.includes(config.armor) ? config.armor : 'titanium';
+  return {
+    ...config,
+    armor: finalArmor,
+    weapon: finalWeapons[0],
+    weapons: finalWeapons,
+  };
+}
+
 // ---- In-match arena events ----
-export type ArenaEventKind = 'supply_drop' | 'power_surge' | 'low_gravity' | 'hazard_frenzy' | 'blackout' | 'bounty';
+export type ArenaEventKind =
+  | 'supply_drop'
+  | 'power_surge'
+  | 'low_gravity'
+  | 'hazard_frenzy'
+  | 'blackout'
+  | 'bounty'
+  | 'bomb_barrage'
+  | 'lightning_storm';
 
 export const ARENA_EVENT_INFO: Record<ArenaEventKind, { label: string; note: string; duration: number }> = {
   supply_drop: { label: 'Supply Drop', note: 'Repair, energy and overcharge orbs incoming', duration: 6 },
@@ -151,6 +212,8 @@ export const ARENA_EVENT_INFO: Record<ArenaEventKind, { label: string; note: str
   hazard_frenzy: { label: 'Hazard Frenzy', note: 'All traps cycle 70% faster', duration: 12 },
   blackout: { label: 'Blackout', note: 'Arena lights down, hunt by visor glow', duration: 10 },
   bounty: { label: 'Bounty Target', note: 'Marked bot takes +40% damage', duration: 14 },
+  bomb_barrage: { label: 'Bomb Barrage', note: 'Aerial bombs dropping across the arena floor!', duration: 12 },
+  lightning_storm: { label: 'Lightning Storm', note: 'High-voltage arc bolts striking across the deck!', duration: 12 },
 };
 
 export type TimedBattleDuration = 90 | 150 | 180 | 300;
@@ -163,6 +226,30 @@ export const TIMED_BATTLE_OPTIONS: Array<{ seconds: TimedBattleDuration; label: 
   { seconds: 300, label: '5:00', tag: 'Endurance' },
 ];
 
+export type WeaponMountZone = 'front' | 'left' | 'right' | 'rear' | 'top_front' | 'top_rear';
+
+export interface WeaponPlacementConfig {
+  zone: WeaponMountZone;
+  offsetX: number; // -0.85 .. +0.85 lateral offset
+  offsetY: number; // -0.25 .. +0.55 vertical offset
+  offsetZ: number; // -0.85 .. +0.85 fore/aft offset
+  yawDeg: number; // -180 .. +180 degrees relative aim
+  scale: number; // 0.75 .. 1.35 scale multiplier
+}
+
+export const WEAPON_MOUNT_ZONES: Array<{
+  id: WeaponMountZone;
+  label: string;
+  defaultYawDeg: number;
+}> = [
+  { id: 'front', label: 'Front Nose', defaultYawDeg: 0 },
+  { id: 'top_front', label: 'Top Deck', defaultYawDeg: 0 },
+  { id: 'left', label: 'Left Flank', defaultYawDeg: 90 },
+  { id: 'right', label: 'Right Flank', defaultYawDeg: -90 },
+  { id: 'rear', label: 'Rear Tail', defaultYawDeg: 180 },
+  { id: 'top_rear', label: 'Rear Turret', defaultYawDeg: 0 },
+];
+
 export interface BotConfig {
   name: string;
   chassis: ChassisId;
@@ -170,6 +257,7 @@ export interface BotConfig {
   armor: ArmorId;
   weapon: WeaponId;
   weapons?: WeaponId[];
+  weaponPlacements?: WeaponPlacementConfig[];
   wheelLayout: WheelLayoutId;
   drive: DriveId;
   primaryColor: string;
@@ -179,22 +267,81 @@ export interface BotConfig {
   underglowColor?: string;
   pattern?: PatternId;
   raceNumber?: number;
+  fusionParents?: [string, string];
+  aiStyle?: string;
 }
 
 export function getBotWeapons(config: BotConfig): WeaponId[] {
-  const list: WeaponId[] = [];
   if (Array.isArray(config.weapons)) {
+    const list: WeaponId[] = [];
     for (const w of config.weapons) {
       if (WEAPON_CATALOG[w] && !list.includes(w)) {
         list.push(w);
       }
     }
+    return list.slice(0, 3);
   }
-  if (WEAPON_CATALOG[config.weapon] && !list.includes(config.weapon)) {
-    list.unshift(config.weapon);
+  if (WEAPON_CATALOG[config.weapon]) {
+    return [config.weapon];
   }
-  if (list.length === 0) list.push('vspinner');
-  return list.slice(0, 3);
+  return ['vspinner'];
+}
+
+export function getDefaultWeaponPlacement(wId: WeaponId, slotIdx: number): WeaponPlacementConfig {
+  if (wId === 'mortar' || wId === 'missiles' || wId === 'bomb_drop') {
+    return {
+      zone: slotIdx === 0 ? 'top_front' : 'top_rear',
+      offsetX: slotIdx === 1 ? -0.35 : slotIdx === 2 ? 0.35 : 0,
+      offsetY: 0,
+      offsetZ: 0,
+      yawDeg: 0,
+      scale: 1.0,
+    };
+  }
+  if (wId === 'railgun' || wId === 'tesla' || wId === 'laser' || wId === 'hammer' || wId === 'lightning_strike') {
+    return {
+      zone: 'top_front',
+      offsetX: slotIdx === 1 ? -0.32 : slotIdx === 2 ? 0.32 : 0,
+      offsetY: 0,
+      offsetZ: 0,
+      yawDeg: 0,
+      scale: 1.0,
+    };
+  }
+  return {
+    zone: slotIdx === 0 ? 'front' : slotIdx === 1 ? 'top_front' : 'top_rear',
+    offsetX: slotIdx === 1 ? -0.45 : slotIdx === 2 ? 0.45 : 0,
+    offsetY: 0,
+    offsetZ: 0,
+    yawDeg: 0,
+    scale: 1.0,
+  };
+}
+
+export function getBotWeaponPlacements(config: BotConfig): WeaponPlacementConfig[] {
+  const weapons = getBotWeapons(config);
+  const raw = Array.isArray(config.weaponPlacements) ? config.weaponPlacements : [];
+  return weapons.map((wId, idx) => {
+    const p = raw[idx];
+    const def = getDefaultWeaponPlacement(wId, idx);
+    if (!p) return def;
+    const validZone = WEAPON_MOUNT_ZONES.some((z) => z.id === p.zone) ? p.zone : def.zone;
+    return {
+      zone: validZone,
+      offsetX: Number(Math.max(-0.85, Math.min(0.85, Number(p.offsetX) || 0)).toFixed(2)),
+      offsetY: Number(Math.max(-0.25, Math.min(0.55, Number(p.offsetY) || 0)).toFixed(2)),
+      offsetZ: Number(Math.max(-0.85, Math.min(0.85, Number(p.offsetZ) || 0)).toFixed(2)),
+      yawDeg: Math.round(Math.max(-180, Math.min(180, Number(p.yawDeg) || 0))),
+      scale: Number(Math.max(0.75, Math.min(1.35, Number(p.scale) || 1.0)).toFixed(2)),
+    };
+  });
+}
+
+export function getWeaponSlotLocalYawRad(config: BotConfig, slotIdx: number): number {
+  const placements = getBotWeaponPlacements(config);
+  const p = placements[slotIdx];
+  if (!p) return 0;
+  return (p.yawDeg * Math.PI) / 180;
 }
 
 export function getBotChassisStyles(config: BotConfig): ChassisId[] {
@@ -289,6 +436,14 @@ export interface BotPhysicsState {
   weaponActives?: boolean[];
   weaponCooldowns?: number[];
   boostCooldown: number;
+  boostFuel?: number;
+  maxBoostFuel?: number;
+  isBoosting?: boolean;
+  boostLockout?: boolean;
+  isDrifting?: boolean;
+  driftCharge?: number;
+  driftBoostTimer?: number;
+  slipTimer?: number;
   overdriveTimer: number;
   burnTimer: number;
   freezeTimer?: number;
@@ -328,6 +483,16 @@ export interface BotPhysicsState {
   flipTimer?: number;
   /** Seconds before the bot may self-right again. */
   selfRightCooldown?: number;
+  /** Mortar hold-to-charge timer (0..1.4s): short click shoots close, long press shoots far. */
+  mortarCharge?: number;
+  mortarArmed?: boolean;
+  /** Distinct AI combat driving persona & phase timer. */
+  aiStyle?: string;
+  aiPhaseTimer?: number;
+  /** Out-of-the-Arena (OOTA) ring-out state when launched over the BattleBox wall. */
+  outOfRing?: boolean;
+  outOfRingTimer?: number;
+  lastAttackerId?: string;
 }
 
 /** Drive unit order: front-left, front-right, rear-left, rear-right. */
@@ -405,6 +570,8 @@ export interface DestructibleProp {
     | 'crate'
     | 'barrel'
     | 'pillar'
+    | 'ramp'
+    | 'debris_chunk'
     | 'pickup_repair'
     | 'pickup_energy'
     | 'pickup_overcharge'
@@ -412,10 +579,12 @@ export interface DestructibleProp {
   x: number;
   y: number;
   z: number;
+  yaw?: number;
   radius: number;
   hp: number;
   maxHp: number;
   destroyed: boolean;
+  color?: string;
 }
 
 export interface HazardState {
@@ -429,7 +598,10 @@ export interface HazardState {
     | 'lava_vent'
     | 'acid_pool'
     | 'pit'
-    | 'lightning';
+    | 'lightning'
+    | 'bomb_drop'
+    | 'oil_slick'
+    | 'laser_grid';
   x: number;
   z: number;
   radius: number;
@@ -444,6 +616,8 @@ export interface HazardState {
   sweepAngle?: number;
   armLength?: number;
   crusherY?: number;
+  bombY?: number;
+  ignited?: boolean;
   intensityLevel?: number;
 }
 
@@ -461,6 +635,9 @@ export type CombatEventType =
   | 'hazard_warn'
   | 'tesla_arc'
   | 'rail_shot'
+  | 'laser_beam'
+  | 'bomb_blast'
+  | 'oil_slip'
   | 'cryo_blast'
   | 'mortar_blast'
   | 'era_blast'
@@ -479,7 +656,10 @@ export type CombatEventType =
   | 'melt'
   | 'self_right'
   | 'debris_hit'
-  | 'mortar_launch';
+  | 'mortar_launch'
+  | 'weapon_clash'
+  | 'thermal_shock'
+  | 'ring_out';
 
 export type DamageKind = 'kinetic' | 'scorch' | 'blade' | 'crush';
 
@@ -516,6 +696,7 @@ export interface PlayerInputState {
   fireWeapon: boolean;
   fireWeapons?: boolean[];
   boost: boolean;
+  drift?: boolean;
   overdrive: boolean;
 }
 
@@ -527,7 +708,7 @@ export interface ArenaSnapshot {
   durationSeconds?: number;
   elapsedTime?: number;
   escalationStage?: number;
-  finishReason?: 'ko' | 'time' | 'objective';
+  finishReason?: 'ko' | 'ring_out' | 'time' | 'objective';
   phase: 'countdown' | 'active' | 'finished';
   countdown: number;
   bots: BotPhysicsState[];
@@ -630,6 +811,23 @@ export interface SeasonalEvent {
   endsAt: string;
 }
 
+export interface FavoriteBuildEntry {
+  id: string;
+  label: string;
+  config: BotConfig;
+  savedAt: string;
+}
+
+export interface FavoritesList {
+  weapons: WeaponId[];
+  chassis: ChassisId[];
+  arenas: ArenaId[];
+  builds: FavoriteBuildEntry[];
+}
+
+export type ControlSchemeId = 'wasd_drive' | 'arrows_drive' | 'mouse_drive';
+export type DeviceLayoutMode = 'auto' | 'desktop' | 'tablet' | 'mobile';
+
 export interface PlayerProfile {
   id: string;
   callsign: string;
@@ -648,16 +846,30 @@ export interface PlayerProfile {
   claimedEvents: string[];
   botConfig: BotConfig;
   savedLoadouts?: BotConfig[];
+  customGarageBots?: BotConfig[];
   activeLoadoutSlot?: number;
   selectedWingmanIndex?: number;
   skills: SkillTree;
   batteryMode: BatteryMode;
   muted: boolean;
+  commentaryMuted?: boolean;
+  commentaryDefaultOffApplied?: boolean;
+  masterVolume?: number;
+  musicVolume?: number;
+  sfxVolume?: number;
+  crowdVolume?: number;
+  commentaryVolume?: number;
+  traditionalMode?: boolean;
   touchControlsMode: 'auto' | 'always' | 'off';
+  controlScheme?: ControlSchemeId;
+  deviceLayoutMode?: DeviceLayoutMode;
   ownedParts?: string[];
   campaignStars?: Record<string, number>;
   arenaWins?: Partial<Record<ArenaId, number>>;
   bestSurvivalWave?: number;
+  favorites?: FavoritesList;
+  isAdmin?: boolean;
+  adminSeat?: 1 | 2;
 }
 
 // ---- Part economy: premium parts cost scrap or unlock via campaign & events ----
@@ -958,6 +1170,17 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     frontDeflect: 0.35,
     price: 440,
   },
+  shell_spinner: {
+    id: 'shell_spinner',
+    label: 'Cyclone Full-Body Spinner',
+    subtitle: 'Entire armored outer shell spins at 2,800 RPM as a 360° kinetic weapon',
+    baseHp: 385,
+    baseMass: 1.38,
+    bodyScale: 1.12,
+    sizeTag: '360° Shell',
+    speedMult: 1.04,
+    frontDeflect: 0.48,
+  },
 };
 
 export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
@@ -1196,6 +1419,18 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     energyCost: 14,
     price: 520,
   },
+  laser: {
+    id: 'laser',
+    label: 'Aether Laser Beam',
+    subtitle: 'Coherent ruby laser cannon that slices armor, melts plates & ignites oil slicks',
+    category: 'Energy',
+    damage: 14,
+    impulse: 3.2,
+    lift: 0.6,
+    range: 11.5,
+    cooldown: 0.36,
+    energyCost: 8,
+  },
   railgun: {
     id: 'railgun',
     label: 'Gauss Rail Spike',
@@ -1260,6 +1495,42 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     cooldown: 2.2,
     energyCost: 22,
     price: 720,
+  },
+  body_spinner: {
+    id: 'body_spinner',
+    label: '360° Full-Body Shell',
+    subtitle: 'Whole-body toothed outer shell spins around the bot, shredding any contact',
+    category: 'Rotor',
+    damage: 21,
+    impulse: 11.8,
+    lift: 4.6,
+    range: 2.85,
+    cooldown: 0.65,
+    energyCost: 9,
+  },
+  lightning_strike: {
+    id: 'lightning_strike',
+    label: 'Lightning Strike Spire',
+    subtitle: 'Calls down a targeted sky-to-deck lightning bolt onto enemy bots, scrambling systems with massive EMP shock',
+    category: 'Energy',
+    damage: 34,
+    impulse: 8.8,
+    lift: 3.4,
+    range: 13.5,
+    cooldown: 1.55,
+    energyCost: 22,
+  },
+  bomb_drop: {
+    id: 'bomb_drop',
+    label: 'Aerial Bomb Drop',
+    subtitle: 'Deploys an aerial ordnance bomb strike onto enemy coordinates with a high-explosive shockwave',
+    category: 'Artillery',
+    damage: 38,
+    impulse: 12.2,
+    lift: 6.2,
+    range: 14.0,
+    cooldown: 1.65,
+    energyCost: 24,
   },
 };
 
@@ -1530,8 +1801,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
   foundry: {
     id: 'foundry',
     name: 'Molten Foundry',
-    subtitle: 'Floor saw slots, explosive fuel drums & hydraulic crushers',
-    hazardTag: 'Saws · Crushers · Drums',
+    subtitle: 'Smelting pit with ignitable oil slicks, aerial bomb drops, lava vents & crushers',
+    hazardTag: 'Oil Slicks · Bomb Drops · Crushers',
     halfSize: 18,
     friction: 5.4,
     gravityMult: 1.0,
@@ -1543,10 +1814,10 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
   cryo: {
     id: 'cryo',
     name: 'Sub-Zero Cryo Pit',
-    subtitle: 'Low-friction ice deck with pneumatic launch pads & cryo vents',
-    hazardTag: 'Ice Drift · Flippers',
+    subtitle: 'Ultra-drift sub-zero ice deck with sweeping cryo laser grids, launch flippers & crushers',
+    hazardTag: 'Ice Drift · Laser Grid · Flippers',
     halfSize: 18,
-    friction: 2.7,
+    friction: 2.4,
     gravityMult: 1.0,
     energyRegenMult: 1.05,
     skyHex: '#0C141D',
@@ -1556,8 +1827,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
   reactor: {
     id: 'reactor',
     name: 'Overcharge Reactor',
-    subtitle: 'Fast energy recharge with periodic EMP discharge rings',
-    hazardTag: '+55% Energy · EMP Rings',
+    subtitle: 'High-voltage core with sweeping ruby laser grids, arc lightning & EMP rings',
+    hazardTag: 'Ruby Lasers · Lightning · +55% EN',
     halfSize: 18,
     friction: 5.5,
     gravityMult: 1.0,
@@ -1569,8 +1840,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
   colosseum: {
     id: 'colosseum',
     name: 'Apex Colosseum',
-    subtitle: 'Championship stadium floor with corner saws, flipper & packed stands',
-    hazardTag: 'Championship Stadium',
+    subtitle: 'Championship stadium floor with aerial bomb drops, oil slicks, saws & flippers',
+    hazardTag: 'Bomb Drops · Oil Slicks · Saws',
     halfSize: 18,
     friction: 5.8,
     gravityMult: 1.0,
@@ -1582,8 +1853,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
   aether_nexus: {
     id: 'aether_nexus',
     name: 'Aetheris Quantum Nexus',
-    subtitle: 'Low-gravity orbital platform with +40% energy flux & twin EMP rings',
-    hazardTag: 'Low Gravity · +40% Energy',
+    subtitle: 'Low-gravity nexus with omni-hazards: laser grids, lightning, bombs & oil slicks',
+    hazardTag: 'Lasers · Bombs · Lightning · Low-G',
     halfSize: 19,
     friction: 4.8,
     gravityMult: 0.68,
@@ -1595,8 +1866,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
   toxic_scrapyard: {
     id: 'toxic_scrapyard',
     name: 'Acid Scrapyard',
-    subtitle: 'Corrosive reclamation pit with bubbling acid pools & heavy crushers',
-    hazardTag: 'Acid Pools · Extra Crates',
+    subtitle: 'Chemical salvage pit with waste oil slicks, acid pools, crushers & bomb drops',
+    hazardTag: 'Oil Slicks · Acid Pools · Bombs',
     halfSize: 18,
     friction: 5.1,
     gravityMult: 1.0,
@@ -1608,8 +1879,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
   volcano_caldera: {
     id: 'volcano_caldera',
     name: 'Magma Caldera',
-    subtitle: 'Superheated volcanic forge with erupting lava vents & quad saws',
-    hazardTag: 'Lava Vents · Thermal Burn',
+    subtitle: 'Volcanic crater with heavy aerial bomb barrages, burning oil slicks & lava geysers',
+    hazardTag: 'Bomb Barrages · Lava · Burning Oil',
     halfSize: 18,
     friction: 5.6,
     gravityMult: 1.0,
@@ -1621,8 +1892,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
   cyber_grid: {
     id: 'cyber_grid',
     name: 'Neon Cyber Grid',
-    subtitle: 'High-traction synthwave circuit with hyper-flippers & sweeping rotors',
-    hazardTag: 'High Grip · +35% Energy',
+    subtitle: 'Holo-circuit with crossfire laser grids, lightning bolts & turbo drift grip',
+    hazardTag: 'Crossfire Lasers · Lightning · Flippers',
     halfSize: 18,
     friction: 6.4,
     gravityMult: 0.92,
@@ -1634,8 +1905,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
   skyforge: {
     id: 'skyforge',
     name: 'Skyforge Platform',
-    subtitle: 'High-altitude deck with drop pits that open and close',
-    hazardTag: 'Drop Pits · Thin Air',
+    subtitle: 'Stratosphere platform with ejector drop pits, orbital bomb drops & laser turrets',
+    hazardTag: 'Drop Pits · Orbital Bombs · Lasers',
     halfSize: 18,
     friction: 5.0,
     gravityMult: 0.82,
@@ -1647,8 +1918,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
   storm: {
     id: 'storm',
     name: 'Tesla Stormcage',
-    subtitle: 'Lightning strikes aimed at bots, with an EMP core at center',
-    hazardTag: 'Lightning · EMP Core',
+    subtitle: 'High-voltage thunderdome with relentless lightning strikes, bomb drops & EMP core',
+    hazardTag: 'Supercell Lightning · Bombs · EMP',
     halfSize: 18,
     friction: 5.3,
     gravityMult: 1.0,
@@ -1708,7 +1979,7 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
   const primaryCh = CHASSIS_CATALOG[styles[0]] || CHASSIS_CATALOG.wedge;
   const extraStyles = styles.slice(1).map((id) => CHASSIS_CATALOG[id]);
   const ar = ARMOR_CATALOG[config.armor] || ARMOR_CATALOG.titanium;
-  const primaryWp = WEAPON_CATALOG[weapons[0]] || WEAPON_CATALOG.vspinner;
+  const primaryWp = weapons.length > 0 ? WEAPON_CATALOG[weapons[0]] || WEAPON_CATALOG.vspinner : null;
   const extraWeapons = weapons.slice(1).map((id) => WEAPON_CATALOG[id]);
   const wl = WHEEL_LAYOUT_CATALOG[config.wheelLayout || '4wd_wide'] || WHEEL_LAYOUT_CATALOG['4wd_wide'];
   const dr = DRIVE_CATALOG[config.drive] || DRIVE_CATALOG.omni;
@@ -1735,10 +2006,10 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
   // Multi-weapon fusion: primary weapon + auxiliary mounted weapons (with mass/cooldown trade-off)
   const extraWeaponDamage = extraWeapons.reduce((acc, w, idx) => acc + w.damage * (idx === 0 ? 0.36 : 0.26), 0);
   const extraWeaponImpulse = extraWeapons.reduce((acc, w, idx) => acc + w.impulse * (idx === 0 ? 0.42 : 0.32), 0);
-  const extraWeaponMass = extraWeapons.length * 0.14;
-  const extraWeaponSpeedDrag = Math.max(0.84, 1 - extraWeapons.length * 0.055);
-  const combinedLift = Math.max(primaryWp.lift, ...extraWeapons.map((w) => w.lift * 0.85));
-  const combinedRange = Math.max(primaryWp.range, ...extraWeapons.map((w) => w.range));
+  const extraWeaponMass = weapons.length === 0 ? -0.06 : extraWeapons.length * 0.14;
+  const extraWeaponSpeedDrag = weapons.length === 0 ? 1.04 : Math.max(0.84, 1 - extraWeapons.length * 0.055);
+  const combinedLift = primaryWp ? Math.max(primaryWp.lift, ...extraWeapons.map((w) => w.lift * 0.85)) : 0;
+  const combinedRange = primaryWp ? Math.max(primaryWp.range, ...extraWeapons.map((w) => w.range)) : 0;
 
   const maxHp = Math.round(
     (primaryCh.baseHp + hybridHpBonus + ar.hpBonus) *
@@ -1754,6 +2025,7 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
   const maxSpeed = Number(
     (
       dr.maxSpeed *
+      1.18 *
       primaryCh.speedMult *
       hybridSpeedMult *
       ar.speedMult *
@@ -1763,23 +2035,34 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
     ).toFixed(2),
   );
   const accel = Number(
-    (dr.accel * primaryCh.speedMult * ar.speedMult * extraWeaponSpeedDrag * (1 + overclockRank * 0.03)).toFixed(2),
-  );
-  const turnRate = Number((dr.turnRate * wl.turnMult * (1 + skills.gyroStabilizer * 0.04)).toFixed(2));
-  const weaponDamage = Number(((primaryWp.damage + extraWeaponDamage) * (1 + skills.weaponTorque * 0.075)).toFixed(1));
-  const weaponImpulse = Number(
-    ((primaryWp.impulse + extraWeaponImpulse) * (1 + skills.weaponTorque * 0.05)).toFixed(2),
-  );
-  const weaponLift = Number(combinedLift.toFixed(2));
-  const weaponRange = Number(combinedRange.toFixed(2));
-  const weaponCooldown = Number(
-    Math.max(
-      0.22,
-      primaryWp.cooldown *
-        (1 + extraWeapons.length * 0.09) *
-        (1 - skills.weaponTorque * 0.035 - coolingRank * 0.045),
+    (
+      dr.accel *
+      1.22 *
+      primaryCh.speedMult *
+      ar.speedMult *
+      extraWeaponSpeedDrag *
+      (1 + overclockRank * 0.03)
     ).toFixed(2),
   );
+  const turnRate = Number((dr.turnRate * 1.1 * wl.turnMult * (1 + skills.gyroStabilizer * 0.04)).toFixed(2));
+  const weaponDamage = primaryWp
+    ? Number(((primaryWp.damage + extraWeaponDamage) * (1 + skills.weaponTorque * 0.075)).toFixed(1))
+    : 0;
+  const weaponImpulse = primaryWp
+    ? Number(((primaryWp.impulse + extraWeaponImpulse) * (1 + skills.weaponTorque * 0.05)).toFixed(2))
+    : 0;
+  const weaponLift = Number(combinedLift.toFixed(2));
+  const weaponRange = Number(combinedRange.toFixed(2));
+  const weaponCooldown = primaryWp
+    ? Number(
+        Math.max(
+          0.22,
+          primaryWp.cooldown *
+            (1 + extraWeapons.length * 0.09) *
+            (1 - skills.weaponTorque * 0.035 - coolingRank * 0.045),
+        ).toFixed(2),
+      )
+    : 0.5;
   const frontDeflect = Math.min(0.72, primaryCh.frontDeflect + hybridDeflect + skills.kineticArmor * 0.035);
   const knockbackResist = Number(
     (
@@ -1818,25 +2101,30 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
     naniteRank +
     overclockRank;
 
+  const fusionSynergy = config.fusionParents && config.fusionParents.length === 2 ? 1.08 : 1.0;
+  const finalMaxHp = Math.round(maxHp * fusionSynergy);
+  const finalWeaponDamage = Number((weaponDamage * fusionSynergy).toFixed(1));
+  const finalMaxSpeed = Number((maxSpeed * (fusionSynergy > 1 ? 1.04 : 1)).toFixed(2));
+
   const powerScore = Math.round(
-    maxHp * 0.6 +
+    finalMaxHp * 0.6 +
       maxShieldHp * 0.75 +
-      (weaponDamage / Math.max(0.24, weaponCooldown)) * 2.4 +
-      maxSpeed * 14 +
+      (finalWeaponDamage / Math.max(0.24, weaponCooldown)) * 2.4 +
+      finalMaxSpeed * 14 +
       armorZoneHp * 0.55 +
       totalSkillRanks * 18,
   );
 
   return {
-    maxHp,
+    maxHp: finalMaxHp,
     armorZoneHp,
     maxShieldHp,
     mass,
     bodyScale,
-    maxSpeed,
+    maxSpeed: finalMaxSpeed,
     accel,
     turnRate,
-    weaponDamage,
+    weaponDamage: finalWeaponDamage,
     weaponImpulse,
     weaponLift,
     weaponRange,
@@ -1849,3 +2137,125 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
     weightClass,
   };
 }
+
+/** Fuse 2 parent bots into a single hybrid Fusion Bot combining their chassis, weapons, drive, armor & livery. */
+export function fuseTwoBotConfigs(botA: BotConfig, botB: BotConfig, customName?: string): BotConfig {
+  const stylesA = getBotChassisStyles(botA);
+  const stylesB = getBotChassisStyles(botB);
+  const mergedStyles: ChassisId[] = [];
+  for (const s of [...stylesA, ...stylesB]) {
+    if (CHASSIS_CATALOG[s] && !mergedStyles.includes(s)) mergedStyles.push(s);
+  }
+  const finalStyles = mergedStyles.slice(0, 3);
+
+  const wepsA = getBotWeapons(botA);
+  const wepsB = getBotWeapons(botB);
+  const mergedWeps: WeaponId[] = [];
+  for (const w of [...wepsA, ...wepsB]) {
+    if (WEAPON_CATALOG[w] && !mergedWeps.includes(w)) mergedWeps.push(w);
+  }
+  const finalWeps = mergedWeps.slice(0, 3);
+  if (finalWeps.length === 0) finalWeps.push('vspinner');
+
+  const arA = ARMOR_CATALOG[botA.armor] || ARMOR_CATALOG.titanium;
+  const arB = ARMOR_CATALOG[botB.armor] || ARMOR_CATALOG.titanium;
+  const chosenArmor =
+    arA.hpBonus + arA.zoneHp + arA.shieldBonus >= arB.hpBonus + arB.zoneHp + arB.shieldBonus ? botA.armor : botB.armor;
+
+  const drA = DRIVE_CATALOG[botA.drive] || DRIVE_CATALOG.omni;
+  const drB = DRIVE_CATALOG[botB.drive] || DRIVE_CATALOG.omni;
+  const chosenDrive =
+    drA.maxSpeed * 12 + drA.accel >= drB.maxSpeed * 12 + drB.accel ? botA.drive : botB.drive;
+
+  const namePartA = botA.name.split(/\s+/)[0] || 'Aether';
+  const namePartB = botB.name.split(/\s+/).slice(-1)[0] || 'Apex';
+  const defaultFusionName = `${namePartA}-${namePartB} X`;
+
+  return {
+    name: (customName && customName.trim()) || defaultFusionName,
+    chassis: finalStyles[0] || 'wedge',
+    chassisStyles: finalStyles,
+    armor: chosenArmor,
+    weapon: finalWeps[0],
+    weapons: finalWeps,
+    weaponPlacements: finalWeps.map((w, idx) => getDefaultWeaponPlacement(w, idx)),
+    wheelLayout: botA.wheelLayout || botB.wheelLayout || '4wd_wide',
+    drive: chosenDrive,
+    primaryColor: botA.primaryColor || '#0F172A',
+    accentColor: botB.accentColor || '#38BDF8',
+    finishStyle: botA.finishStyle === 'standard' ? botB.finishStyle || 'iridescent' : botA.finishStyle || 'iridescent',
+    accessory: botA.accessory && botA.accessory !== 'none' ? botA.accessory : botB.accessory || 'halo_crown',
+    underglowColor: botB.underglowColor && botB.underglowColor !== 'none' ? botB.underglowColor : botA.underglowColor || '#38BDF8',
+    pattern: botA.pattern && botA.pattern !== 'none' ? botA.pattern : botB.pattern || 'circuit',
+    fusionParents: [botA.name, botB.name],
+  };
+}
+
+const BOT_NAME_PREFIXES = [
+  'Aether',
+  'Apex',
+  'Obsidian',
+  'Volt',
+  'Cryo',
+  'Hyperion',
+  'Vortex',
+  'Titan',
+  'Phantom',
+  'Iron',
+  'Magma',
+  'Omega',
+  'Havoc',
+  'Cobalt',
+  'Ragnarok',
+  'Nemesis',
+  'Thunder',
+  'Brimstone',
+  'Quantum',
+  'Crimson',
+  'Tungsten',
+  'Solaris',
+  'Valkyrie',
+  'Shadow',
+];
+
+const BOT_NAME_CORES = [
+  'Juggernaut',
+  'Reaper',
+  'Striker',
+  'Colossus',
+  'Maelstrom',
+  'Executioner',
+  'Centurion',
+  'Scorpion',
+  'Howitzer',
+  'Catapult',
+  'Crusher',
+  'Hydra',
+  'Cyclone',
+  'Drifter',
+  'Warden',
+  'Behemoth',
+  'Viper',
+  'Tempest',
+  'Harbinger',
+  'Sentinel',
+  'Ravager',
+  'Goliath',
+  'Fang',
+  'Barrage',
+];
+
+const BOT_NAME_SUFFIXES = ['', '', '', ' MK-IX', ' Prime', ' X', ' V2', ' Zero', ' Omega', ' GT'];
+
+export function generateRandomBotName(currentName?: string): string {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const p = BOT_NAME_PREFIXES[Math.floor(Math.random() * BOT_NAME_PREFIXES.length)];
+    const c = BOT_NAME_CORES[Math.floor(Math.random() * BOT_NAME_CORES.length)];
+    const s = BOT_NAME_SUFFIXES[Math.floor(Math.random() * BOT_NAME_SUFFIXES.length)];
+    const candidate = `${p} ${c}${s}`.slice(0, 18).trim();
+    if (candidate !== currentName) return candidate;
+  }
+  return `Aether Striker ${Math.floor(10 + Math.random() * 89)}`;
+}
+
+

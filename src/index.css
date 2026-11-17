@@ -59,3 +59,101 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #3b485b;
 }
+
+/* Epic Aetheris Bot Wars Intro Splash Animations */
+@keyframes aetherTitleSlam {
+  0% {
+    opacity: 0;
+    transform: scale(1.85) translateY(-28px);
+    filter: blur(12px) brightness(2);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(0.96) translateY(3px);
+    filter: blur(0px) brightness(1.35);
+  }
+  75% {
+    transform: scale(1.03) translateY(-1px);
+    filter: brightness(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0px) brightness(1);
+  }
+}
+
+@keyframes aetherSubSlam {
+  0% {
+    opacity: 0;
+    transform: scale(0.75) translateY(32px);
+    filter: blur(10px);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1.04) translateY(-2px);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0px);
+  }
+}
+
+@keyframes aetherShockwave {
+  0% {
+    opacity: 0.95;
+    transform: scale(0.25);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+
+@keyframes aetherBeamSweep {
+  0% {
+    opacity: 0;
+    transform: translateX(-120%) skewX(-24deg);
+  }
+  35% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(120%) skewX(-24deg);
+  }
+}
+
+@keyframes aetherEmberRise {
+  0% {
+    opacity: 0;
+    transform: translateY(36px) scale(0.5);
+  }
+  30% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-120px) scale(1.15);
+  }
+}
+
+.animate-aether-title {
+  animation: aetherTitleSlam 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-aether-sub {
+  opacity: 0;
+  animation: aetherSubSlam 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.22s forwards;
+}
+
+.animate-aether-shockwave {
+  animation: aetherShockwave 1.35s cubic-bezier(0.16, 1, 0.3, 1) 0.18s forwards;
+}
+
+.animate-aether-beam {
+  animation: aetherBeamSweep 1.6s cubic-bezier(0.16, 1, 0.3, 1) 0.3s infinite;
+}
+

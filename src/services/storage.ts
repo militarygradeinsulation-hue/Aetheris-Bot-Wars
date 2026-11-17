@@ -91,23 +91,57 @@ function makeDefaultProfile(): PlayerProfile {
     claimedEvents: [],
     botConfig: { ...DEFAULT_BOT_CONFIG },
     savedLoadouts: DEFAULT_SAVED_LOADOUTS.map((b) => ({ ...b })),
+    customGarageBots: [
+      {
+        name: 'Cyclone X-360',
+        chassis: 'shell_spinner',
+        chassisStyles: ['shell_spinner', 'ufo'],
+        armor: 'titanium',
+        weapon: 'body_spinner',
+        weapons: ['body_spinner', 'flame'],
+        wheelLayout: '4wd_tucked',
+        drive: 'turbo',
+        primaryColor: '#1E293B',
+        accentColor: '#F59E0B',
+        finishStyle: 'chrome',
+        accessory: 'halo_crown',
+        underglowColor: '#F59E0B',
+        pattern: 'stripes',
+      },
+    ],
     activeLoadoutSlot: 0,
     selectedWingmanIndex: 3,
     skills: { ...DEFAULT_SKILLS },
     batteryMode: 'balanced',
     muted: false,
+    commentaryMuted: true,
+    commentaryDefaultOffApplied: true,
+    masterVolume: 0.85,
+    musicVolume: 0.65,
+    sfxVolume: 0.85,
+    crowdVolume: 0.7,
+    commentaryVolume: 0.9,
+    traditionalMode: false,
     touchControlsMode: 'auto',
     ownedParts: [],
     campaignStars: {},
     arenaWins: {},
     bestSurvivalWave: 0,
+    favorites: {
+      weapons: ['vspinner', 'laser', 'body_spinner', 'flipper'],
+      chassis: ['wedge', 'shell_spinner', 'brawler'],
+      arenas: ['colosseum', 'storm'],
+      builds: [],
+    },
+    isAdmin: false,
+    adminSeat: undefined,
   };
 }
 
 /** Premium parts already sitting in a pilot's builds stay usable after the part economy arrives. */
 function grantEquippedParts(profile: PlayerProfile): PlayerProfile {
   const owned = new Set(profile.ownedParts ?? []);
-  for (const cfg of [profile.botConfig, ...(profile.savedLoadouts ?? [])]) {
+  for (const cfg of [profile.botConfig, ...(profile.savedLoadouts ?? []), ...(profile.customGarageBots ?? [])]) {
     if (cfg) premiumPartsInConfig(cfg).forEach((k) => owned.add(k));
   }
   return { ...profile, ownedParts: [...owned] };
@@ -124,12 +158,43 @@ export function loadPlayerProfile(): PlayerProfile {
       const savedLoadouts: BotConfig[] = [0, 1, 2].map((idx) =>
         sanitizeBotConfig(rawLoadouts[idx], DEFAULT_SAVED_LOADOUTS[idx] || fallback.botConfig),
       );
+      const customGarageBots: BotConfig[] = Array.isArray(parsed.customGarageBots)
+        ? parsed.customGarageBots.map((b) => sanitizeBotConfig(b, fallback.botConfig))
+        : fallback.customGarageBots ?? [];
+      const rawFav = parsed.favorites;
+      const favorites = {
+        weapons: Array.isArray(rawFav?.weapons) ? rawFav.weapons.filter((w) => Boolean(WEAPON_CATALOG[w])) : fallback.favorites!.weapons,
+        chassis: Array.isArray(rawFav?.chassis) ? rawFav.chassis.filter((c) => Boolean(CHASSIS_CATALOG[c])) : fallback.favorites!.chassis,
+        arenas: Array.isArray(rawFav?.arenas) ? rawFav.arenas : fallback.favorites!.arenas,
+        builds: Array.isArray(rawFav?.builds)
+          ? rawFav.builds.map((entry: unknown, idx: number) => {
+              if (entry && typeof entry === 'object' && 'config' in (entry as Record<string, unknown>)) {
+                const e = entry as { id?: string; label?: string; config?: Partial<BotConfig>; savedAt?: string };
+                const cfg = sanitizeBotConfig(e.config, fallback.botConfig);
+                return {
+                  id: e.id || `fav_${idx}`,
+                  label: e.label || cfg.name,
+                  config: cfg,
+                  savedAt: e.savedAt || new Date().toISOString(),
+                };
+              }
+              const cfg = sanitizeBotConfig(entry as Partial<BotConfig>, fallback.botConfig);
+              return {
+                id: `fav_${idx}`,
+                label: cfg.name,
+                config: cfg,
+                savedAt: new Date().toISOString(),
+              };
+            })
+          : [],
+      };
 
       return grantEquippedParts({
         ...fallback,
         ...parsed,
         botConfig: mergedBot,
         savedLoadouts,
+        customGarageBots,
         ownedParts: Array.isArray(parsed.ownedParts) ? parsed.ownedParts : [],
         campaignStars: parsed.campaignStars ?? {},
         arenaWins: parsed.arenaWins ?? {},
@@ -137,6 +202,20 @@ export function loadPlayerProfile(): PlayerProfile {
         activeLoadoutSlot: typeof parsed.activeLoadoutSlot === 'number' ? parsed.activeLoadoutSlot : 0,
         selectedWingmanIndex: typeof parsed.selectedWingmanIndex === 'number' ? parsed.selectedWingmanIndex : 3,
         skills: { ...fallback.skills, ...(parsed.skills || {}) },
+        favorites,
+        masterVolume: typeof parsed.masterVolume === 'number' ? Math.max(0, Math.min(1, parsed.masterVolume)) : 0.85,
+        musicVolume: typeof parsed.musicVolume === 'number' ? Math.max(0, Math.min(1, parsed.musicVolume)) : 0.65,
+        sfxVolume: typeof parsed.sfxVolume === 'number' ? Math.max(0, Math.min(1, parsed.sfxVolume)) : 0.85,
+        crowdVolume: typeof parsed.crowdVolume === 'number' ? Math.max(0, Math.min(1, parsed.crowdVolume)) : 0.7,
+        commentaryVolume:
+          typeof parsed.commentaryVolume === 'number' ? Math.max(0, Math.min(1, parsed.commentaryVolume)) : 0.9,
+        commentaryMuted: parsed.commentaryDefaultOffApplied
+          ? (typeof parsed.commentaryMuted === 'boolean' ? parsed.commentaryMuted : true)
+          : true,
+        commentaryDefaultOffApplied: true,
+        traditionalMode: Boolean(parsed.traditionalMode),
+        isAdmin: Boolean(parsed.isAdmin),
+        adminSeat: parsed.adminSeat === 2 ? 2 : parsed.adminSeat === 1 ? 1 : undefined,
       });
     }
   } catch {

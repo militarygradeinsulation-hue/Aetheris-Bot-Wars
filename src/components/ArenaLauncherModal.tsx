@@ -29,6 +29,7 @@ import {
 } from '../shared/campaign';
 import {
   ARENA_CATALOG,
+  isTraditionalArena,
   MATCH_MODIFIERS,
   TIMED_BATTLE_OPTIONS,
   type ArenaId,
@@ -86,6 +87,8 @@ interface ArenaLauncherModalProps {
   onStartOnlineNow: () => void;
   onCancelLobby: () => void;
   onClose: () => void;
+  traditionalMode?: boolean;
+  onToggleTraditionalMode?: (next: boolean) => void;
 }
 
 const RIVAL_TIERS: Array<{ id: RivalTier; label: string; note: string }> = [
@@ -125,6 +128,8 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
   onStartOnlineNow,
   onCancelLobby,
   onClose,
+  traditionalMode = false,
+  onToggleTraditionalMode,
 }) => {
   const [tab, setTab] = useState<'quick' | 'campaign' | 'online'>('quick');
   const [expandedLevel, setExpandedLevel] = useState<string | null>(null);
@@ -339,45 +344,98 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
           </div>
         ) : (
           <>
+            {/* Traditional Mode vs All-Out Sci-Fi Mode Toggle Banner */}
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/40 bg-[#0F1B18] p-3">
+              <div>
+                <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-emerald-300">
+                  <Swords className="h-4 w-4 text-emerald-400" />
+                  <span>Traditional BattleBox Mode</span>
+                  { (traditionalMode || selectedModifiers.includes('traditional_rules')) && (
+                    <span className="rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-950">
+                      ACTIVE
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-300 mt-0.5">
+                  Normal BattleBox arenas (Colosseum, Foundry, Scrapyard) & classic mechanical weapons only — no lightning, orbital bombs, or sci-fi anomalies.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const isActive = traditionalMode || selectedModifiers.includes('traditional_rules');
+                  const next = !isActive;
+                  onToggleTraditionalMode?.(next);
+                  if (next && !selectedModifiers.includes('traditional_rules')) {
+                    onToggleModifier('traditional_rules');
+                  } else if (!next && selectedModifiers.includes('traditional_rules')) {
+                    onToggleModifier('traditional_rules');
+                  }
+                  if (next && !isTraditionalArena(selectedArena)) {
+                    onSelectArena('colosseum');
+                  }
+                }}
+                className={`rounded-xl px-4 py-2 text-xs font-extrabold uppercase tracking-wider transition cursor-pointer shrink-0 ${
+                  traditionalMode || selectedModifiers.includes('traditional_rules')
+                    ? 'bg-emerald-400 text-slate-950 shadow-lg hover:bg-emerald-300'
+                    : 'border border-emerald-500/50 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25'
+                }`}
+              >
+                {traditionalMode || selectedModifiers.includes('traditional_rules')
+                  ? 'Traditional Mode: ON'
+                  : 'Enable Traditional Mode'}
+              </button>
+            </div>
+
             {/* Arena Stage Picker */}
             <div className="mt-4">
               <div className="text-xs font-semibold text-slate-300 mb-2">
-                Select Combat Arena ({Object.keys(ARENA_CATALOG).length} BattleBoxes)
+                Select Combat Arena (
+                {traditionalMode || selectedModifiers.includes('traditional_rules')
+                  ? '3 Traditional BattleBoxes'
+                  : `${Object.keys(ARENA_CATALOG).length} BattleBoxes`}
+                )
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
-                {(Object.keys(ARENA_CATALOG) as ArenaId[]).map((aId) => {
-                  const a = ARENA_CATALOG[aId];
-                  const active = selectedArena === aId;
-                  return (
-                    <button
-                      key={aId}
-                      type="button"
-                      onClick={() => onSelectArena(aId)}
-                      className={`text-left rounded-xl border p-2.5 transition ${
-                        active
-                          ? 'border-amber-500 bg-amber-500/12'
-                          : 'border-slate-800 bg-[#192029] hover:border-slate-600'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-1.5">
-                        <span className="text-xs font-bold text-white truncate">{a.name}</span>
-                        <span
-                          className="h-2.5 w-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: a.accentHex }}
-                        />
-                      </div>
-                      <div
-                        className="mt-0.5 text-[10px] font-semibold truncate"
-                        style={{ color: a.accentHex }}
+                {(Object.keys(ARENA_CATALOG) as ArenaId[])
+                  .filter((aId) =>
+                    traditionalMode || selectedModifiers.includes('traditional_rules')
+                      ? isTraditionalArena(aId)
+                      : true,
+                  )
+                  .map((aId) => {
+                    const a = ARENA_CATALOG[aId];
+                    const active = selectedArena === aId;
+                    return (
+                      <button
+                        key={aId}
+                        type="button"
+                        onClick={() => onSelectArena(aId)}
+                        className={`text-left rounded-xl border p-2.5 transition ${
+                          active
+                            ? 'border-amber-500 bg-amber-500/12'
+                            : 'border-slate-800 bg-[#192029] hover:border-slate-600'
+                        }`}
                       >
-                        {a.hazardTag}
-                      </div>
-                      <p className="mt-1 text-[11px] text-slate-400 line-clamp-2 leading-snug">
-                        {a.subtitle}
-                      </p>
-                    </button>
-                  );
-                })}
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className="text-xs font-bold text-white truncate">{a.name}</span>
+                          <span
+                            className="h-2.5 w-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: a.accentHex }}
+                          />
+                        </div>
+                        <div
+                          className="mt-0.5 text-[10px] font-semibold truncate"
+                          style={{ color: a.accentHex }}
+                        >
+                          {a.hazardTag}
+                        </div>
+                        <p className="mt-1 text-[11px] text-slate-400 line-clamp-2 leading-snug">
+                          {a.subtitle}
+                        </p>
+                      </button>
+                    );
+                  })}
               </div>
             </div>
 

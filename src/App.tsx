@@ -1,19 +1,53 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { WifiOff, Volume2, VolumeX } from 'lucide-react';
+import {
+  Gamepad2,
+  KeyRound,
+  Layers,
+  Mic,
+  MicOff,
+  Monitor,
+  Music,
+  Radio,
+  Sliders,
+  Smartphone,
+  Sparkles,
+  Tablet,
+  Users,
+  WifiOff,
+  Volume2,
+  VolumeX,
+} from 'lucide-react';
 import { registerSW } from 'virtual:pwa-register';
+import {
+  AiForgeStudioModal,
+  type MediaHistoryItem,
+  type StudioTab,
+} from './components/AiForgeStudioModal';
+import { AudioSettingsModal } from './components/AudioSettingsModal';
 import {
   ArenaLauncherModal,
   type LocalLaunchMode,
   type RivalTier,
 } from './components/ArenaLauncherModal';
-import { CombatHud, type MatchResultSummary } from './components/CombatHud';
+import { CombatHud, type CameraViewPreset, type MatchResultSummary } from './components/CombatHud';
+import { GarageRosterModal } from './components/GarageRosterModal';
+import {
+  LiveVoiceCopilot,
+  type StudioLightingPreset,
+} from './components/LiveVoiceCopilot';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { SocialAndRankingsPanel, type HubModalTab } from './components/SocialAndRankingsPanel';
+import {
+  ThreeSceneInspectorDock,
+  type WorkshopCameraAngle,
+} from './components/ThreeSceneInspectorDock';
 import { TouchControls } from './components/TouchControls';
 import { WorkshopDock } from './components/WorkshopDock';
+import { IntroSplashOverlay } from './components/IntroSplashOverlay';
 import type { OpenRoomSummary } from './components/OnlinePvpPanel';
 import { BattleArenaCanvas } from './game/BattleArenaCanvas';
 import { soundEngine } from './game/soundEngine';
+import { voiceCommentator } from './game/voiceCommentator';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import {
   hasPendingSync,
@@ -37,16 +71,20 @@ import {
   levelPassed,
 } from './shared/campaign';
 import {
+  ARENA_CATALOG,
   type ArenaId,
   type ArenaSnapshot,
   type BotConfig,
   type ClanChatMessage,
   type ClanInfo,
+  type ControlSchemeId,
   DEFAULT_SKILLS,
+  type DeviceLayoutMode,
   type GameMode,
   getBotWeapons,
   getPartPrice,
   isPartOwned,
+  isTraditionalArena,
   type LeaderboardEntry,
   type MatchModifierId,
   type PartCategory,
@@ -339,11 +377,37 @@ export default function App() {
   const [selectedRivalTier, setSelectedRivalTier] = useState<RivalTier>('mixed');
   const [selectedDuration, setSelectedDuration] = useState<TimedBattleDuration>(180);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  const [garageOpen, setGarageOpen] = useState(false);
   const [hubTab, setHubTab] = useState<HubModalTab | null>(null);
-  const [cameraPreset, setCameraPreset] = useState<'chase' | 'tactical' | 'cinematic'>('chase');
+  const [cameraPreset, setCameraPreset] = useState<CameraViewPreset>('chase');
   const [selectedModifiers, setSelectedModifiers] = useState<MatchModifierId[]>([]);
   const [matchResult, setMatchResult] = useState<MatchResultSummary | null>(null);
   const activeCampaignIdRef = useRef<string | null>(null);
+
+  // Bot Configuration History Stack for Back / Forward buttons next to Random
+  const [botHistory, setBotHistory] = useState<BotConfig[]>(() => [profile.botConfig]);
+  const [botHistoryIdx, setBotHistoryIdx] = useState<number>(0);
+
+  // Admin Login & 2-Player Multi-Screen Seat State
+  const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [adminCodeInput, setAdminCodeInput] = useState('');
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [adminError, setAdminError] = useState<string | null>(null);
+  const [adminSeat, setAdminSeat] = useState<1 | 2 | null>(null);
+
+  // AI Forge Studio (Lyria 3 Music Generation + Media Lab), Real-Time Voice Copilot & 3D Scene Inspector
+  const [aiStudioOpen, setAiStudioOpen] = useState(false);
+  const [aiStudioTab, setAiStudioTab] = useState<StudioTab>('music');
+  const [mediaHistory, setMediaHistory] = useState<MediaHistoryItem[]>([]);
+  const [liveVoiceOpen, setLiveVoiceOpen] = useState(false);
+  const [explodedRatio, setExplodedRatio] = useState(0);
+  const [lightingPreset, setLightingPreset] = useState<StudioLightingPreset>('arena');
+  const [turntableSpeed, setTurntableSpeed] = useState(1);
+  const [workshopCameraAngle, setWorkshopCameraAngle] = useState<WorkshopCameraAngle>('hero');
+  const [weaponTestBurstSignal, setWeaponTestBurstSignal] = useState(0);
+  const [zenMode, setZenMode] = useState(false);
+  const [sceneDockCollapsed, setSceneDockCollapsed] = useState(false);
+  const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
 
   // Server-backed social & leaderboard data (seeded with rich offline fallbacks)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(OFFLINE_FALLBACK_LEADERBOARD);
@@ -384,7 +448,10 @@ export default function App() {
     fireWeapons: [false, false, false],
     boost: false,
     overdrive: false,
+    drift: false,
   });
+
+  const [showIntroSplash, setShowIntroSplash] = useState(true);
 
   useEffect(() => {
     try {
@@ -396,7 +463,30 @@ export default function App() {
 
   useEffect(() => {
     soundEngine.setMuted(profile.muted);
+    voiceCommentator.setMuted(profile.muted);
   }, [profile.muted]);
+
+  useEffect(() => {
+    voiceCommentator.setCommentaryMuted(Boolean(profile.commentaryMuted));
+  }, [profile.commentaryMuted]);
+
+  useEffect(() => {
+    soundEngine.setVolumes({
+      master: profile.masterVolume ?? 0.85,
+      music: profile.musicVolume ?? 0.65,
+      sfx: profile.sfxVolume ?? 0.85,
+      crowd: profile.crowdVolume ?? 0.7,
+    });
+    voiceCommentator.setVolume(
+      (profile.masterVolume ?? 0.85) * (profile.commentaryVolume ?? 0.9),
+    );
+  }, [
+    profile.masterVolume,
+    profile.musicVolume,
+    profile.sfxVolume,
+    profile.crowdVolume,
+    profile.commentaryVolume,
+  ]);
 
   useEffect(() => {
     if (sceneMode === 'workshop') {
@@ -424,7 +514,7 @@ export default function App() {
     });
   }, []);
 
-  const handleBotConfigChange = useCallback((nextConfig: BotConfig) => {
+  const applyBotConfigImmediate = useCallback((nextConfig: BotConfig) => {
     setProfile((prev) => {
       const slot = prev.activeLoadoutSlot ?? 0;
       const nextLoadouts = Array.isArray(prev.savedLoadouts) ? [...prev.savedLoadouts] : [];
@@ -433,6 +523,70 @@ export default function App() {
         ...prev,
         botConfig: nextConfig,
         savedLoadouts: nextLoadouts,
+      };
+      savePlayerProfile(next);
+      return next;
+    });
+  }, []);
+
+  const handleBotConfigChange = useCallback(
+    (nextConfig: BotConfig) => {
+      applyBotConfigImmediate(nextConfig);
+      setBotHistory((prev) => {
+        const sliced = prev.slice(0, botHistoryIdx + 1);
+        const last = sliced[sliced.length - 1];
+        if (last && JSON.stringify(last) === JSON.stringify(nextConfig)) {
+          return prev;
+        }
+        const updated = [...sliced, JSON.parse(JSON.stringify(nextConfig)) as BotConfig].slice(-25);
+        setBotHistoryIdx(updated.length - 1);
+        return updated;
+      });
+    },
+    [applyBotConfigImmediate, botHistoryIdx],
+  );
+
+  const handleStepBackBotHistory = useCallback(() => {
+    if (botHistoryIdx <= 0) return;
+    const targetIdx = botHistoryIdx - 1;
+    const chosen = botHistory[targetIdx];
+    if (chosen) {
+      setBotHistoryIdx(targetIdx);
+      applyBotConfigImmediate(JSON.parse(JSON.stringify(chosen)) as BotConfig);
+    }
+  }, [botHistory, botHistoryIdx, applyBotConfigImmediate]);
+
+  const handleStepForwardBotHistory = useCallback(() => {
+    if (botHistoryIdx >= botHistory.length - 1) return;
+    const targetIdx = botHistoryIdx + 1;
+    const chosen = botHistory[targetIdx];
+    if (chosen) {
+      setBotHistoryIdx(targetIdx);
+      applyBotConfigImmediate(JSON.parse(JSON.stringify(chosen)) as BotConfig);
+    }
+  }, [botHistory, botHistoryIdx, applyBotConfigImmediate]);
+
+  const handleSaveCustomBotToRoster = useCallback((customBot: BotConfig) => {
+    setProfile((prev) => {
+      const existing = Array.isArray(prev.customGarageBots) ? [...prev.customGarageBots] : [];
+      const filtered = existing.filter((b) => b.name.toLowerCase() !== customBot.name.toLowerCase());
+      const nextCustom = [JSON.parse(JSON.stringify(customBot)) as BotConfig, ...filtered].slice(0, 24);
+      const next: PlayerProfile = {
+        ...prev,
+        customGarageBots: nextCustom,
+      };
+      savePlayerProfile(next);
+      return next;
+    });
+  }, []);
+
+  const handleDeleteCustomBotFromRoster = useCallback((idx: number) => {
+    setProfile((prev) => {
+      const existing = Array.isArray(prev.customGarageBots) ? [...prev.customGarageBots] : [];
+      existing.splice(idx, 1);
+      const next: PlayerProfile = {
+        ...prev,
+        customGarageBots: existing,
       };
       savePlayerProfile(next);
       return next;
@@ -512,14 +666,41 @@ export default function App() {
     }
   }, []);
 
+  const fetchMediaHistory = useCallback(async () => {
+    if (!navigator.onLine) return;
+    try {
+      const res = await fetch('/api/ai/history');
+      if (res.ok) {
+        const data = (await res.json()) as { history?: MediaHistoryItem[] };
+        if (Array.isArray(data.history)) setMediaHistory(data.history);
+      }
+    } catch {
+      // Ignore offline history fetch
+    }
+  }, []);
+
   useEffect(() => {
     if (isOnline) {
       fetchBootstrap();
+      fetchMediaHistory();
       if (hasPendingSync()) {
         syncProfileToServer(profile);
       }
     }
-  }, [isOnline, fetchBootstrap, syncProfileToServer, profile]);
+  }, [isOnline, fetchBootstrap, fetchMediaHistory, syncProfileToServer, profile]);
+
+  // Keyboard shortcut [H] in Workshop mode toggles 3D Zen / Cinema mode
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (sceneMode !== 'workshop') return;
+      if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select')) return;
+      if (!e.repeat && e.code === 'KeyH') {
+        setZenMode((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sceneMode]);
 
   // WebSocket lifecycle
   useEffect(() => {
@@ -595,11 +776,20 @@ export default function App() {
               matchRewardAppliedRef.current = false;
               lastCountdownCeilRef.current = 3;
               setLauncherOpen(false);
+              setAdminModalOpen(false);
               setLobbyRoom(null);
               setIsMultiplayerMatch(true);
               setSelectedArena(msg.snapshot.arenaId);
               setSceneMode('combat');
               soundEngine.playNextBattleMusic(msg.snapshot.arenaId);
+              const rivalBot = msg.snapshot.bots.find((b) => b.id !== profile.id);
+              voiceCommentator.announceMatchStart(
+                msg.snapshot.arenaId,
+                profile.botConfig.name,
+                rivalBot?.config.name,
+                profile.botConfig,
+                rivalBot?.config,
+              );
             }
             snapshotRef.current = msg.snapshot;
             setHudSnapshot({ ...msg.snapshot });
@@ -648,27 +838,118 @@ export default function App() {
     }
   }, [profile.id, profile.callsign, profile.clanTag]);
 
-  // Keyboard Driving & Combat Bindings
+  // Keyboard & Mouse Driving & Combat Bindings (WASD Drive, Arrows Drive + WASD Weapons, or Mouse Drive)
+  const activeScheme: ControlSchemeId = profile.controlScheme ?? 'wasd_drive';
+  const activeDeviceMode: DeviceLayoutMode = profile.deviceLayoutMode ?? 'auto';
+
   useEffect(() => {
     const keys = new Set<string>();
+    let mouseDriveThrottle = 0;
+    let mouseDriveSteer = 0;
+    let mouseButtons = [false, false, false];
+
     const syncKeysToInput = () => {
-      const fwd = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
-      const str = (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) - (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0);
-      const slot0 = keys.has('Digit1') || keys.has('KeyJ') || keys.has('Space');
-      const slot1 = keys.has('Digit2') || keys.has('KeyK');
-      const slot2 = keys.has('Digit3') || keys.has('KeyL');
+      let fwd = 0;
+      let str = 0;
+      let slot0 = false;
+      let slot1 = false;
+      let slot2 = false;
+      let repair = false;
+
+      if (activeScheme === 'arrows_drive') {
+        // Arrows Drive + W/A/S/D for Weapons & Repair
+        fwd = (keys.has('ArrowUp') ? 1 : 0) - (keys.has('ArrowDown') ? 1 : 0);
+        str = (keys.has('ArrowLeft') ? 1 : 0) - (keys.has('ArrowRight') ? 1 : 0);
+        slot0 =
+          keys.has('KeyA') ||
+          keys.has('Numpad1') ||
+          keys.has('Numpad4') ||
+          keys.has('Digit1') ||
+          keys.has('KeyJ');
+        slot1 =
+          keys.has('KeyW') ||
+          keys.has('Numpad2') ||
+          keys.has('Numpad8') ||
+          keys.has('Digit2') ||
+          keys.has('KeyK');
+        slot2 =
+          keys.has('KeyD') ||
+          keys.has('Numpad3') ||
+          keys.has('Numpad6') ||
+          keys.has('Digit3') ||
+          keys.has('KeyL');
+        repair = keys.has('KeyS') || keys.has('KeyF') || keys.has('Numpad5') || keys.has('KeyE');
+      } else {
+        // WASD Drive (or Mouse Drive + WASD fallback) + Arrow Keys for Weapons & Repair
+        const keyFwd = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
+        const keyStr = (keys.has('KeyA') ? 1 : 0) - (keys.has('KeyD') ? 1 : 0);
+        fwd =
+          activeScheme === 'mouse_drive' && Math.abs(keyFwd) < 0.05
+            ? mouseDriveThrottle
+            : keyFwd;
+        str =
+          activeScheme === 'mouse_drive' && Math.abs(keyStr) < 0.05
+            ? mouseDriveSteer
+            : keyStr;
+        slot0 =
+          keys.has('ArrowLeft') ||
+          keys.has('Numpad1') ||
+          keys.has('Numpad4') ||
+          keys.has('Digit1') ||
+          keys.has('KeyJ') ||
+          (activeScheme === 'mouse_drive' && mouseButtons[0]);
+        slot1 =
+          keys.has('ArrowUp') ||
+          keys.has('Numpad2') ||
+          keys.has('Numpad8') ||
+          keys.has('Digit2') ||
+          keys.has('KeyK') ||
+          (activeScheme === 'mouse_drive' && mouseButtons[1]);
+        slot2 =
+          keys.has('ArrowRight') ||
+          keys.has('Numpad3') ||
+          keys.has('Numpad6') ||
+          keys.has('Digit3') ||
+          keys.has('KeyL') ||
+          (activeScheme === 'mouse_drive' && mouseButtons[2]);
+        repair =
+          keys.has('KeyF') || keys.has('ArrowDown') || keys.has('Numpad5') || keys.has('KeyE');
+      }
+
       inputRef.current.throttle = fwd;
       inputRef.current.steer = str;
       inputRef.current.fireWeapons = [slot0, slot1, slot2];
       inputRef.current.fireWeapon = slot0 || slot1 || slot2;
-      inputRef.current.boost = keys.has('ShiftLeft') || keys.has('ShiftRight');
-      inputRef.current.overdrive = keys.has('KeyE');
+      inputRef.current.boost = keys.has('Space') || keys.has('Numpad0');
+      inputRef.current.drift =
+        keys.has('ShiftLeft') ||
+        keys.has('ShiftRight') ||
+        keys.has('KeyQ') ||
+        (inputRef.current.boost && Math.abs(str) > 0.1);
+      inputRef.current.overdrive = repair;
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (sceneMode !== 'combat') return;
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+      if (
+        ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code) ||
+        e.code.startsWith('Numpad')
+      ) {
         e.preventDefault();
+      }
+      if (!e.repeat && (e.code === 'KeyV' || e.code === 'KeyC')) {
+        setCameraPreset((c) =>
+          c === 'chase'
+            ? 'first_person'
+            : c === 'first_person'
+              ? 'pilot_booth'
+              : c === 'pilot_booth'
+                ? 'tactical'
+                : c === 'tactical'
+                  ? 'cinematic'
+                  : 'chase',
+        );
+        return;
       }
       soundEngine.unlock();
       keys.add(e.code);
@@ -682,13 +963,66 @@ export default function App() {
       }
     };
 
+    const isInteractiveHudElement = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      return Boolean(target.closest('button, a, input, select, textarea, [role="dialog"]'));
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (sceneMode !== 'combat' || activeScheme !== 'mouse_drive') return;
+      const w = window.innerWidth || 1;
+      const h = window.innerHeight || 1;
+      const nx = (e.clientX - w * 0.5) / (w * 0.35);
+      const ny = (h * 0.52 - e.clientY) / (h * 0.32);
+      const deadzone = 0.12;
+      mouseDriveSteer =
+        Math.abs(nx) < deadzone ? 0 : Math.max(-1, Math.min(1, -nx));
+      mouseDriveThrottle =
+        Math.abs(ny) < deadzone ? 0 : Math.max(-1, Math.min(1, ny));
+      syncKeysToInput();
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (sceneMode !== 'combat' || activeScheme !== 'mouse_drive') return;
+      if (isInteractiveHudElement(e.target)) return;
+      soundEngine.unlock();
+      if (e.button === 0) mouseButtons[0] = true;
+      else if (e.button === 2) mouseButtons[1] = true;
+      else if (e.button === 1) mouseButtons[2] = true;
+      syncKeysToInput();
+    };
+
+    const onMouseUp = (e: MouseEvent) => {
+      if (activeScheme !== 'mouse_drive') return;
+      if (e.button === 0) mouseButtons[0] = false;
+      else if (e.button === 2) mouseButtons[1] = false;
+      else if (e.button === 1) mouseButtons[2] = false;
+      if (sceneMode === 'combat') syncKeysToInput();
+    };
+
+    const onContextMenu = (e: MouseEvent) => {
+      if (sceneMode === 'combat' && activeScheme === 'mouse_drive' && !isInteractiveHudElement(e.target)) {
+        e.preventDefault();
+      }
+    };
+
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('mousemove', onMouseMove, { passive: true });
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('contextmenu', onContextMenu);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('contextmenu', onContextMenu);
     };
-  }, [sceneMode]);
+  }, [sceneMode, activeScheme]);
+
+  const activeCombatPlayerId = adminSeat ? `admin_p${adminSeat}` : profile.id;
 
   // Send live inputs to server during Multiplayer matches at 30Hz
   useEffect(() => {
@@ -700,14 +1034,14 @@ export default function App() {
           JSON.stringify({
             type: 'match:input',
             roomId: activeRoomIdRef.current,
-            playerId: profile.id,
+            playerId: activeCombatPlayerId,
             input: inputRef.current,
           }),
         );
       }
     }, 33);
     return () => clearInterval(timer);
-  }, [sceneMode, isMultiplayerMatch, profile.id]);
+  }, [sceneMode, isMultiplayerMatch, activeCombatPlayerId]);
 
   // Apply match rewards once when snapshot enters 'finished'
   useEffect(() => {
@@ -786,6 +1120,15 @@ export default function App() {
       pvp: isMultiplayerMatch ? pvpResultRef.current ?? undefined : undefined,
     });
 
+    const winnerBot = hudSnapshot.winnerId
+      ? hudSnapshot.bots.find((b) => b.id === hudSnapshot.winnerId)
+      : undefined;
+    voiceCommentator.announceMatchEnd(
+      levelWon,
+      winnerBot?.config.name || profile.botConfig.name,
+      hudSnapshot.finishReason,
+    );
+
     setProfile((prev) => {
       const nextXp = prev.xp + xpEarned;
       const leveledUp = nextXp >= prev.level * 200;
@@ -853,16 +1196,20 @@ export default function App() {
       soundEngine.unlock();
       matchRewardAppliedRef.current = false;
       lastCountdownCeilRef.current = 3;
+      setAdminSeat(null);
       setIsMultiplayerMatch(false);
       setIsClanWarMatch(clanWar);
       setLastLocalMode(mode);
       activeCampaignIdRef.current = null;
       setMatchResult(null);
 
-      const arenaToUse: ArenaId =
+      const isTrad = Boolean(profile.traditionalMode) || selectedModifiers.includes('traditional_rules');
+      const rawArenaToUse: ArenaId =
         mode === 'gauntlet'
           ? GAUNTLET_ARENA_ORDER[(profile.gauntletStage - 1) % GAUNTLET_ARENA_ORDER.length]
           : selectedArena;
+      const arenaToUse: ArenaId =
+        isTrad && !isTraditionalArena(rawArenaToUse) ? 'colosseum' : rawArenaToUse;
       setSelectedArena(arenaToUse);
 
       const roster: BotRosterTemplate[] = [
@@ -1019,8 +1366,16 @@ export default function App() {
         }
       }
 
+      const effectiveModifiers: MatchModifierId[] =
+        mode === 'practice'
+          ? isTrad
+            ? ['traditional_rules']
+            : []
+          : isTrad && !selectedModifiers.includes('traditional_rules')
+            ? [...selectedModifiers, 'traditional_rules']
+            : selectedModifiers;
       const snap = createInitialSnapshot(mode as GameMode, arenaToUse, roster, selectedDuration, {
-        modifiers: mode === 'practice' ? [] : selectedModifiers,
+        modifiers: effectiveModifiers,
       });
       lastMatchTimerCeilRef.current = Math.ceil(snap.timeRemaining);
       snapshotRef.current = snap;
@@ -1029,6 +1384,14 @@ export default function App() {
       setHubTab(null);
       setSceneMode('combat');
       soundEngine.playNextBattleMusic(arenaToUse);
+      const firstRival = roster.find((r) => r.team !== 0);
+      voiceCommentator.announceMatchStart(
+        arenaToUse,
+        profile.botConfig.name,
+        firstRival?.config.name,
+        profile.botConfig,
+        firstRival?.config,
+      );
     },
     [profile, selectedArena, selectedRivalTier, selectedDuration, selectedModifiers],
   );
@@ -1077,6 +1440,14 @@ export default function App() {
       setHubTab(null);
       setSceneMode('combat');
       soundEngine.playNextBattleMusic(level.arenaId);
+      const firstRival = roster.find((r) => r.team !== 0);
+      voiceCommentator.announceMatchStart(
+        level.arenaId,
+        profile.botConfig.name,
+        firstRival?.config.name,
+        profile.botConfig,
+        firstRival?.config,
+      );
     },
     [profile],
   );
@@ -1169,7 +1540,51 @@ export default function App() {
     activeRoomIdRef.current = null;
     snapshotRef.current = null;
     setHudSnapshot(null);
+    setAdminSeat(null);
     setSceneMode('workshop');
+  };
+
+  const handleVerifyAdminCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminError(null);
+    try {
+      const res = await fetch('/api/admin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: adminCodeInput.trim() }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { verified?: boolean };
+        if (data.verified) {
+          setAdminUnlocked(true);
+          setAdminCodeInput('');
+          return;
+        }
+      }
+      setAdminError('Invalid access code.');
+    } catch {
+      setAdminError('Unable to reach server to verify access.');
+    }
+  };
+
+  const handleJoinAdminSeat = (seat: 1 | 2) => {
+    soundEngine.unlock();
+    setAdminSeat(seat);
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          type: 'admin:join_seat',
+          seat,
+          name: `${profile.callsign} (P${seat})`,
+          clanTag: profile.clanTag,
+          arenaId: selectedArena,
+          durationSeconds: selectedDuration,
+          config: profile.botConfig,
+          skills: profile.skills,
+        }),
+      );
+    }
   };
 
   const handleUpgradeSkill = (key: keyof SkillTree) => {
@@ -1305,10 +1720,18 @@ export default function App() {
   const showTouchControls =
     sceneMode === 'combat' &&
     hudSnapshot?.phase !== 'finished' &&
-    (profile.touchControlsMode === 'always' ||
-      (profile.touchControlsMode === 'auto' && isTouchDevice));
+    (activeDeviceMode === 'mobile' ||
+      activeDeviceMode === 'tablet' ||
+      (activeDeviceMode !== 'desktop' &&
+        (profile.touchControlsMode === 'always' ||
+          (profile.touchControlsMode === 'auto' && isTouchDevice))));
 
-  const playerCombatBot = hudSnapshot?.bots.find((b) => b.id === profile.id);
+  const showDesktopCombatTile =
+    activeDeviceMode === 'desktop' ||
+    activeDeviceMode === 'tablet' ||
+    (activeDeviceMode === 'auto' && !showTouchControls);
+
+  const playerCombatBot = hudSnapshot?.bots.find((b) => b.id === activeCombatPlayerId);
 
   return (
     <div className="relative h-dvh w-screen overflow-hidden bg-[#0D1014]">
@@ -1318,28 +1741,70 @@ export default function App() {
         arenaId={selectedArena}
         batteryMode={profile.batteryMode}
         playerBotConfig={profile.botConfig}
-        playerId={profile.id}
+        playerId={activeCombatPlayerId}
         snapshotRef={snapshotRef}
         inputRef={inputRef}
         onStepLocalPhysics={sceneMode === 'combat' && !isMultiplayerMatch ? stepLocalPhysics : undefined}
         cameraPreset={cameraPreset}
+        explodedRatio={explodedRatio}
+        lightingPreset={lightingPreset}
+        turntableSpeed={turntableSpeed}
+        workshopCameraAngle={workshopCameraAngle}
+        onWorkshopCameraManualOrbit={() => setWorkshopCameraAngle('free')}
+        weaponTestBurstSignal={weaponTestBurstSignal}
       />
+
+      {showIntroSplash && (
+        <IntroSplashOverlay
+          onComplete={() => {
+            soundEngine.unlock();
+            setShowIntroSplash(false);
+          }}
+        />
+      )}
 
       {/* Top Navigation Bar (Workshop / Hangar Mode) */}
       {sceneMode === 'workshop' && (
         <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center justify-between gap-4 border-b border-slate-800/90 bg-[#0D1014]/92 px-4 sm:px-6 pt-safe">
-          {/* Zone 1: Single-line Brand Wordmark */}
-          <div className="flex items-center gap-2 shrink-0">
+          {/* Zone 1: Brand Wordmark + Developer Badge */}
+          <div className="flex items-center gap-3 shrink-0">
             <span className="font-display text-lg font-bold tracking-tight text-white whitespace-nowrap">
               Aetheris Bot Wars
             </span>
-            <span className="hidden sm:inline rounded bg-amber-500/15 border border-amber-500/40 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
-              S05 ASCENSION
-            </span>
+            <a
+              href="https://lovable.dev/@theonlyarchitect"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Developer: THE ARCHITECT · https://lovable.dev/@theonlyarchitect"
+              className="hidden md:inline-flex items-center gap-1.5 rounded-xl border border-amber-500/45 bg-[#141922] px-2.5 py-1 text-[11px] font-bold text-amber-300 hover:border-amber-400 hover:text-amber-200 transition"
+            >
+              <img
+                src="/assets/aistudio/nano-banana-2_take_this_image_and_create_a_logo_out_of_it_Token_HSL_Usage_--background_220_15_-0_1__11fa74ed.jpg"
+                alt="THE ARCHITECT"
+                className="h-5 w-5 rounded-full border border-amber-400/70 object-cover"
+              />
+              <span>THE ARCHITECT ↗</span>
+            </a>
+            <a
+              href="https://businessforensics.tech"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden xl:inline-flex items-center gap-1 rounded-xl border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-[11px] font-bold text-sky-300 hover:border-sky-400 transition"
+            >
+              <span>Businessforensics.tech ↗</span>
+            </a>
           </div>
 
           {/* Zone 2: Concise single-line nav links */}
-          <nav className="flex items-center gap-3 sm:gap-6 overflow-x-auto text-xs sm:text-sm font-medium text-slate-300">
+          <nav className="flex items-center gap-2.5 sm:gap-5 overflow-x-auto text-xs sm:text-sm font-medium text-slate-300">
+            <button
+              type="button"
+              onClick={() => setGarageOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-fuchsia-500/50 bg-fuchsia-500/15 px-2.5 py-1.5 font-bold text-fuchsia-200 hover:bg-fuchsia-500/25 transition whitespace-nowrap shrink-0"
+            >
+              <Layers className="h-3.5 w-3.5 text-fuchsia-300" />
+              <span>Garage & Fusion</span>
+            </button>
             <button
               type="button"
               onClick={() => setHubTab('rankings')}
@@ -1368,6 +1833,37 @@ export default function App() {
             >
               Skills ({profile.skillPoints} SP)
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAiStudioTab('music');
+                setAiStudioOpen(true);
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-2.5 py-1.5 font-bold text-amber-200 hover:bg-amber-500/25 transition whitespace-nowrap shrink-0"
+            >
+              <Music className="h-3.5 w-3.5 text-amber-400" />
+              <span>AI Music & Lab</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setLiveVoiceOpen((prev) => !prev)}
+              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-bold transition whitespace-nowrap shrink-0 ${
+                liveVoiceOpen
+                  ? 'border-emerald-400 bg-emerald-500/25 text-emerald-200 shadow'
+                  : 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25'
+              }`}
+            >
+              <Radio className="h-3.5 w-3.5 text-emerald-400" />
+              <span>Live Voice AI</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdminModalOpen(true)}
+              className="flex items-center gap-1 rounded-lg border border-slate-700 bg-[#161C24] px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:border-amber-400/60 hover:text-amber-300 transition whitespace-nowrap shrink-0"
+            >
+              <KeyRound className="h-3.5 w-3.5 text-amber-400" />
+              <span>{adminUnlocked ? '2P Arena' : 'Admin Login'}</span>
+            </button>
           </nav>
 
           {/* Zone 3: Single Primary Action */}
@@ -1383,9 +1879,9 @@ export default function App() {
         </header>
       )}
 
-      {/* Subtle Pilot Metadata & Audio / PWA Install Strip below top bar in Workshop */}
+      {/* Subtle Pilot Metadata, Control Scheme, Device Mode & Audio Strip below top bar in Workshop */}
       {sceneMode === 'workshop' && (
-        <div className="pointer-events-none fixed inset-x-0 top-16 z-20 flex items-center justify-between px-4 sm:px-6">
+        <div className="pointer-events-none fixed inset-x-0 top-16 z-20 flex flex-wrap items-center justify-between gap-2 px-4 sm:px-6">
           <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-xl border border-slate-800/90 bg-[#12161C]/90 px-3 py-1.5 text-xs text-slate-300 font-mono-tabular">
             <span className="font-semibold text-white">
               [{profile.clanTag}] {profile.callsign}
@@ -1406,7 +1902,67 @@ export default function App() {
             <span>{profile.skillPoints} SP</span>
           </div>
 
-          <div className="pointer-events-auto flex items-center gap-2">
+          <div className="pointer-events-auto flex flex-wrap items-center gap-1.5">
+            {/* Control Scheme Selector: WASD Drive / Arrows Drive (WASD Wpns) / Mouse Drive */}
+            <div
+              className="flex items-center gap-1 rounded-xl border border-slate-700/90 bg-[#12161C]/95 p-1 text-[11px]"
+              title="Choose Driving & Weapon Controls"
+            >
+              <Gamepad2 className="ml-1.5 h-3.5 w-3.5 text-amber-400 shrink-0" />
+              {(
+                [
+                  { id: 'wasd_drive', label: 'WASD Drive' },
+                  { id: 'arrows_drive', label: 'Arrows Drive (WASD Wpns)' },
+                  { id: 'mouse_drive', label: 'Mouse Drive' },
+                ] as const
+              ).map((scheme) => (
+                <button
+                  key={scheme.id}
+                  type="button"
+                  onClick={() => updateProfile({ controlScheme: scheme.id })}
+                  className={`rounded-lg px-2 py-1 font-bold transition whitespace-nowrap ${
+                    activeScheme === scheme.id
+                      ? 'bg-amber-500 text-slate-950 shadow'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  {scheme.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Device Mode Selector: Desktop / Tablet / Mobile */}
+            <div
+              className="flex items-center gap-1 rounded-xl border border-slate-700/90 bg-[#12161C]/95 p-1 text-[11px]"
+              title="Switch between Desktop, Tablet, and Mobile Layout Mode"
+            >
+              {(
+                [
+                  { id: 'desktop', label: 'Desktop', Icon: Monitor },
+                  { id: 'tablet', label: 'Tablet', Icon: Tablet },
+                  { id: 'mobile', label: 'Mobile', Icon: Smartphone },
+                ] as const
+              ).map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() =>
+                    updateProfile({
+                      deviceLayoutMode: activeDeviceMode === id ? 'auto' : id,
+                    })
+                  }
+                  className={`flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition whitespace-nowrap ${
+                    activeDeviceMode === id
+                      ? 'bg-sky-500 text-slate-950 shadow'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  <Icon className="h-3 w-3" />
+                  <span className="hidden md:inline">{label}</span>
+                </button>
+              ))}
+            </div>
+
             {!isOnline && (
               <div className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-[#1B1710]/95 px-2.5 py-1.5 text-xs font-medium text-amber-300">
                 <WifiOff className="h-3.5 w-3.5" />
@@ -1414,6 +1970,38 @@ export default function App() {
               </div>
             )}
             <PWAInstallButton compact />
+            <button
+              type="button"
+              onClick={() => setAudioSettingsOpen(true)}
+              title="Open Audio & Volume Mixer (Music, SFX, Crowd, Commentary)"
+              className="flex h-9 items-center gap-1.5 rounded-lg border border-amber-500/50 bg-[#12161C]/90 px-2.5 text-xs font-bold text-amber-300 hover:border-amber-400 transition cursor-pointer"
+            >
+              <Sliders className="h-3.5 w-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Audio Mixer</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => updateProfile({ commentaryMuted: !profile.commentaryMuted })}
+              title={
+                profile.commentaryMuted
+                  ? 'Turn Commentary Voices ON'
+                  : 'Turn Commentary Voices OFF'
+              }
+              className={`flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-bold transition ${
+                profile.commentaryMuted
+                  ? 'border-slate-700 bg-[#12161C]/90 text-slate-400 hover:text-white'
+                  : 'border-sky-500/50 bg-[#12161C]/90 text-sky-300 hover:border-sky-400'
+              }`}
+            >
+              {profile.commentaryMuted ? (
+                <MicOff className="h-3.5 w-3.5 text-slate-400" />
+              ) : (
+                <Mic className="h-3.5 w-3.5 text-sky-300" />
+              )}
+              <span className="hidden sm:inline">
+                {profile.commentaryMuted ? 'Commentary Off' : 'Commentary On'}
+              </span>
+            </button>
             <button
               type="button"
               onClick={() => updateProfile({ muted: !profile.muted })}
@@ -1426,8 +2014,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Workshop Collapsible Bottom Customization Dock */}
-      {sceneMode === 'workshop' && (
+      {/* Workshop Left & Right Customization Docks (hidden in 3D Zen Mode [H]) */}
+      {sceneMode === 'workshop' && !zenMode && (
         <WorkshopDock
           config={profile.botConfig}
           skills={profile.skills}
@@ -1435,26 +2023,190 @@ export default function App() {
           activeLoadoutSlot={profile.activeLoadoutSlot ?? 0}
           onSelectLoadoutSlot={handleSelectLoadoutSlot}
           onChange={handleBotConfigChange}
+          selectedArena={selectedArena}
+          onSelectArena={setSelectedArena}
           profile={profile}
           onBuyPart={handleBuyPart}
+          onUpdateFavorites={(favorites) => updateProfile({ favorites })}
+          canStepBack={botHistoryIdx > 0}
+          canStepForward={botHistoryIdx < botHistory.length - 1}
+          onStepBack={handleStepBackBotHistory}
+          onStepForward={handleStepForwardBotHistory}
+          onOpenGarageRoster={() => setGarageOpen(true)}
+          deviceLayoutMode={activeDeviceMode}
+          traditionalMode={Boolean(profile.traditionalMode)}
+          onToggleTraditionalMode={(next) => updateProfile({ traditionalMode: next })}
           onStartFight={() => setLauncherOpen(true)}
         />
+      )}
+
+      {/* Interactive 3D Scene Inspector Dock (Exploded View, Studio PBR Lighting, Damped Camera & Zen Mode) */}
+      {sceneMode === 'workshop' && (
+        <ThreeSceneInspectorDock
+          explodedRatio={explodedRatio}
+          onChangeExplodedRatio={setExplodedRatio}
+          lightingPreset={lightingPreset}
+          onChangeLightingPreset={setLightingPreset}
+          turntableSpeed={turntableSpeed}
+          onChangeTurntableSpeed={setTurntableSpeed}
+          workshopCameraAngle={workshopCameraAngle}
+          onSelectWorkshopCameraAngle={setWorkshopCameraAngle}
+          onTriggerWeaponTestBurst={() => {
+            soundEngine.unlock();
+            setWeaponTestBurstSignal((prev) => prev + 1);
+          }}
+          zenMode={zenMode}
+          onToggleZenMode={() => setZenMode((prev) => !prev)}
+          dockCollapsed={sceneDockCollapsed}
+          onToggleDockCollapsed={() => setSceneDockCollapsed((prev) => !prev)}
+          onOpenAiStudio={() => {
+            setAiStudioTab('music');
+            setAiStudioOpen(true);
+          }}
+          onOpenLiveVoice={() => setLiveVoiceOpen((prev) => !prev)}
+          liveVoiceOpen={liveVoiceOpen}
+        />
+      )}
+
+      {/* Full Garage Bot Roster & 2-Bot Fusion Modal */}
+      <GarageRosterModal
+        open={garageOpen}
+        currentBotConfig={profile.botConfig}
+        skills={profile.skills}
+        customGarageBots={profile.customGarageBots ?? []}
+        onSelectBotToPlay={handleBotConfigChange}
+        onSaveCustomBotToRoster={handleSaveCustomBotToRoster}
+        onDeleteCustomBotFromRoster={handleDeleteCustomBotFromRoster}
+        onClose={() => setGarageOpen(false)}
+      />
+
+      {/* Admin Login & 2-Player Multi-Screen Seat Selector Modal */}
+      {adminModalOpen && (
+        <div
+          role="dialog"
+          aria-label="Admin Login & 2-Player Seat Selector"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md"
+        >
+          <div className="w-full max-w-md rounded-3xl border border-slate-700 bg-[#12161C] p-6 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <KeyRound className="h-5 w-5 text-amber-400" />
+                <h2 className="font-display text-xl font-extrabold text-white">
+                  {adminUnlocked ? '2-Player Multi-Screen Arena' : 'Admin Access Login'}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAdminModalOpen(false)}
+                className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs font-bold text-slate-300 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+
+            {!adminUnlocked ? (
+              <form onSubmit={handleVerifyAdminCode} className="mt-4 space-y-3">
+                <p className="text-xs text-slate-300">
+                  Enter your administrator access code to unlock 2-Player Dual-Screen Battle mode.
+                </p>
+                <input
+                  type="password"
+                  value={adminCodeInput}
+                  onChange={(e) => setAdminCodeInput(e.target.value)}
+                  placeholder="Enter access code..."
+                  autoFocus
+                  className="w-full rounded-xl border border-slate-700 bg-[#0D1014] px-3.5 py-2.5 text-sm font-bold text-white focus:border-amber-400 focus:outline-none"
+                />
+                {adminError && (
+                  <div className="rounded-lg border border-rose-500/50 bg-rose-500/15 px-3 py-1.5 text-xs font-semibold text-rose-300">
+                    {adminError}
+                  </div>
+                )}
+                <button
+                  type="submit"
+                  className="w-full rounded-xl bg-amber-500 py-2.5 text-xs font-extrabold text-slate-950 hover:bg-amber-400 transition"
+                >
+                  Unlock Admin Mode
+                </button>
+              </form>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <p className="text-xs text-slate-300">
+                  Choose <strong className="text-amber-300">Player 1</strong> on this screen and have your opponent choose <strong className="text-sky-300">Player 2</strong> on their screen/window. Each player gets their own dedicated camera view and controls in the same live arena!
+                </p>
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleJoinAdminSeat(1)}
+                    className="flex flex-col items-center gap-1.5 rounded-2xl border-2 border-amber-400 bg-amber-500/20 p-4 text-center hover:bg-amber-500/30 transition"
+                  >
+                    <Users className="h-6 w-6 text-amber-300" />
+                    <span className="font-display text-base font-extrabold text-white">Player 1</span>
+                    <span className="text-[11px] text-amber-200">This Screen = P1 View</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleJoinAdminSeat(2)}
+                    className="flex flex-col items-center gap-1.5 rounded-2xl border-2 border-sky-400 bg-sky-500/20 p-4 text-center hover:bg-sky-500/30 transition"
+                  >
+                    <Sparkles className="h-6 w-6 text-sky-300" />
+                    <span className="font-display text-base font-extrabold text-white">Player 2</span>
+                    <span className="text-[11px] text-sky-200">Other Screen = P2 View</span>
+                  </button>
+                </div>
+                {lobbyRoom && (
+                  <div className="rounded-xl border border-emerald-500/50 bg-emerald-500/15 p-3 text-center text-xs font-bold text-emerald-200">
+                    Waiting in 2P Arena Room ({lobbyRoom.playerCount}/2 connected)...
+                    {lobbyRoom.playerCount >= 1 && (
+                      <button
+                        type="button"
+                        onClick={handleStartOnlineNow}
+                        className="mt-2 block w-full rounded-lg bg-emerald-500 py-1.5 text-slate-950 font-extrabold"
+                      >
+                        Start Match Now
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Combat HUD */}
       {sceneMode === 'combat' && hudSnapshot && (
         <CombatHud
           snapshot={hudSnapshot}
-          playerId={profile.id}
+          playerId={activeCombatPlayerId}
+          adminSeat={adminSeat}
           cameraPreset={cameraPreset}
           muted={profile.muted}
+          commentaryMuted={Boolean(profile.commentaryMuted)}
+          controlScheme={activeScheme}
+          deviceLayoutMode={activeDeviceMode}
           isMultiplayer={isMultiplayerMatch}
           matchResult={matchResult}
           campaignLevelId={activeCampaignIdRef.current}
           onCycleCamera={() =>
-            setCameraPreset((c) => (c === 'chase' ? 'tactical' : c === 'tactical' ? 'cinematic' : 'chase'))
+            setCameraPreset((c) =>
+              c === 'chase'
+                ? 'first_person'
+                : c === 'first_person'
+                  ? 'pilot_booth'
+                  : c === 'pilot_booth'
+                    ? 'tactical'
+                    : c === 'tactical'
+                      ? 'cinematic'
+                      : 'chase',
+            )
           }
+          onSelectCamera={setCameraPreset}
           onToggleMute={() => updateProfile({ muted: !profile.muted })}
+          onToggleCommentary={() => updateProfile({ commentaryMuted: !profile.commentaryMuted })}
+          onOpenAudioSettings={() => setAudioSettingsOpen(true)}
+          onSelectControlScheme={(scheme) => updateProfile({ controlScheme: scheme })}
+          onSelectDeviceLayoutMode={(mode) => updateProfile({ deviceLayoutMode: mode })}
           onExitArena={handleExitArena}
           onRematch={() => {
             if (isMultiplayerMatch) {
@@ -1475,7 +2227,19 @@ export default function App() {
             inputRef.current.fireWeapons = cur;
             inputRef.current.fireWeapon = cur.some(Boolean);
           }}
-          showKeyboardHint={!showTouchControls}
+          onRepairTrigger={(pressed) => {
+            soundEngine.unlock();
+            inputRef.current.overdrive = pressed;
+          }}
+          onBoostTrigger={(pressed) => {
+            soundEngine.unlock();
+            inputRef.current.boost = pressed;
+          }}
+          onDriftTrigger={(pressed) => {
+            soundEngine.unlock();
+            inputRef.current.drift = pressed;
+          }}
+          showKeyboardHint={showDesktopCombatTile}
         />
       )}
 
@@ -1524,10 +2288,28 @@ export default function App() {
         }}
         onStartOnlineNow={handleStartOnlineNow}
         onCancelLobby={handleCancelLobby}
+        traditionalMode={Boolean(profile.traditionalMode)}
+        onToggleTraditionalMode={(next) => updateProfile({ traditionalMode: next })}
         onClose={() => {
           if (lobbyRoom) handleCancelLobby();
           setLauncherOpen(false);
         }}
+      />
+
+      {/* Audio & Volume Mixer Modal */}
+      <AudioSettingsModal
+        open={audioSettingsOpen}
+        settings={{
+          muted: profile.muted,
+          commentaryMuted: Boolean(profile.commentaryMuted),
+          masterVolume: profile.masterVolume ?? 0.85,
+          musicVolume: profile.musicVolume ?? 0.65,
+          sfxVolume: profile.sfxVolume ?? 0.85,
+          crowdVolume: profile.crowdVolume ?? 0.7,
+          commentaryVolume: profile.commentaryVolume ?? 0.9,
+        }}
+        onChange={(patch) => updateProfile(patch)}
+        onClose={() => setAudioSettingsOpen(false)}
       />
 
       {/* Social, Rankings, Clans, Seasonal Events & Skill Tree Modal */}
@@ -1553,6 +2335,31 @@ export default function App() {
           setLauncherOpen(true);
         }}
         onClaimEventReward={handleClaimEventReward}
+      />
+
+      {/* AI Forge Studio: Lyria 3 Soundtrack Synthesizer & Multimodal Lab */}
+      <AiForgeStudioModal
+        open={aiStudioOpen}
+        initialTab={aiStudioTab}
+        idToken={null}
+        botName={profile.botConfig.name}
+        mediaHistory={mediaHistory}
+        onRefreshHistory={fetchMediaHistory}
+        onClose={() => setAiStudioOpen(false)}
+      />
+
+      {/* Real-Time Voice Copilot (Gemini 3.8 Live API WebSocket Bridge) */}
+      <LiveVoiceCopilot
+        open={liveVoiceOpen}
+        onClose={() => setLiveVoiceOpen(false)}
+        botConfig={profile.botConfig}
+        selectedArena={selectedArena}
+        sceneMode={sceneMode}
+        onUpdateBotConfig={handleBotConfigChange}
+        onSelectArena={setSelectedArena}
+        onSetExplodedRatio={setExplodedRatio}
+        onSetLightingPreset={setLightingPreset}
+        onStartLocalBattle={(mode) => startLocalMatch(mode, false)}
       />
     </div>
   );
