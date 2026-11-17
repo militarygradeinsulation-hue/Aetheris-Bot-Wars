@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Camera, Crown, LogOut, Volume2, VolumeX, Trophy, RotateCcw, Star, Swords, Shield, Zap } from 'lucide-react';
+import { BotSystemsDiagram } from './BotSystemsDiagram';
 import { describeObjective, describeUnlock, getCampaignLevel } from '../shared/campaign';
 import {
   ARENA_CATALOG,
@@ -9,6 +10,7 @@ import {
   WEAPON_CATALOG,
   type ArenaSnapshot,
   type BotPhysicsState,
+  type PvpMatchResult,
 } from '../shared/types';
 
 export interface MatchResultSummary {
@@ -23,6 +25,7 @@ export interface MatchResultSummary {
   newRecord?: boolean;
   levelTitle?: string;
   ratingDelta: number;
+  pvp?: PvpMatchResult;
 }
 
 interface CombatHudProps {
@@ -171,6 +174,11 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   const allies = snapshot.bots.filter((b) => b.id !== player?.id && b.team === player?.team);
   const rivals = snapshot.bots.filter((b) => b.id !== player?.id && b.team !== player?.team);
   const playerWeapons = player ? getBotWeapons(player.config) : [];
+  const focusRival = player
+    ? rivals
+        .filter((r) => !r.isDead)
+        .sort((a, b) => Math.hypot(a.x - player.x, a.z - player.z) - Math.hypot(b.x - player.x, b.z - player.z))[0]
+    : undefined;
   const playerTeam = player?.team ?? 0;
   const campaignLevel = campaignLevelId ? getCampaignLevel(campaignLevelId) : undefined;
   const arenaEvent = snapshot.arenaEvent;
@@ -349,6 +357,11 @@ export const CombatHud: React.FC<CombatHudProps> = ({
               </div>
             </div>
           ))}
+          {player && (
+            <div className="hidden sm:block">
+              <BotSystemsDiagram bot={player} title="Your systems" />
+            </div>
+          )}
         </div>
 
         {/* Center Match Timer + Controls + Timed Hazard Escalation + Callout Banner */}
@@ -535,8 +548,24 @@ export const CombatHud: React.FC<CombatHudProps> = ({
               </div>
             </div>
           ))}
+          {focusRival && (
+            <div className="self-end">
+              <BotSystemsDiagram bot={focusRival} compact title={`Target: ${focusRival.config.name}`} />
+            </div>
+          )}
         </div>
       </div>
+
+      {player?.flipped && !player.isDead && snapshot.phase === 'active' && (
+        <div className="pointer-events-none fixed left-1/2 top-1/3 z-30 -translate-x-1/2 rounded-xl border border-fuchsia-400/80 bg-fuchsia-600/25 px-4 py-2 text-center text-sm font-extrabold tracking-wider text-fuchsia-100 shadow-xl">
+          FLIPPED OVER · press Shift (Boost) to self-right
+        </div>
+      )}
+      {player && (player.frozenTimer ?? 0) > 0 && !player.isDead && (
+        <div className="pointer-events-none fixed left-1/2 top-1/3 z-30 -translate-x-1/2 rounded-xl border border-cyan-300/80 bg-cyan-500/25 px-4 py-2 text-sm font-extrabold tracking-wider text-cyan-100 shadow-xl">
+          FROZEN SOLID · thawing {(player.frozenTimer ?? 0).toFixed(1)}s
+        </div>
+      )}
 
       {/* Tactical Arena Mini-Radar */}
       {snapshot.phase === 'active' && <ArenaMiniRadar snapshot={snapshot} playerId={playerId} />}
@@ -708,6 +737,13 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                   <span className="text-amber-300">+{matchResult.scrap} Scrap</span>
                   <span className="text-sky-300">+{matchResult.xp} XP</span>
                   {matchResult.skillPoints > 0 && <span className="text-emerald-300">+{matchResult.skillPoints} SP</span>}
+                  {matchResult.pvp && (
+                    <span className="text-sky-300">
+                      {matchResult.pvp.ranked
+                        ? `PvP ${matchResult.pvp.record.wins}W-${matchResult.pvp.record.losses}L · ${matchResult.pvp.record.rating}`
+                        : 'Unranked (needs 2 real pilots)'}
+                    </span>
+                  )}
                   {matchResult.ratingDelta !== 0 && (
                     <span className={matchResult.ratingDelta > 0 ? 'text-emerald-300' : 'text-red-300'}>
                       {matchResult.ratingDelta > 0 ? '+' : ''}

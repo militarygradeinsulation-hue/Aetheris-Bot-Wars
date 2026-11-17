@@ -165,7 +165,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
   };
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-3 z-20 flex flex-col items-center px-3 pb-safe">
+    <div id="workshop-dock" className="pointer-events-none fixed inset-x-0 bottom-2 z-20 flex flex-col items-center px-3 pb-safe">
       {/* Collapse / Expand Handle + Garage Loadout Bay Switcher */}
       <div className="pointer-events-auto mb-1.5 flex flex-wrap items-center justify-center gap-1.5">
         {savedLoadouts && onSelectLoadoutSlot && (
@@ -215,9 +215,9 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
       </div>
 
       {!collapsed && (
-        <div className="pointer-events-auto w-full max-w-[1040px] rounded-2xl border border-slate-700/80 bg-[#12161C]/94 p-3 sm:p-4 shadow-2xl">
+        <div className="pointer-events-auto w-full max-w-[1180px] rounded-2xl border border-slate-700/80 bg-[#12161C]/92 px-3 py-2 sm:px-4 sm:py-2.5 shadow-2xl backdrop-blur-sm">
           {/* Top Row: Hull Name Input, Weight Class & Core Telemetry, Primary Fight CTA */}
-          <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-800 pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
             <div className="flex flex-wrap items-center gap-2.5 min-w-0">
               <label className="flex items-center gap-2">
                 <span className="text-[11px] font-medium text-slate-400 whitespace-nowrap">
@@ -342,7 +342,13 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
           )}
 
           {/* Selection Strip */}
-          <div className="mt-2.5 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-[32vh] sm:max-h-[225px] overflow-y-auto pr-0.5">
+          <div
+            className={
+              tab === 'cosmetics' || tab === 'paint'
+                ? 'mt-2 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 max-h-[24vh] overflow-y-auto pr-0.5'
+                : 'mt-2 grid grid-flow-col grid-rows-1 auto-cols-[minmax(230px,250px)] gap-2 overflow-x-auto overflow-y-hidden pb-1 [scrollbar-width:thin]'
+            }
+          >
             {tab === 'weapon' &&
               (Object.keys(WEAPON_CATALOG) as WeaponId[]).map((wId) => {
                 const item = WEAPON_CATALOG[wId];

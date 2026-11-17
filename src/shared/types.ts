@@ -310,6 +310,55 @@ export interface BotPhysicsState {
   isBounty?: boolean;
   dmgMult?: number;
   speedMult?: number;
+  /** Per-component integrity (0-100). Hit location decides which part takes damage. */
+  components?: BotComponents;
+  /** Thermal load from flame/lava, 0-100. Above 55 armor starts to melt. */
+  heat?: number;
+  /** Cryo load, 0-100. Slows the bot; at 100 it freezes solid. */
+  chill?: number;
+  /** Seconds left frozen solid (no drive, no weapons). */
+  frozenTimer?: number;
+  /** Cumulative melt per zone, 0-1. Melted armor deflects less and sags. */
+  meltZones?: ArmorZones;
+  /** Bot landed upside down. */
+  flipped?: boolean;
+  /** Visual flip rotation 0..PI, animated by the engine. */
+  flipAngle?: number;
+  /** Seconds spent inverted, drives auto self-right. */
+  flipTimer?: number;
+  /** Seconds before the bot may self-right again. */
+  selfRightCooldown?: number;
+}
+
+/** Drive unit order: front-left, front-right, rear-left, rear-right. */
+export interface BotComponents {
+  wheels: number[];
+  weapons: number[];
+  battery: number;
+  motor: number;
+}
+
+export type DebrisKind = 'wheel' | 'armor' | 'weapon' | 'scrap' | 'battery';
+
+export interface DebrisPiece {
+  id: string;
+  kind: DebrisKind;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  rx: number;
+  ry: number;
+  rz: number;
+  spin: number;
+  radius: number;
+  mass: number;
+  color: string;
+  weapon?: WeaponId;
+  sourceId?: string;
+  settled?: boolean;
 }
 
 export interface Projectile {
@@ -325,6 +374,8 @@ export interface Projectile {
   life: number;
   damage: number;
   targetId?: string;
+  kind?: 'missile' | 'shell';
+  vy?: number;
 }
 
 export interface HillZone {
@@ -422,7 +473,13 @@ export type CombatEventType =
   | 'wave_start'
   | 'hill_move'
   | 'lance'
-  | 'magnet_pull';
+  | 'magnet_pull'
+  | 'part_detach'
+  | 'frozen_solid'
+  | 'melt'
+  | 'self_right'
+  | 'debris_hit'
+  | 'mortar_launch';
 
 export type DamageKind = 'kinetic' | 'scorch' | 'blade' | 'crush';
 
@@ -488,6 +545,7 @@ export interface ArenaSnapshot {
   survivalKills?: number;
   waveStartedAt?: number;
   gravityMult?: number;
+  debris?: DebrisPiece[];
 }
 
 export interface LeaderboardEntry {
@@ -503,6 +561,37 @@ export interface LeaderboardEntry {
   armor: ArmorId;
   powerScore: number;
   updatedAt: string;
+}
+
+/** Server-authoritative record from live matches between real pilots. */
+export interface PvpRecord {
+  id: string;
+  name: string;
+  clanTag: string;
+  botName: string;
+  rating: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  kos: number;
+  streak: number;
+  bestStreak: number;
+  lastMatchAt: string;
+}
+
+export interface PvpMatchResult {
+  playerId: string;
+  outcome: 'win' | 'loss' | 'draw';
+  ratingDelta: number;
+  record: PvpRecord;
+  ranked: boolean;
+}
+
+export interface OnlinePresence {
+  online: number;
+  searching: number;
+  fighting: number;
+  pilots: Array<{ id: string; name: string; clanTag: string; status: 'idle' | 'searching' | 'fighting' }>;
 }
 
 export interface ClanChatMessage {

@@ -7,6 +7,7 @@ import {
   Send,
   Shield,
   Sliders,
+  Swords,
   Trophy,
   Users,
   X,
@@ -16,18 +17,22 @@ import type {
   BatteryMode,
   ClanInfo,
   LeaderboardEntry,
+  OnlinePresence,
   PlayerProfile,
+  PvpRecord,
   SeasonalEvent,
   SkillTree,
 } from '../shared/types';
 import { PWAInstallButton } from './PWAInstallButton';
 
-export type HubModalTab = 'rankings' | 'clans' | 'events' | 'skills';
+export type HubModalTab = 'rankings' | 'pvp' | 'clans' | 'events' | 'skills';
 
 interface SocialAndRankingsPanelProps {
   activeTab: HubModalTab | null;
   profile: PlayerProfile;
   leaderboard: LeaderboardEntry[];
+  pvpBoard: PvpRecord[];
+  presence: OnlinePresence | null;
   clans: ClanInfo[];
   seasonalEvents: SeasonalEvent[];
   isOnline: boolean;
@@ -57,6 +62,8 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
   activeTab,
   profile,
   leaderboard,
+  pvpBoard,
+  presence,
   clans,
   seasonalEvents,
   isOnline,
@@ -88,6 +95,7 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
             {(
               [
                 { id: 'rankings', label: 'Global Rankings', Icon: Trophy },
+                { id: 'pvp', label: 'PvP Ladder', Icon: Swords },
                 { id: 'clans', label: 'Clans & Team Wars', Icon: Users },
                 { id: 'events', label: 'Season 05 Events', Icon: Calendar },
                 { id: 'skills', label: 'Engineering & Pilot', Icon: Sliders },
@@ -121,6 +129,71 @@ export const SocialAndRankingsPanel: React.FC<SocialAndRankingsPanelProps> = ({
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+          {activeTab === 'pvp' && (
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                  <h3 className="font-display text-lg font-bold text-white">Live PvP Win / Loss Ladder</h3>
+                  <p className="text-xs text-slate-400">
+                    Real pilots only. The server records every ranked fight; ratings move by Elo.
+                  </p>
+                </div>
+                <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300">
+                  {isOnline ? (presence ? `${presence.online} online · ${presence.fighting} fighting` : 'Connecting...') : 'Offline'}
+                </div>
+              </div>
+              {pvpBoard.length === 0 ? (
+                <div className="rounded-xl border border-slate-800 bg-[#0F1318] p-6 text-center text-sm text-slate-400">
+                  No ranked PvP fights yet. Open Deploy Arena, go to Online PvP, and challenge a real pilot.
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-slate-800">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#0F1318] text-slate-400 uppercase tracking-wider text-[10px]">
+                      <tr>
+                        <th className="px-3 py-2">#</th>
+                        <th className="px-3 py-2">Pilot</th>
+                        <th className="px-3 py-2">Bot</th>
+                        <th className="px-3 py-2 text-right">W</th>
+                        <th className="px-3 py-2 text-right">L</th>
+                        <th className="px-3 py-2 text-right">D</th>
+                        <th className="px-3 py-2 text-right">Win %</th>
+                        <th className="px-3 py-2 text-right">KOs</th>
+                        <th className="px-3 py-2 text-right">Streak</th>
+                        <th className="px-3 py-2 text-right">Rating</th>
+                      </tr>
+                    </thead>
+                    <tbody className="font-mono-tabular">
+                      {pvpBoard.map((r, i) => {
+                        const games = r.wins + r.losses + r.draws;
+                        const mine = r.id === profile.id;
+                        return (
+                          <tr key={r.id} className={`border-t border-slate-800 ${mine ? 'bg-amber-500/10' : ''}`}>
+                            <td className="px-3 py-2 text-slate-500">{i + 1}</td>
+                            <td className="px-3 py-2 font-sans font-semibold text-white">
+                              [{r.clanTag}] {r.name}
+                              {mine && <span className="ml-1.5 text-[10px] text-amber-300">YOU</span>}
+                            </td>
+                            <td className="px-3 py-2 font-sans text-slate-300">{r.botName}</td>
+                            <td className="px-3 py-2 text-right text-emerald-300">{r.wins}</td>
+                            <td className="px-3 py-2 text-right text-red-300">{r.losses}</td>
+                            <td className="px-3 py-2 text-right text-slate-400">{r.draws}</td>
+                            <td className="px-3 py-2 text-right text-white">{games ? Math.round((r.wins / games) * 100) : 0}%</td>
+                            <td className="px-3 py-2 text-right text-slate-300">{r.kos}</td>
+                            <td className={`px-3 py-2 text-right ${r.streak > 0 ? 'text-emerald-300' : r.streak < 0 ? 'text-red-300' : 'text-slate-400'}`}>
+                              {r.streak > 0 ? `W${r.streak}` : r.streak < 0 ? `L${-r.streak}` : '-'}
+                            </td>
+                            <td className="px-3 py-2 text-right font-bold text-amber-300">{r.rating}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
           {activeTab === 'rankings' && (
             <div>
               <div className="flex flex-wrap items-center justify-between gap-3 mb-4">

@@ -811,6 +811,26 @@ class SoundEngine {
     this.noiseBurst('lowpass', 1200, 120, 0.6, 0.5, 0.25);
   }
 
+  public playMortarThump() {
+    this.tone('sine', 140, 45, 0, 0.32, 0.3);
+    this.noiseBurst('lowpass', 1400, 200, 0, 0.25, 0.22);
+  }
+
+  public playPartRip() {
+    this.noiseBurst('bandpass', 3200, 700, 0, 0.3, 0.28);
+    this.tone('square', 420, 70, 0, 0.28, 0.1);
+    this.tone('triangle', 1300, 900, 0.05, 0.4, 0.05);
+  }
+
+  public playFreeze() {
+    this.noiseBurst('highpass', 7000, 3000, 0, 0.5, 0.18);
+    [1568, 2093, 2637].forEach((f, i) => this.tone('sine', f, f * 1.02, i * 0.05, 0.4, 0.05));
+  }
+
+  public playSizzle() {
+    this.noiseBurst('highpass', 5000, 2500, 0, 0.7, 0.14);
+  }
+
   public playAnnouncerSting(kind: 'event' | 'wave' | 'hill' = 'event') {
     const notes = kind === 'wave' ? [330, 392, 494, 659] : kind === 'hill' ? [523, 659] : [392, 523, 784];
     notes.forEach((f, i) => this.tone('triangle', f, f * 0.98, i * 0.09, 0.26, 0.11));

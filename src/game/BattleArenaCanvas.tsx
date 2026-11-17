@@ -231,6 +231,16 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     const baseHemi = hemiLight.intensity;
     const baseKey = keyLight.intensity;
     let blackoutLevel = 0;
+    // Workshop framing: shift the render up so the bot sits in the open space above the dock
+    let viewShift = 0;
+    let viewShiftTarget = 0;
+    let viewShiftProbe = 0;
+    const applyViewShift = () => {
+      const w = renderer.domElement.clientWidth || window.innerWidth;
+      const h = renderer.domElement.clientHeight || window.innerHeight;
+      if (Math.abs(viewShift) < 0.5) camera.clearViewOffset();
+      else camera.setViewOffset(w, h, 0, viewShift, w, h);
+    };
 
     // Workshop turntable pedestal
     const turntableGroup = new THREE.Group();
@@ -327,6 +337,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      viewShiftProbe = 0;
+      applyViewShift();
     };
     window.addEventListener('resize', handleResize);
 
@@ -422,7 +434,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
             const lz = ev.z + (tz - ev.z) * frac;
             effects.spawnSparks(lx, ev.y, lz, 6, 0x38bdf8, 7);
           }
-          overlay.addBeam(ev.x, ev.y + 0.35, ev.z, tx, (ev.targetY ?? ev.y) + 0.3, tz, 0x7dd3fc, 0.3);
+          overlay.addBeam(ev.x, ev.y + 0.35, ev.z, tx, (ev.targetY ?? ev.y) + 0.3, tz, 0x7dd3fc, 0.4, 0.085);
           effects.spawnShockwave(tx, ev.y, tz, 4.8, 0x38bdf8);
           effects.spawnSparks(tx, ev.y, tz, 28, 0xfbbf24, 15);
           impactFlashLight.position.set(tx, ev.y + 0.8, tz);
@@ -499,6 +511,43 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           crowdExcitement = Math.min(1.0, crowdExcitement + 0.38);
           screenShake = Math.min(0.85, screenShake + 0.36);
           soundEngine.playCrusherSlam();
+        } else if (ev.type === 'mortar_launch') {
+          effects.spawnFlames(ev.x, ev.y, ev.z, 6, 0, 0, 3, 0.7);
+          effects.spawnSmoke(ev.x, ev.y, ev.z, 6, 1.0, 0.3);
+          effects.spawnSparks(ev.x, ev.y, ev.z, 10, 0xfbbf24, 8);
+          impactFlashLight.position.set(ev.x, ev.y + 0.5, ev.z);
+          impactFlashLight.color.setHex(0xffa040);
+          impactFlashLight.intensity = Math.max(impactFlashLight.intensity, 9);
+          screenShake = Math.min(0.5, screenShake + 0.12);
+          soundEngine.playMortarThump();
+        } else if (ev.type === 'part_detach') {
+          effects.spawnSparks(ev.x, ev.y, ev.z, 34, 0xfde68a, 14);
+          effects.spawnSmoke(ev.x, ev.y, ev.z, 6, 1.0, 0.2);
+          effects.spawnDebris(ev.x, ev.y, ev.z, 5, '#475569', 0.8);
+          if (ev.label === 'battery') effects.spawnFlames(ev.x, ev.y, ev.z, 12, 0, 0, 4, 1);
+          impactFlashLight.position.set(ev.x, ev.y + 0.6, ev.z);
+          impactFlashLight.color.setHex(0xfff1c1);
+          impactFlashLight.intensity = Math.max(impactFlashLight.intensity, 12);
+          crowdExcitement = 1.0;
+          screenShake = Math.min(0.8, screenShake + 0.3);
+          soundEngine.playPartRip();
+          soundEngine.playCrowdCheer(1.0);
+        } else if (ev.type === 'frozen_solid') {
+          effects.spawnShockwave(ev.x, 0.2, ev.z, 3.6, 0x7dd3fc);
+          effects.spawnSparks(ev.x, ev.y, ev.z, 30, 0xe0f2fe, 9);
+          effects.spawnSmoke(ev.x, ev.y, ev.z, 10, 1.2, 0.9);
+          soundEngine.playFreeze();
+        } else if (ev.type === 'melt') {
+          effects.spawnSmoke(ev.x, ev.y, ev.z, 8, 1.1, 0.12);
+          effects.spawnSparks(ev.x, ev.y, ev.z, 14, 0xff6a1a, 5);
+          soundEngine.playSizzle();
+        } else if (ev.type === 'self_right') {
+          effects.spawnShockwave(ev.x, 0.15, ev.z, 3.2, 0x22c55e);
+          effects.spawnSmoke(ev.x, 0.2, ev.z, 5, 0.9, 0.35);
+          soundEngine.playFlip();
+        } else if (ev.type === 'debris_hit') {
+          effects.spawnSparks(ev.x, ev.y, ev.z, 8, 0xfbbf24, 6);
+          soundEngine.playImpact(0.5 + ev.intensity * 0.4, false);
         } else if (ev.type === 'lance') {
           const tx = ev.targetX ?? ev.x;
           const tz = ev.targetZ ?? ev.z;
@@ -605,6 +654,22 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       if (modeRef.current === 'workshop') {
         soundEngine.stopLoops();
         turntableGroup.visible = true;
+        if (--viewShiftProbe <= 0) {
+          viewShiftProbe = 20;
+          const dock = document.getElementById('workshop-dock');
+          const h = renderer.domElement.clientHeight || window.innerHeight;
+          if (dock) {
+            const dockTop = dock.getBoundingClientRect().top;
+            const visibleCenter = (64 + dockTop) / 2;
+            viewShiftTarget = Math.max(0, Math.min(h * 0.3, h / 2 - visibleCenter));
+          } else {
+            viewShiftTarget = 0;
+          }
+        }
+        if (Math.abs(viewShiftTarget - viewShift) > 0.5) {
+          viewShift += (viewShiftTarget - viewShift) * Math.min(1, dt * 6);
+          applyViewShift();
+        }
         if (blackoutLevel > 0) {
           blackoutLevel = 0;
           hemiLight.intensity = baseHemi;
@@ -670,6 +735,11 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       } else {
         turntableGroup.visible = false;
         if (workshopBotRig) workshopBotRig.root.visible = false;
+        if (viewShift !== 0) {
+          viewShift = 0;
+          viewShiftTarget = 0;
+          camera.clearViewOffset();
+        }
 
         // Step local offline/solo physics if active
         if (stepLocalRef.current) {
@@ -720,6 +790,38 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
               const fx = Math.sin(b.yaw);
               const fz = Math.cos(b.yaw);
               effects.spawnFlames(b.x + fx * 1.4, b.y + 0.48, b.z + fz * 1.4, 2, fx, fz, 7.5, 0.85);
+            }
+
+            // Live cryo mist stream
+            const cryoSlotIdx = botWeapons.indexOf('cryo_jet');
+            const cryoActive = cryoSlotIdx >= 0 && (b.weaponActives?.[cryoSlotIdx] ?? false);
+            if (!b.isDead && cryoActive && Math.random() < 0.8) {
+              const fx = Math.sin(b.yaw);
+              const fz = Math.cos(b.yaw);
+              const k = 1.3 + Math.random() * 2.6;
+              effects.spawnSmoke(b.x + fx * k, b.y + 0.45, b.z + fz * k, 1, 0.55 + k * 0.12, 0.86);
+              effects.spawnSparks(b.x + fx * k, b.y + 0.45, b.z + fz * k, 1, 0xbae6fd, 3);
+            }
+
+            // Heat haze, glowing drips and smoke while armor is melting
+            const heat = b.heat ?? 0;
+            if (!b.isDead && heat > 45 && Math.random() < (heat - 45) / 70) {
+              effects.spawnSmoke(b.x, b.y + 0.7, b.z, 1, 0.7, 0.1);
+              if (heat > 60) effects.spawnSparks(b.x + (Math.random() - 0.5) * 1.6, b.y + 0.3, b.z + (Math.random() - 0.5) * 1.6, 1, 0xff5a10, 1.2);
+            }
+            // Frost vapor
+            if (!b.isDead && (b.chill ?? 0) > 35 && Math.random() < 0.25) {
+              effects.spawnSmoke(b.x, b.y + 0.4, b.z, 1, 0.6, 0.88);
+            }
+            // Busted parts spark: shredded weapons, ruptured battery
+            const comp = b.components;
+            if (!b.isDead && comp) {
+              if (comp.battery < 30 && Math.random() < 0.18) effects.spawnSparks(b.x, b.y + 0.55, b.z, 3, 0x93c5fd, 5);
+              comp.weapons.forEach((h, si) => {
+                if (h > 0 && h < 30 && Math.random() < 0.12) {
+                  effects.spawnSparks(b.x + Math.sin(b.yaw) * (si === 0 ? 1.1 : 0), b.y + 0.6, b.z + Math.cos(b.yaw) * (si === 0 ? 1.1 : 0), 2, 0xfbbf24, 5);
+                }
+              });
             }
 
             // Live Ignition burn flames + smoke
@@ -780,6 +882,13 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           }
 
           overlay.sync(snap, playerIdRef.current, dt, elapsed, snap.phase !== 'finished');
+          for (const p of snap.projectiles ?? []) {
+            if (Math.random() < 0.7) effects.spawnSmoke(p.x, p.y, p.z, 1, p.kind === 'shell' ? 0.45 : 0.35, 0.55);
+            if (p.kind === 'shell' && Math.random() < 0.6) effects.spawnSparks(p.x, p.y, p.z, 1, 0xffb347, 1.5);
+          }
+          for (const d of snap.debris ?? []) {
+            if (!d.settled && d.y > 0.3 && Math.random() < 0.35) effects.spawnSmoke(d.x, d.y, d.z, 1, 0.35, 0.25);
+          }
           const wantBlackout = snap.arenaEvent?.kind === 'blackout' ? 1 : 0;
           blackoutLevel += (wantBlackout - blackoutLevel) * Math.min(1, dt * 2.5);
           hemiLight.intensity = baseHemi * (1 - blackoutLevel * 0.82);

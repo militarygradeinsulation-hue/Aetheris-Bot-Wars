@@ -21,6 +21,9 @@ import {
   getBotChassisStyles,
   getBotWeapons,
   type LeaderboardEntry,
+  type OnlinePresence,
+  type PvpMatchResult,
+  type PvpRecord,
   type PlayerInputState,
   type SeasonalEvent,
   type SkillTree,
@@ -33,6 +36,7 @@ const DATA_DIR = path.resolve(__dirname, '.data');
 const STORE_PATH = path.join(DATA_DIR, 'arena-store.json');
 
 interface PersistentStore {
+  pvp?: PvpRecord[];
   leaderboard: LeaderboardEntry[];
   clans: ClanInfo[];
   seasonalEvents: SeasonalEvent[];
@@ -329,6 +333,151 @@ function saveStore(store: PersistentStore) {
 }
 
 const store = loadStore();
+if (!Array.isArray(store.pvp)) store.pvp = [];
+
+// Live PvP ladder: Elo between real pilots, recorded by the server when a room finishes
+function pvpBoard(): PvpRecord[] {
+  return [...(store.pvp ?? [])]
+    .sort((a, b) => b.rating - a.rating || b.wins - a.wins)
+    .slice(0, 50);
+}
+
+function getPvpRecord(id: string, name: string, clanTag: string, botName: string): PvpRecord {
+  let rec = store.pvp!.find((r) => r.id === id);
+  if (!rec) {
+    rec = {
+      id,
+      name,
+      clanTag,
+      botName,
+      rating: 1200,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+      kos: 0,
+      streak: 0,
+      bestStreak: 0,
+      lastMatchAt: new Date().toISOString(),
+    };
+    store.pvp!.push(rec);
+  }
+  rec.name = name.slice(0, 24);
+  rec.clanTag = clanTag.slice(0, 5).toUpperCase();
+  rec.botName = botName.slice(0, 24);
+  return rec;
+}
+
+function recordRoomResult(room: ArenaRoom): PvpMatchResult[] {
+  const snap = room.snapshot;
+  if (!snap) return [];
+  const humans =
+    room.participants ??
+    Array.from(room.players.values()).map((p) => ({ id: p.id, name: p.name, clanTag: p.clanTag, botName: p.config.name }));
+  const ranked = humans.length >= 2;
+  const outcomeFor = (id: string): 'win' | 'loss' | 'draw' => {
+    const bot = snap.bots.find((b) => b.id === id);
+    if (snap.winnerId) return snap.winnerId === id ? 'win' : 'loss';
+    if (snap.winningTeam !== undefined && snap.winningTeam !== null && bot) {
+      return bot.team === snap.winningTeam ? 'win' : 'loss';
+    }
+    return 'draw';
+  };
+  const recs = humans.map((h) => ({
+    h,
+    rec: getPvpRecord(h.id, h.name, h.clanTag, h.botName),
+    outcome: outcomeFor(h.id),
+    bot: snap.bots.find((b) => b.id === h.id),
+  }));
+  const deltas = new Map<string, number>();
+  if (ranked) {
+    // Pairwise Elo across every pair of real pilots in the room
+    for (let i = 0; i < recs.length; i++) {
+      for (let j = i + 1; j < recs.length; j++) {
+        const a = recs[i];
+        const b = recs[j];
+        const scoreA =
+          a.outcome === b.outcome
+            ? 0.5
+            : a.outcome === 'win' || (a.outcome === 'draw' && b.outcome === 'loss')
+              ? 1
+              : 0;
+        const expectedA = 1 / (1 + Math.pow(10, (b.rec.rating - a.rec.rating) / 400));
+        const k = 32 / Math.max(1, recs.length - 1);
+        const d = k * (scoreA - expectedA);
+        deltas.set(a.h.id, (deltas.get(a.h.id) ?? 0) + d);
+        deltas.set(b.h.id, (deltas.get(b.h.id) ?? 0) - d);
+      }
+    }
+  }
+  const results: PvpMatchResult[] = [];
+  for (const r of recs) {
+    const delta = Math.round(deltas.get(r.h.id) ?? 0);
+    if (ranked) {
+      r.rec.rating = Math.max(100, r.rec.rating + delta);
+      if (r.outcome === 'win') {
+        r.rec.wins += 1;
+        r.rec.streak = Math.max(1, r.rec.streak + 1);
+        r.rec.bestStreak = Math.max(r.rec.bestStreak, r.rec.streak);
+      } else if (r.outcome === 'loss') {
+        r.rec.losses += 1;
+        r.rec.streak = Math.min(-1, r.rec.streak - 1);
+      } else {
+        r.rec.draws += 1;
+        r.rec.streak = 0;
+      }
+      r.rec.kos += r.bot?.kos ?? 0;
+      r.rec.lastMatchAt = new Date().toISOString();
+    }
+    results.push({ playerId: r.h.id, outcome: r.outcome, ratingDelta: ranked ? delta : 0, record: { ...r.rec }, ranked });
+  }
+  if (ranked) saveStore(store);
+  return results;
+}
+
+// Presence: who is connected and what they are doing
+const clientIdentity = new Map<WebSocket, { id: string; name: string; clanTag: string }>();
+let presenceTimer: NodeJS.Timeout | null = null;
+let wssRef: WebSocketServer | null = null;
+
+function buildPresence(): OnlinePresence {
+  const pilots: OnlinePresence['pilots'] = [];
+  clientIdentity.forEach((ident, ws) => {
+    const link = clientRoomMap.get(ws);
+    const room = link ? rooms.get(link.roomId) : undefined;
+    pilots.push({
+      ...ident,
+      status: room ? (room.snapshot ? 'fighting' : 'searching') : 'idle',
+    });
+  });
+  return {
+    online: wssRef ? wssRef.clients.size : pilots.length,
+    searching: pilots.filter((p) => p.status === 'searching').length,
+    fighting: pilots.filter((p) => p.status === 'fighting').length,
+    pilots: pilots.slice(0, 40),
+  };
+}
+
+function schedulePresence() {
+  if (presenceTimer) return;
+  presenceTimer = setTimeout(() => {
+    presenceTimer = null;
+    broadcastAll({ type: 'presence', presence: buildPresence(), rooms: openRoomSummaries() });
+  }, 400);
+}
+
+function broadcastAll(payload: unknown) {
+  if (!wssRef) return;
+  const encoded = JSON.stringify(payload);
+  wssRef.clients.forEach((c) => {
+    if (c.readyState === WebSocket.OPEN) c.send(encoded);
+  });
+}
+
+function openRoomSummaries() {
+  return Array.from(rooms.values())
+    .filter((r) => !r.snapshot)
+    .map(serializeRoomSummary);
+}
 
 // Multiplayer Room Management
 interface RoomPlayer {
@@ -351,6 +500,8 @@ interface ArenaRoom {
   snapshot: ArenaSnapshot | null;
   interval: NodeJS.Timeout | null;
   createdAt: number;
+  /** Real pilots locked in when the fight started (leavers still count). */
+  participants?: Array<{ id: string; name: string; clanTag: string; botName: string }>;
 }
 
 const rooms = new Map<string, ArenaRoom>();
@@ -422,6 +573,13 @@ function startRoomMatch(room: ArenaRoom) {
   }
 
   room.snapshot = createInitialSnapshot('multiplayer', room.arenaId, roster, room.durationSeconds);
+  room.participants = Array.from(room.players.values()).map((p) => ({
+    id: p.id,
+    name: p.name,
+    clanTag: p.clanTag,
+    botName: p.config.name,
+  }));
+  schedulePresence();
   broadcastRoom(room, {
     type: 'match:started',
     roomId: room.id,
@@ -447,6 +605,10 @@ function startRoomMatch(room: ArenaRoom) {
         clearInterval(room.interval);
         room.interval = null;
       }
+      const results = recordRoomResult(room);
+      broadcastRoom(room, { type: 'match:result', roomId: room.id, results });
+      if (results.some((r) => r.ranked)) broadcastAll({ type: 'pvp:board', board: pvpBoard() });
+      schedulePresence();
       setTimeout(() => {
         rooms.delete(room.id);
       }, 6000);
@@ -462,6 +624,15 @@ function removePlayerFromRoom(ws: WebSocket) {
   const room = rooms.get(link.roomId);
   if (!room) return;
   room.players.delete(link.playerId);
+
+  // Leaving a live fight is a forfeit: the bot powers down and counts as knocked out
+  if (room.snapshot && room.snapshot.phase !== 'finished') {
+    const bot = room.snapshot.bots.find((b) => b.id === link.playerId);
+    if (bot && !bot.isDead) {
+      bot.hp = 0;
+      bot.isDead = true;
+    }
+  }
 
   if (room.players.size === 0) {
     if (room.interval) clearInterval(room.interval);
@@ -481,12 +652,18 @@ async function startServer() {
   app.get('/api/bootstrap', (_req, res) => {
     res.json({
       leaderboard: store.leaderboard.slice(0, 25),
+      pvpBoard: pvpBoard(),
+      presence: buildPresence(),
       clans: store.clans,
       seasonalEvents: store.seasonalEvents,
       activeRooms: Array.from(rooms.values())
         .filter((r) => !r.snapshot)
         .map(serializeRoomSummary),
     });
+  });
+
+  app.get('/api/pvp', (_req, res) => {
+    res.json({ board: pvpBoard(), presence: buildPresence() });
   });
 
   app.post('/api/profile/sync', (req, res) => {
@@ -620,7 +797,9 @@ async function startServer() {
     }
   });
 
+  wssRef = wss;
   wss.on('connection', (ws) => {
+    schedulePresence();
     ws.on('message', (raw) => {
       try {
         const msg = JSON.parse(raw.toString()) as {
@@ -639,18 +818,39 @@ async function startServer() {
           input?: PlayerInputState;
         };
 
+        if (msg.type === 'hello' && msg.playerId && msg.name) {
+          clientIdentity.set(ws, {
+            id: msg.playerId.slice(0, 64),
+            name: msg.name.slice(0, 24),
+            clanTag: (msg.clanTag || 'SOLO').slice(0, 5).toUpperCase(),
+          });
+          schedulePresence();
+          return;
+        }
+
         if (msg.type === 'match:find' && msg.playerId && msg.config) {
           removePlayerFromRoom(ws);
+          if (msg.name) {
+            clientIdentity.set(ws, {
+              id: msg.playerId.slice(0, 64),
+              name: msg.name.slice(0, 24),
+              clanTag: (msg.clanTag || 'SOLO').slice(0, 5).toUpperCase(),
+            });
+          }
           const mode = msg.mode === 'brawl_4bot' ? 'brawl_4bot' : 'duel_1v1';
           const maxHumans = mode === 'duel_1v1' ? 2 : 4;
           const arenaId: ArenaId = msg.arenaId && msg.arenaId in ARENA_CATALOG ? msg.arenaId : 'foundry';
           const rawDur = Number(msg.durationSeconds ?? 180);
           const durationSeconds = [90, 150, 180, 300].includes(rawDur) ? rawDur : 180;
 
-          // Find waiting room with matching mode
-          let room = Array.from(rooms.values()).find(
-            (r) => !r.snapshot && r.mode === mode && r.players.size < r.maxHumans,
-          );
+          // Join the requested open room, else any waiting room with matching mode
+          const wanted = msg.roomId ? rooms.get(msg.roomId) : undefined;
+          let room =
+            wanted && !wanted.snapshot && wanted.players.size < wanted.maxHumans
+              ? wanted
+              : Array.from(rooms.values()).find(
+                  (r) => !r.snapshot && r.mode === mode && r.players.size < r.maxHumans,
+                );
           if (!room) {
             const roomId = `arena_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
             room = {
@@ -695,6 +895,7 @@ async function startServer() {
           if (room.players.size >= room.maxHumans) {
             startRoomMatch(room);
           }
+          schedulePresence();
         } else if (msg.type === 'match:start_now' && msg.roomId) {
           const room = rooms.get(msg.roomId);
           if (room && !room.snapshot) {
@@ -708,6 +909,7 @@ async function startServer() {
           }
         } else if (msg.type === 'match:leave') {
           removePlayerFromRoom(ws);
+          schedulePresence();
         } else if (msg.type === 'clan:chat' && msg.clanId && msg.name && msg.text) {
           const clan = store.clans.find((c) => c.id === msg.clanId);
           if (clan) {
@@ -738,6 +940,8 @@ async function startServer() {
     });
 
     ws.on('close', () => {
+      clientIdentity.delete(ws);
+      schedulePresence();
       removePlayerFromRoom(ws);
     });
   });
