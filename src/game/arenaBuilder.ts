@@ -353,25 +353,29 @@ export function buildArenaEnvironment(
       wGroup.add(post);
     }
 
-    // Perimeter Ringside Brand Billboards + THE ARCHITECT Developer Medallions mounted along all 4 arena walls
-    for (const bx of [-6.2, 6.2]) {
-      const backing = new THREE.Mesh(wallBannerBackingGeo, wallMat);
-      backing.position.set(bx, 2.52, inwardSign * 0.1);
-      const banner = new THREE.Mesh(wallBannerGeo, wallBrandMat);
-      banner.position.set(bx, 2.52, inwardSign * 0.16);
-      if (inwardSign < 0) {
-        banner.rotation.y = Math.PI;
+    // Perimeter Ringside Brand Billboards + THE ARCHITECT Developer Medallions mounted along North, East & West walls
+    // Leave South wall (wc.z > 0) Lexan glass completely clear for the ringside fan/driver booth view!
+    const isSouthDriverGlass = wc.z > 0;
+    if (!isSouthDriverGlass) {
+      for (const bx of [-6.2, 6.2]) {
+        const backing = new THREE.Mesh(wallBannerBackingGeo, wallMat);
+        backing.position.set(bx, 2.52, inwardSign * 0.1);
+        const banner = new THREE.Mesh(wallBannerGeo, wallBrandMat);
+        banner.position.set(bx, 2.52, inwardSign * 0.16);
+        if (inwardSign < 0) {
+          banner.rotation.y = Math.PI;
+        }
+        wGroup.add(backing, banner);
       }
-      wGroup.add(backing, banner);
+      const devBadgeGeo = new THREE.CircleGeometry(1.18, 28);
+      geometries.push(devBadgeGeo);
+      const devBadge = new THREE.Mesh(devBadgeGeo, devBrandMat);
+      devBadge.position.set(0, 2.52, inwardSign * 0.17);
+      if (inwardSign < 0) {
+        devBadge.rotation.y = Math.PI;
+      }
+      wGroup.add(devBadge);
     }
-    const devBadgeGeo = new THREE.CircleGeometry(1.18, 28);
-    geometries.push(devBadgeGeo);
-    const devBadge = new THREE.Mesh(devBadgeGeo, devBrandMat);
-    devBadge.position.set(0, 2.52, inwardSign * 0.17);
-    if (inwardSign < 0) {
-      devBadge.rotation.y = Math.PI;
-    }
-    wGroup.add(devBadge);
 
     wGroup.add(base, strip, glow, shield, topRail);
     group.add(wGroup);

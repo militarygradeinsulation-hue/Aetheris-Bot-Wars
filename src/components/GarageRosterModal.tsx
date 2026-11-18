@@ -19,17 +19,23 @@ import {
   type RivalArchetypePreset,
 } from '../shared/physicsEngine';
 import { BotPortraitPreview } from './BotPortraitPreview';
+import { BotFusion3DStage } from './BotFusion3DStage';
 import {
   ARMOR_CATALOG,
   type BotConfig,
   CHASSIS_CATALOG,
   computeBotStats,
   DEFAULT_SKILLS,
+  describePartKey,
   DRIVE_CATALOG,
   fuseTwoBotConfigs,
   generateRandomBotName,
   getBotChassisStyles,
   getBotWeapons,
+  isPartOwned,
+  type PartCategory,
+  type PlayerProfile,
+  premiumPartsInConfig,
   type SkillTree,
   WEAPON_CATALOG,
 } from '../shared/types';
@@ -38,6 +44,7 @@ interface GarageRosterModalProps {
   open: boolean;
   currentBotConfig: BotConfig;
   skills: SkillTree;
+  profile?: Pick<PlayerProfile, 'ownedParts' | 'unlockedArenas' | 'partUpgrades' | 'level' | 'coins' | 'scrap'>;
   customGarageBots: BotConfig[];
   onSelectBotToPlay: (config: BotConfig) => void;
   onSaveCustomBotToRoster: (config: BotConfig) => void;
@@ -87,6 +94,7 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
   open,
   currentBotConfig,
   skills,
+  profile,
   customGarageBots,
   onSelectBotToPlay,
   onSaveCustomBotToRoster,
@@ -100,6 +108,8 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
   const [fusionParentAId, setFusionParentAId] = useState<string>('preset_0');
   const [fusionParentBId, setFusionParentBId] = useState<string>('preset_15');
   const [fusionCustomName, setFusionCustomName] = useState('');
+  const [fusionAnimSignal, setFusionAnimSignal] = useState<number>(0);
+  const [pendingFuseAction, setPendingFuseAction] = useState<'equip' | 'save' | null>(null);
   const [bannerNotice, setBannerNotice] = useState<string | null>(null);
 
   const allEntries = useMemo<UnifiedGarageEntry[]>(() => {
@@ -146,7 +156,7 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
 
   const filteredEntries = useMemo(() => {
     return allEntries.filter((entry) => {
-      const stats = computeBotStats(entry.config, skills);
+      const stats = computeBotStats(entry.config, skills, profile?.partUpgrades);
       if (weightFilter !== 'ALL' && stats.weightClass !== weightFilter) {
         return false;
       }
@@ -168,7 +178,7 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
         chassisText.includes(q)
       );
     });
-  }, [allEntries, searchQuery, weightFilter, skills]);
+  }, [allEntries, searchQuery, weightFilter, skills, profile?.partUpgrades]);
 
   const parentAEntry =
     allEntries.find((e) => e.id === fusionParentAId) ?? allEntries[0];
@@ -181,15 +191,41 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
   }, [parentAEntry, parentBEntry, fusionCustomName, currentBotConfig]);
 
   const fusedPreviewStats = useMemo(
-    () => computeBotStats(fusedPreviewConfig, skills),
-    [fusedPreviewConfig, skills],
+    () => computeBotStats(fusedPreviewConfig, skills, profile?.partUpgrades),
+    [fusedPreviewConfig, skills, profile?.partUpgrades],
   );
 
   if (!open) return null;
 
   const showToast = (msg: string) => {
     setBannerNotice(msg);
-    window.setTimeout(() => setBannerNotice(null), 2600);
+    window.setTimeout(() => setBannerNotice(null), 3200);
+  };
+
+  const lockedPartsForConfig = (cfg: BotConfig): string[] => {
+    if (!profile) return [];
+    const reqs = premiumPartsInConfig(cfg);
+    return reqs.filter((key) => {
+      const [cat, id] = key.split(':') as [PartCategory, string];
+      return !isPartOwned(profile, cat, id);
+    });
+  };
+
+  const handleTryEquipBot = (cfg: BotConfig, closeOnSuccess = false) => {
+    const missing = lockedPartsForConfig(cfg);
+    if (missing.length > 0) {
+      const labels = missing.slice(0, 3).map((k) => describePartKey(k)).join(', ');
+      showToast(
+        `Locked parts in "${cfg.name}": ${labels}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ''}. Unlock them in Workshop using XP & Coins!`,
+      );
+      return;
+    }
+    onSelectBotToPlay(cfg);
+    if (closeOnSuccess) {
+      onClose();
+    } else {
+      showToast(`Equipped "${cfg.name}" for combat!`);
+    }
   };
 
   const handleSaveCurrentWorkshopBot = () => {
@@ -204,7 +240,7 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
     setActiveTab('roster');
   };
 
-  const handleFuseAndEquip = (saveToRoster: boolean) => {
+  const executeFuseCommit = (saveToRoster: boolean) => {
     const fused = JSON.parse(JSON.stringify(fusedPreviewConfig)) as BotConfig;
     if (saveToRoster) {
       onSaveCustomBotToRoster(fused);
@@ -215,11 +251,27 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
         ? `Fused "${fused.name}" (${fused.fusionParents?.join(' × ')}) & saved to Garage Roster!`
         : `Equipped Fusion Bot "${fused.name}"!`,
     );
+    setPendingFuseAction(null);
     if (!saveToRoster) {
       onClose();
     } else {
       setActiveTab('roster');
     }
+  };
+
+  const handleFuseAndEquip = (saveToRoster: boolean) => {
+    const fused = JSON.parse(JSON.stringify(fusedPreviewConfig)) as BotConfig;
+    const missing = lockedPartsForConfig(fused);
+    if (missing.length > 0) {
+      const labels = missing.slice(0, 3).map((k) => describePartKey(k)).join(', ');
+      showToast(
+        `Cannot deploy fused bot yet — locked parts: ${labels}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ''}. Choose donor bots with unlocked parts or unlock them in Workshop.`,
+      );
+      return;
+    }
+    // Play the 3D merging animation first, then commit the fused bot!
+    setPendingFuseAction(saveToRoster ? 'save' : 'equip');
+    setFusionAnimSignal((s) => s + 1);
   };
 
   return (
@@ -337,12 +389,13 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
             {/* Scrollable All-Bots Table/Grid */}
             <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2.5">
               {filteredEntries.map((entry) => {
-                const bStats = computeBotStats(entry.config, skills || DEFAULT_SKILLS);
+                const bStats = computeBotStats(entry.config, skills || DEFAULT_SKILLS, profile?.partUpgrades);
                 const weapons = getBotWeapons(entry.config);
                 const styles = getBotChassisStyles(entry.config);
                 const isSelected = currentBotConfig.name === entry.config.name;
                 const isFullBodySpinner =
                   entry.config.chassis === 'shell_spinner' || weapons.includes('body_spinner');
+                const missingParts = lockedPartsForConfig(entry.config);
 
                 return (
                   <div
@@ -399,6 +452,11 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                           {isFullBodySpinner && (
                             <span className="rounded-md border border-amber-400/70 bg-amber-500/25 px-2 py-0.5 text-[10px] font-extrabold text-amber-200">
                               360° FULL-BODY SPINNER
+                            </span>
+                          )}
+                          {missingParts.length > 0 && (
+                            <span className="rounded-md border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                              🔒 {missingParts.length} Locked Parts
                             </span>
                           )}
                           <span className="rounded-md border border-slate-700 bg-[#0D1014] px-2 py-0.5 text-[10px] font-semibold text-slate-300">
@@ -465,18 +523,19 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         type="button"
-                        onClick={() => {
-                          onSelectBotToPlay(JSON.parse(JSON.stringify(entry.config)));
-                          onClose();
-                        }}
+                        onClick={() => handleTryEquipBot(entry.config, true)}
                         className={`flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${
-                          isSelected
-                            ? 'bg-emerald-500 text-slate-950 shadow'
-                            : 'bg-amber-500 text-slate-950 hover:bg-amber-400 shadow'
+                          missingParts.length > 0
+                            ? 'bg-slate-800 text-amber-300 border border-amber-500/40 hover:bg-slate-700'
+                            : isSelected
+                              ? 'bg-emerald-500 text-slate-950 shadow'
+                              : 'bg-amber-500 text-slate-950 hover:bg-amber-400 shadow'
                         }`}
                       >
                         <Check className="h-4 w-4" />
-                        <span>{isSelected ? 'Equipped' : 'Select & Play'}</span>
+                        <span>
+                          {missingParts.length > 0 ? 'Locked Parts' : isSelected ? 'Equipped' : 'Select & Play'}
+                        </span>
                       </button>
 
                       <button
@@ -512,19 +571,39 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
         {/* TAB 2: 2-BOT FUSION LAB */}
         {activeTab === 'fusion' && (
           <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
+            {/* Live 3D Side-by-Side Donor Bots + Animated 3D Merging Stage */}
+            {parentAEntry && parentBEntry && (
+              <BotFusion3DStage
+                botA={parentAEntry.config}
+                botB={parentBEntry.config}
+                fusedBot={fusedPreviewConfig}
+                fusionTriggerSignal={fusionAnimSignal}
+                onFusionAnimationComplete={() => {
+                  if (pendingFuseAction === 'save') {
+                    executeFuseCommit(true);
+                  } else if (pendingFuseAction === 'equip') {
+                    executeFuseCommit(false);
+                  }
+                }}
+              />
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Parent Bot A Selector */}
               <div className="rounded-2xl border border-amber-500/50 bg-[#151A23] p-4">
                 <div className="text-xs font-extrabold uppercase tracking-wider text-amber-300">
-                  1. Choose Primary Donor Bot (Hull, Core Drive & Primary Weapons)
+                  1. Choose Left Donor Bot A (Hull, Core Drive & Primary Weapons)
                 </div>
                 <select
                   value={fusionParentAId}
-                  onChange={(e) => setFusionParentAId(e.target.value)}
+                  onChange={(e) => {
+                    setFusionParentAId(e.target.value);
+                    setFusionAnimSignal((s) => s + 1);
+                  }}
                   className="mt-2 w-full rounded-xl border border-slate-700 bg-[#0D1014] px-3 py-2.5 text-sm font-bold text-white focus:border-amber-400 focus:outline-none"
                 >
                   {allEntries.map((e) => {
-                    const st = computeBotStats(e.config, skills);
+                    const st = computeBotStats(e.config, skills, profile?.partUpgrades);
                     return (
                       <option key={e.id} value={e.id}>
                         [{e.clanTag}] {e.config.name} — {st.weightClass} (PWR {st.powerScore}) ·{' '}
@@ -537,14 +616,13 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                 </select>
                 {parentAEntry && (
                   <div className="mt-3 flex items-center gap-3 rounded-xl border border-slate-800 bg-[#0D1014] p-3 text-xs text-slate-300">
-                    <BotPortraitPreview config={parentAEntry.config} size="md" />
                     <div className="space-y-1 min-w-0">
-                      <div className="font-bold text-white">{parentAEntry.config.name}</div>
+                      <div className="font-bold text-amber-300">3D Left Pedestal: {parentAEntry.config.name}</div>
                       <div>
                         Chassis: {CHASSIS_CATALOG[parentAEntry.config.chassis]?.label} · Armor:{' '}
                         {ARMOR_CATALOG[parentAEntry.config.armor]?.label}
                       </div>
-                      <div className="text-amber-300">
+                      <div className="text-amber-200">
                         Weapons:{' '}
                         {getBotWeapons(parentAEntry.config)
                           .map((w) => WEAPON_CATALOG[w]?.label)
@@ -558,15 +636,18 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
               {/* Parent Bot B Selector */}
               <div className="rounded-2xl border border-sky-500/50 bg-[#151A23] p-4">
                 <div className="text-xs font-extrabold uppercase tracking-wider text-sky-300">
-                  2. Choose Secondary Donor Bot (Hybrid Hull Geometry, Armor & Extra Weapons)
+                  2. Choose Right Donor Bot B (Hybrid Hull Geometry, Armor & Extra Weapons)
                 </div>
                 <select
                   value={fusionParentBId}
-                  onChange={(e) => setFusionParentBId(e.target.value)}
+                  onChange={(e) => {
+                    setFusionParentBId(e.target.value);
+                    setFusionAnimSignal((s) => s + 1);
+                  }}
                   className="mt-2 w-full rounded-xl border border-slate-700 bg-[#0D1014] px-3 py-2.5 text-sm font-bold text-white focus:border-sky-400 focus:outline-none"
                 >
                   {allEntries.map((e) => {
-                    const st = computeBotStats(e.config, skills);
+                    const st = computeBotStats(e.config, skills, profile?.partUpgrades);
                     return (
                       <option key={e.id} value={e.id}>
                         [{e.clanTag}] {e.config.name} — {st.weightClass} (PWR {st.powerScore}) ·{' '}
@@ -579,14 +660,13 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                 </select>
                 {parentBEntry && (
                   <div className="mt-3 flex items-center gap-3 rounded-xl border border-slate-800 bg-[#0D1014] p-3 text-xs text-slate-300">
-                    <BotPortraitPreview config={parentBEntry.config} size="md" />
                     <div className="space-y-1 min-w-0">
-                      <div className="font-bold text-white">{parentBEntry.config.name}</div>
+                      <div className="font-bold text-sky-300">3D Right Pedestal: {parentBEntry.config.name}</div>
                       <div>
                         Chassis: {CHASSIS_CATALOG[parentBEntry.config.chassis]?.label} · Armor:{' '}
                         {ARMOR_CATALOG[parentBEntry.config.armor]?.label}
                       </div>
-                      <div className="text-sky-300">
+                      <div className="text-sky-200">
                         Weapons:{' '}
                         {getBotWeapons(parentBEntry.config)
                           .map((w) => WEAPON_CATALOG[w]?.label)
@@ -602,10 +682,9 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
             <div className="rounded-2xl border-2 border-fuchsia-500/70 bg-gradient-to-br from-[#1A1326] to-[#12161F] p-5 shadow-xl">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3.5">
-                  <BotPortraitPreview config={fusedPreviewConfig} size="lg" />
                   <div>
                     <span className="rounded-lg bg-fuchsia-500/25 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wider text-fuchsia-300">
-                      ⚡ Fused Hybrid Warbot Preview
+                      ⚡ Fused Hybrid Warbot Telemetry
                     </span>
                     <h3 className="mt-2 font-display text-2xl font-extrabold text-white">
                       {fusedPreviewConfig.name}
@@ -761,7 +840,7 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
               </div>
 
               {(() => {
-                const st = computeBotStats(currentBotConfig, skills);
+                const st = computeBotStats(currentBotConfig, skills, profile?.partUpgrades);
                 return (
                   <div className="mt-4 rounded-xl border border-slate-800 bg-[#0D1014] p-3.5 text-xs text-slate-300 space-y-1.5">
                     <div className="font-bold text-amber-300">

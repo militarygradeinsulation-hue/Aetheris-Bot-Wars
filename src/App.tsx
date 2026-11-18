@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { User } from 'firebase/auth';
 import {
   Gamepad2,
   KeyRound,
@@ -8,6 +9,7 @@ import {
   Monitor,
   Music,
   Radio,
+  Settings,
   Sliders,
   Smartphone,
   Sparkles,
@@ -24,6 +26,7 @@ import {
   type StudioTab,
 } from './components/AiForgeStudioModal';
 import { AudioSettingsModal } from './components/AudioSettingsModal';
+import { AuthGateModal } from './components/AuthGateModal';
 import {
   ArenaLauncherModal,
   type LocalLaunchMode,
@@ -36,6 +39,7 @@ import {
   type StudioLightingPreset,
 } from './components/LiveVoiceCopilot';
 import { PWAInstallButton } from './components/PWAInstallButton';
+import { SettingsHubModal } from './components/SettingsHubModal';
 import { SocialAndRankingsPanel, type HubModalTab } from './components/SocialAndRankingsPanel';
 import {
   ThreeSceneInspectorDock,
@@ -50,10 +54,35 @@ import { soundEngine } from './game/soundEngine';
 import { voiceCommentator } from './game/voiceCommentator';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import {
+  claimUniqueUsername,
+  createClanInFirestore,
+  createCombatTeam,
+  ensureAndJoinClanInFirestore,
+  hydrateCodeSessionAccount,
+  joinCombatTeam,
+  leaveCombatTeam,
+  loginWithAccessCode,
+  removeConnection,
+  respondToConnectionRequest,
+  saveUserAccount,
+  sendClanMessageInFirestore,
+  sendConnectionRequest,
+  setPilotPresenceStatus,
+  signOutAccount,
+  subscribeClanMessages,
+  subscribeConnections,
+  subscribeFirestoreClans,
+  subscribeOnlinePilots,
+  subscribeTeams,
+} from './services/firebaseService';
+import {
+  getSavedSessionUid,
   hasPendingSync,
   loadPlayerProfile,
+  makeDefaultProfile,
   markPendingSync,
   savePlayerProfile,
+  setSavedSessionUid,
 } from './services/storage';
 import {
   AI_RIVAL_PRESETS,
@@ -67,28 +96,38 @@ import {
   describeObjective,
   evaluateObjective,
   getCampaignLevel,
+  getNextCampaignLevel,
   isLevelUnlocked,
   levelPassed,
 } from './shared/campaign';
 import {
+  applyAdminFullUnlock,
   ARENA_CATALOG,
   type ArenaId,
   type ArenaSnapshot,
   type BotConfig,
   type ClanChatMessage,
   type ClanInfo,
+  type CombatTeamInfo,
   type ControlSchemeId,
   DEFAULT_SKILLS,
   type DeviceLayoutMode,
   type GameMode,
   getBotWeapons,
   getPartPrice,
+  getPartUnlockLevel,
+  getPartUpgradeCost,
+  getPartUpgradeLevel,
+  isAdminIdentifier,
   isPartOwned,
   isTraditionalArena,
   type LeaderboardEntry,
   type MatchModifierId,
+  MAX_PART_UPGRADE_LEVEL,
   type PartCategory,
   partKey,
+  type PilotConnectionRecord,
+  type PilotDirectoryEntry,
   type PlayerInputState,
   type PlayerProfile,
   type SeasonalEvent,
@@ -371,18 +410,31 @@ const GAUNTLET_ARENA_ORDER: ArenaId[] = [
 
 export default function App() {
   const isOnline = useOnlineStatus();
-  const [profile, setProfile] = useState<PlayerProfile>(() => loadPlayerProfile());
+  const [authUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [profile, setProfile] = useState<PlayerProfile>(() =>
+    loadPlayerProfile(getSavedSessionUid() ?? undefined),
+  );
+  const profileRef = useRef<PlayerProfile>(profile);
+  profileRef.current = profile;
+  const accountLoadedUidRef = useRef<string | null>(
+    profile.usernameClaimed ? profile.id : null,
+  );
+  const saveDebounceRef = useRef<number | null>(null);
+
   const [sceneMode, setSceneMode] = useState<'workshop' | 'combat'>('workshop');
   const [selectedArena, setSelectedArena] = useState<ArenaId>('foundry');
   const [selectedRivalTier, setSelectedRivalTier] = useState<RivalTier>('mixed');
   const [selectedDuration, setSelectedDuration] = useState<TimedBattleDuration>(180);
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [garageOpen, setGarageOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [hubTab, setHubTab] = useState<HubModalTab | null>(null);
   const [cameraPreset, setCameraPreset] = useState<CameraViewPreset>('chase');
   const [selectedModifiers, setSelectedModifiers] = useState<MatchModifierId[]>([]);
   const [matchResult, setMatchResult] = useState<MatchResultSummary | null>(null);
   const activeCampaignIdRef = useRef<string | null>(null);
+  const [resumeCampaignLevelId, setResumeCampaignLevelId] = useState<string | null>(null);
 
   // Bot Configuration History Stack for Back / Forward buttons next to Random
   const [botHistory, setBotHistory] = useState<BotConfig[]>(() => [profile.botConfig]);
@@ -391,7 +443,14 @@ export default function App() {
   // Admin Login & 2-Player Multi-Screen Seat State
   const [adminModalOpen, setAdminModalOpen] = useState(false);
   const [adminCodeInput, setAdminCodeInput] = useState('');
-  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [adminUnlocked, setAdminUnlocked] = useState(() =>
+    Boolean(
+      profile.isAdmin ||
+        isAdminIdentifier(profile.callsign) ||
+        isAdminIdentifier(profile.email) ||
+        isAdminIdentifier(profile.accessCode),
+    ),
+  );
   const [adminError, setAdminError] = useState<string | null>(null);
   const [adminSeat, setAdminSeat] = useState<1 | 2 | null>(null);
 
@@ -409,9 +468,22 @@ export default function App() {
   const [sceneDockCollapsed, setSceneDockCollapsed] = useState(false);
   const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
 
-  // Server-backed social & leaderboard data (seeded with rich offline fallbacks)
+  // Responsive viewport width tracking for crisp mobile vs desktop bar
+  const [viewportWidth, setViewportWidth] = useState<number>(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1280,
+  );
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize, { passive: true });
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // Server & Firestore-backed social, connections, teams, and leaderboard data
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(OFFLINE_FALLBACK_LEADERBOARD);
   const [clans, setClans] = useState<ClanInfo[]>(OFFLINE_FALLBACK_CLANS);
+  const [onlinePilots, setOnlinePilots] = useState<PilotDirectoryEntry[]>([]);
+  const [connections, setConnections] = useState<PilotConnectionRecord[]>([]);
+  const [teams, setTeams] = useState<CombatTeamInfo[]>([]);
   const [seasonalEvents, setSeasonalEvents] = useState<SeasonalEvent[]>(OFFLINE_FALLBACK_EVENTS);
   const [pvpBoard, setPvpBoard] = useState<PvpRecord[]>([]);
   const [presence, setPresence] = useState<OnlinePresence | null>(null);
@@ -506,28 +578,130 @@ export default function App() {
     };
   }, []);
 
-  const updateProfile = useCallback((patch: Partial<PlayerProfile>) => {
-    setProfile((prev) => {
-      const next = { ...prev, ...patch };
-      savePlayerProfile(next);
-      return next;
+  // Automatically unlock Admin mode when profile is an Admin account
+  useEffect(() => {
+    if (
+      profile.isAdmin ||
+      isAdminIdentifier(profile.callsign) ||
+      isAdminIdentifier(profile.email) ||
+      isAdminIdentifier(profile.accessCode)
+    ) {
+      setAdminUnlocked(true);
+    }
+  }, [profile.isAdmin, profile.callsign, profile.email, profile.accessCode]);
+
+  // Hydrate saved code-authenticated pilot session from cloud store on startup
+  useEffect(() => {
+    let cancelled = false;
+    const savedUid = getSavedSessionUid() || (profileRef.current.usernameClaimed ? profileRef.current.id : null);
+    if (!savedUid || !profileRef.current.usernameClaimed) {
+      setAuthLoading(false);
+      return;
+    }
+    accountLoadedUidRef.current = savedUid;
+    void hydrateCodeSessionAccount(savedUid, profileRef.current).then((cloudProfile) => {
+      if (cancelled) return;
+      accountLoadedUidRef.current = cloudProfile.id;
+      setSavedSessionUid(cloudProfile.id);
+      setProfile(cloudProfile);
+      setBotHistory([cloudProfile.botConfig]);
+      setBotHistoryIdx(0);
     });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const applyBotConfigImmediate = useCallback((nextConfig: BotConfig) => {
-    setProfile((prev) => {
-      const slot = prev.activeLoadoutSlot ?? 0;
-      const nextLoadouts = Array.isArray(prev.savedLoadouts) ? [...prev.savedLoadouts] : [];
-      nextLoadouts[slot] = nextConfig;
-      const next: PlayerProfile = {
-        ...prev,
-        botConfig: nextConfig,
-        savedLoadouts: nextLoadouts,
-      };
-      savePlayerProfile(next);
-      return next;
+  // Subscribe to live online pilots directory, connections, teams, and clans
+  const cloudReadyUid = profile.usernameClaimed ? profile.id : null;
+
+  useEffect(() => {
+    if (!cloudReadyUid) return;
+    const unsubPilots = subscribeOnlinePilots(setOnlinePilots);
+    const unsubConnections = subscribeConnections(cloudReadyUid, setConnections);
+    const unsubTeams = subscribeTeams(setTeams);
+    const unsubClans = subscribeFirestoreClans(OFFLINE_FALLBACK_CLANS, setClans);
+
+    const status = sceneMode === 'combat' ? 'fighting' : 'garage';
+    void setPilotPresenceStatus(cloudReadyUid, status);
+    const heartbeat = window.setInterval(() => {
+      const curStatus = sceneMode === 'combat' ? 'fighting' : 'garage';
+      void setPilotPresenceStatus(cloudReadyUid, curStatus);
+    }, 45_000);
+
+    const onBeforeUnload = () => {
+      void setPilotPresenceStatus(cloudReadyUid, 'offline');
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    return () => {
+      unsubPilots();
+      unsubConnections();
+      unsubTeams();
+      unsubClans();
+      window.clearInterval(heartbeat);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [cloudReadyUid, sceneMode]);
+
+  // Subscribe to active clan live chat in Firestore
+  useEffect(() => {
+    if (!cloudReadyUid || !profile.clanId) return;
+    const targetClanId = profile.clanId;
+    const unsub = subscribeClanMessages(targetClanId, cloudReadyUid, (msgs) => {
+      setClans((prev) =>
+        prev.map((c) => (c.id === targetClanId ? { ...c, chat: msgs } : c)),
+      );
     });
-  }, []);
+    return () => unsub();
+  }, [cloudReadyUid, profile.clanId]);
+
+  const scheduleCloudSave = useCallback((next: PlayerProfile, immediate = false) => {
+    const uid = accountLoadedUidRef.current;
+    savePlayerProfile(next, uid ?? undefined);
+    if (!uid) return;
+    const status = sceneMode === 'combat' ? 'fighting' : 'garage';
+    if (saveDebounceRef.current) {
+      window.clearTimeout(saveDebounceRef.current);
+      saveDebounceRef.current = null;
+    }
+    if (immediate) {
+      void saveUserAccount(uid, next, status);
+    } else {
+      saveDebounceRef.current = window.setTimeout(() => {
+        void saveUserAccount(uid, profileRef.current, status);
+      }, 450);
+    }
+  }, [sceneMode]);
+
+  const updateProfile = useCallback(
+    (patch: Partial<PlayerProfile>, immediate = false) => {
+      setProfile((prev) => {
+        const next = { ...prev, ...patch };
+        scheduleCloudSave(next, immediate);
+        return next;
+      });
+    },
+    [scheduleCloudSave],
+  );
+
+  const applyBotConfigImmediate = useCallback(
+    (nextConfig: BotConfig) => {
+      setProfile((prev) => {
+        const slot = prev.activeLoadoutSlot ?? 0;
+        const nextLoadouts = Array.isArray(prev.savedLoadouts) ? [...prev.savedLoadouts] : [];
+        nextLoadouts[slot] = nextConfig;
+        const next: PlayerProfile = {
+          ...prev,
+          botConfig: nextConfig,
+          savedLoadouts: nextLoadouts,
+        };
+        scheduleCloudSave(next, false);
+        return next;
+      });
+    },
+    [scheduleCloudSave],
+  );
 
   const handleBotConfigChange = useCallback(
     (nextConfig: BotConfig) => {
@@ -566,46 +740,55 @@ export default function App() {
     }
   }, [botHistory, botHistoryIdx, applyBotConfigImmediate]);
 
-  const handleSaveCustomBotToRoster = useCallback((customBot: BotConfig) => {
-    setProfile((prev) => {
-      const existing = Array.isArray(prev.customGarageBots) ? [...prev.customGarageBots] : [];
-      const filtered = existing.filter((b) => b.name.toLowerCase() !== customBot.name.toLowerCase());
-      const nextCustom = [JSON.parse(JSON.stringify(customBot)) as BotConfig, ...filtered].slice(0, 24);
-      const next: PlayerProfile = {
-        ...prev,
-        customGarageBots: nextCustom,
-      };
-      savePlayerProfile(next);
-      return next;
-    });
-  }, []);
+  const handleSaveCustomBotToRoster = useCallback(
+    (customBot: BotConfig) => {
+      setProfile((prev) => {
+        const existing = Array.isArray(prev.customGarageBots) ? [...prev.customGarageBots] : [];
+        const filtered = existing.filter((b) => b.name.toLowerCase() !== customBot.name.toLowerCase());
+        const nextCustom = [JSON.parse(JSON.stringify(customBot)) as BotConfig, ...filtered].slice(0, 24);
+        const next: PlayerProfile = {
+          ...prev,
+          customGarageBots: nextCustom,
+        };
+        scheduleCloudSave(next, true);
+        return next;
+      });
+    },
+    [scheduleCloudSave],
+  );
 
-  const handleDeleteCustomBotFromRoster = useCallback((idx: number) => {
-    setProfile((prev) => {
-      const existing = Array.isArray(prev.customGarageBots) ? [...prev.customGarageBots] : [];
-      existing.splice(idx, 1);
-      const next: PlayerProfile = {
-        ...prev,
-        customGarageBots: existing,
-      };
-      savePlayerProfile(next);
-      return next;
-    });
-  }, []);
+  const handleDeleteCustomBotFromRoster = useCallback(
+    (idx: number) => {
+      setProfile((prev) => {
+        const existing = Array.isArray(prev.customGarageBots) ? [...prev.customGarageBots] : [];
+        existing.splice(idx, 1);
+        const next: PlayerProfile = {
+          ...prev,
+          customGarageBots: existing,
+        };
+        scheduleCloudSave(next, true);
+        return next;
+      });
+    },
+    [scheduleCloudSave],
+  );
 
-  const handleSelectLoadoutSlot = useCallback((slotIdx: number) => {
-    setProfile((prev) => {
-      const loadouts = prev.savedLoadouts || [];
-      const chosen = loadouts[slotIdx] || prev.botConfig;
-      const next: PlayerProfile = {
-        ...prev,
-        activeLoadoutSlot: slotIdx,
-        botConfig: { ...chosen },
-      };
-      savePlayerProfile(next);
-      return next;
-    });
-  }, []);
+  const handleSelectLoadoutSlot = useCallback(
+    (slotIdx: number) => {
+      setProfile((prev) => {
+        const loadouts = prev.savedLoadouts || [];
+        const chosen = loadouts[slotIdx] || prev.botConfig;
+        const next: PlayerProfile = {
+          ...prev,
+          activeLoadoutSlot: slotIdx,
+          botConfig: { ...chosen },
+        };
+        scheduleCloudSave(next, false);
+        return next;
+      });
+    },
+    [scheduleCloudSave],
+  );
 
   const syncProfileToServer = useCallback(
     async (prof: PlayerProfile) => {
@@ -1130,8 +1313,21 @@ export default function App() {
     );
 
     setProfile((prev) => {
-      const nextXp = prev.xp + xpEarned;
-      const leveledUp = nextXp >= prev.level * 200;
+      let nextXp = prev.xp + xpEarned;
+      let nextLevel = prev.level;
+      let gainedLevels = 0;
+      while (nextXp >= nextLevel * 200) {
+        nextXp -= nextLevel * 200;
+        nextLevel += 1;
+        gainedLevels += 1;
+      }
+      const unlockedArenasSet = new Set<ArenaId>(prev.unlockedArenas ?? ['foundry', 'colosseum']);
+      for (const aSpec of Object.values(ARENA_CATALOG)) {
+        if ((aSpec.unlockLevel ?? 1) <= nextLevel) {
+          unlockedArenasSet.add(aSpec.id);
+        }
+      }
+
       const arenaWins = { ...(prev.arenaWins ?? {}) };
       if (won && !isPractice) {
         arenaWins[hudSnapshot.arenaId] = (arenaWins[hudSnapshot.arenaId] ?? 0) + 1;
@@ -1141,23 +1337,30 @@ export default function App() {
       const campaignStars = { ...(prev.campaignStars ?? {}) };
       if (level) campaignStars[level.id] = Math.max(campaignStars[level.id] ?? 0, stars);
 
+      const nextCoins = (prev.coins ?? prev.scrap) + scrapEarned;
+
       const nextProfile: PlayerProfile = {
         ...prev,
-        scrap: prev.scrap + scrapEarned,
-        xp: leveledUp ? nextXp - prev.level * 200 : nextXp,
-        level: leveledUp ? prev.level + 1 : prev.level,
-        skillPoints: (leveledUp ? prev.skillPoints + 1 : prev.skillPoints) + spEarned,
+        coins: nextCoins,
+        scrap: nextCoins,
+        xp: nextXp,
+        level: nextLevel,
+        skillPoints: prev.skillPoints + gainedLevels + spEarned,
         rating: Math.max(800, prev.rating + ratingDelta),
         wins: won ? prev.wins + 1 : prev.wins,
         losses: won || isPractice || mode === 'survival' ? prev.losses : prev.losses + 1,
         kos: prev.kos + kos,
         gauntletStage: won && lastLocalMode === 'gauntlet' ? prev.gauntletStage + 1 : prev.gauntletStage,
         arenaWins,
+        unlockedArenas: [...unlockedArenasSet],
         ownedParts: [...owned],
         campaignStars,
         bestSurvivalWave: Math.max(prev.bestSurvivalWave ?? 0, mode === 'survival' ? wavesCleared : 0),
       };
-      savePlayerProfile(nextProfile);
+      savePlayerProfile(nextProfile, accountLoadedUidRef.current ?? undefined);
+      if (accountLoadedUidRef.current) {
+        void saveUserAccount(accountLoadedUidRef.current, nextProfile, 'fighting');
+      }
       syncProfileToServer(nextProfile);
 
       if (isClanWarMatch && prev.clanId) {
@@ -1219,6 +1422,7 @@ export default function App() {
           clanTag: profile.clanTag,
           config: profile.botConfig,
           skills: profile.skills,
+          partUpgrades: profile.partUpgrades,
           isBot: false,
           team: 0,
         },
@@ -1397,13 +1601,21 @@ export default function App() {
   );
 
   const startCampaignLevel = useCallback(
-    (levelId: string) => {
+    (levelId: string, forceAllow = false) => {
       const level = getCampaignLevel(levelId);
-      if (!level || !isLevelUnlocked(levelId, profile.campaignStars)) return;
+      if (
+        !level ||
+        (!forceAllow &&
+          !profile.isAdmin &&
+          !isLevelUnlocked(levelId, profileRef.current.campaignStars))
+      ) {
+        return;
+      }
       soundEngine.unlock();
       matchRewardAppliedRef.current = false;
       lastCountdownCeilRef.current = 3;
       activeCampaignIdRef.current = level.id;
+      setResumeCampaignLevelId(null);
       setMatchResult(null);
       setIsMultiplayerMatch(false);
       setIsClanWarMatch(false);
@@ -1417,6 +1629,7 @@ export default function App() {
           clanTag: profile.clanTag,
           config: profile.botConfig,
           skills: profile.skills,
+          partUpgrades: profile.partUpgrades,
           isBot: false,
           team: 0,
         },
@@ -1544,20 +1757,53 @@ export default function App() {
     setSceneMode('workshop');
   };
 
+  const handleGoToGarageUpgrades = () => {
+    const curCampaignId = activeCampaignIdRef.current;
+    if (lastLocalMode === 'campaign' && curCampaignId) {
+      const nextLv = matchResult?.won ? getNextCampaignLevel(curCampaignId) : undefined;
+      setResumeCampaignLevelId(nextLv?.id ?? curCampaignId);
+    }
+    handleExitArena();
+    setZenMode(false);
+    setLauncherOpen(false);
+    setHubTab(null);
+    soundEngine.playPickup();
+  };
+
   const handleVerifyAdminCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setAdminError(null);
+    const trimmed = adminCodeInput.trim();
+    if (!trimmed) {
+      setAdminError('Please enter an access code.');
+      return;
+    }
+
+    const unlockAdminAndEverything = () => {
+      setAdminUnlocked(true);
+      setAdminCodeInput('');
+      const unlockedProfile = applyAdminFullUnlock(profileRef.current);
+      accountLoadedUidRef.current = unlockedProfile.id;
+      setSavedSessionUid(unlockedProfile.id);
+      setProfile(unlockedProfile);
+      scheduleCloudSave(unlockedProfile, true);
+    };
+
+    if (isAdminIdentifier(trimmed)) {
+      unlockAdminAndEverything();
+      return;
+    }
+
     try {
       const res = await fetch('/api/admin/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: adminCodeInput.trim() }),
+        body: JSON.stringify({ code: trimmed }),
       });
       if (res.ok) {
-        const data = (await res.json()) as { verified?: boolean };
-        if (data.verified) {
-          setAdminUnlocked(true);
-          setAdminCodeInput('');
+        const data = (await res.json()) as { verified?: boolean; valid?: boolean };
+        if (data.verified || data.valid) {
+          unlockAdminAndEverything();
           return;
         }
       }
@@ -1565,6 +1811,47 @@ export default function App() {
     } catch {
       setAdminError('Unable to reach server to verify access.');
     }
+  };
+
+  const handleApplyLoginOrAdminCode = async (
+    rawCode: string,
+  ): Promise<{ ok: boolean; msg?: string }> => {
+    const trimmed = rawCode.trim();
+    if (!trimmed) return { ok: false, msg: 'Please enter a code.' };
+
+    if (isAdminIdentifier(trimmed)) {
+      const res = await loginWithAccessCode(trimmed, profileRef.current);
+      const unlocked = res.profile ?? applyAdminFullUnlock(profileRef.current);
+      setAdminUnlocked(true);
+      accountLoadedUidRef.current = unlocked.id;
+      setSavedSessionUid(unlocked.id);
+      setProfile(unlocked);
+      scheduleCloudSave(unlocked, true);
+      return {
+        ok: true,
+        msg: 'Admin Master Access unlocked! All arenas, weapons, customizations, and max upgrades enabled.',
+      };
+    }
+
+    const res = await loginWithAccessCode(trimmed, profileRef.current);
+    if (res.ok && res.profile) {
+      accountLoadedUidRef.current = res.profile.id;
+      setSavedSessionUid(res.profile.id);
+      setProfile(res.profile);
+      setBotHistory([res.profile.botConfig]);
+      setBotHistoryIdx(0);
+      if (res.isAdmin || res.profile.isAdmin) {
+        setAdminUnlocked(true);
+      }
+      return {
+        ok: true,
+        msg: `Signed in as ${res.profile.callsign}!`,
+      };
+    }
+    return {
+      ok: false,
+      msg: res.error || 'Access code not found.',
+    };
   };
 
   const handleJoinAdminSeat = (seat: 1 | 2) => {
@@ -1591,20 +1878,48 @@ export default function App() {
     const rank = profile.skills[key] ?? 0;
     if (rank >= 5) return;
     const scrapCost = 100 + rank * 60;
+    const curCoins = profile.coins ?? profile.scrap;
     if (profile.skillPoints >= 1) {
-      updateProfile({
-        skillPoints: profile.skillPoints - 1,
-        skills: { ...profile.skills, [key]: rank + 1 },
-      });
-    } else if (profile.scrap >= scrapCost) {
-      updateProfile({
-        scrap: profile.scrap - scrapCost,
-        skills: { ...profile.skills, [key]: rank + 1 },
-      });
+      updateProfile(
+        {
+          skillPoints: profile.skillPoints - 1,
+          skills: { ...profile.skills, [key]: rank + 1 },
+        },
+        true,
+      );
+      soundEngine.playPickup();
+    } else if (curCoins >= scrapCost) {
+      updateProfile(
+        {
+          coins: curCoins - scrapCost,
+          scrap: curCoins - scrapCost,
+          skills: { ...profile.skills, [key]: rank + 1 },
+        },
+        true,
+      );
+      soundEngine.playPickup();
     }
   };
 
   const handleCreateClan = async (name: string, tag: string, motto: string) => {
+    const activeUid = profile.id || authUser?.uid;
+    if (activeUid) {
+      try {
+        const created = await createClanInFirestore(
+          activeUid,
+          profile.callsign,
+          name,
+          tag,
+          motto,
+          clans.length,
+        );
+        updateProfile({ clanId: created.id, clanTag: created.tag }, true);
+        return;
+      } catch (err) {
+        console.error('Clan creation failed:', err);
+      }
+    }
+
     const cleanTag = tag.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() || 'CLAN';
     const localClan: ClanInfo = {
       id: `clan_${Date.now()}`,
@@ -1619,91 +1934,188 @@ export default function App() {
       chat: [],
     };
     setClans((prev) => [...prev, localClan]);
-    updateProfile({ clanId: localClan.id, clanTag: localClan.tag });
-
-    try {
-      const res = await fetch('/api/clans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, tag, motto }),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { clan: ClanInfo; clans: ClanInfo[] };
-        setClans(data.clans);
-        updateProfile({ clanId: data.clan.id, clanTag: data.clan.tag });
-      }
-    } catch {
-      // Local clan creation already applied
-    }
+    updateProfile({ clanId: localClan.id, clanTag: localClan.tag }, true);
   };
 
   const handleJoinClan = async (clanId: string) => {
-    const targetLocal = clans.find((c) => c.id === clanId);
-    if (targetLocal) {
-      updateProfile({ clanId: targetLocal.id, clanTag: targetLocal.tag });
-    }
-    try {
-      const res = await fetch(`/api/clans/${clanId}/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ previousClanId: profile.clanId }),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { clan: ClanInfo; clans: ClanInfo[] };
-        setClans(data.clans);
-        updateProfile({ clanId: data.clan.id, clanTag: data.clan.tag });
+    const target = clans.find((c) => c.id === clanId);
+    if (!target) return;
+    const activeUid = profile.id || authUser?.uid;
+    if (activeUid) {
+      try {
+        await ensureAndJoinClanInFirestore(activeUid, profile.callsign, target);
+      } catch (err) {
+        console.error('Clan join failed:', err);
       }
-    } catch {
-      // Local pledge already applied
     }
+    updateProfile({ clanId: target.id, clanTag: target.tag }, true);
   };
 
   const handleSendClanChat = (clanId: string, text: string) => {
+    const cleanText = text.trim().slice(0, 180);
+    if (!cleanText) return;
+    const targetClan = clans.find((c) => c.id === clanId);
+    const activeUid = profile.id || authUser?.uid;
+    if (activeUid && targetClan) {
+      void sendClanMessageInFirestore(activeUid, profile.callsign, targetClan, cleanText);
+      return;
+    }
     const localMsg: ClanChatMessage = {
       id: `local_${Date.now()}`,
       sender: profile.callsign,
-      text: text.trim().slice(0, 180),
+      text: cleanText,
       timestamp: new Date().toISOString(),
     };
     setClans((prev) =>
       prev.map((c) => (c.id === clanId ? { ...c, chat: [...c.chat.slice(-29), localMsg] } : c)),
     );
+  };
 
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          type: 'clan:chat',
-          clanId,
-          name: profile.callsign,
-          text,
-        }),
-      );
+  const handleSendConnection = async (targetUid: string, targetName: string) => {
+    const activeUid = profile.id || authUser?.uid;
+    if (!activeUid) return;
+    await sendConnectionRequest(activeUid, profile.callsign, targetUid, targetName);
+  };
+
+  const handleRespondConnection = async (connId: string, decision: 'accepted' | 'declined') => {
+    await respondToConnectionRequest(connId, decision);
+  };
+
+  const handleRemoveConnection = async (connId: string) => {
+    await removeConnection(connId);
+  };
+
+  const handleCreateTeam = async (name: string, tag: string, motto: string) => {
+    const activeUid = profile.id || authUser?.uid;
+    if (!activeUid) return;
+    const team = await createCombatTeam(activeUid, profile, name, tag, motto);
+    updateProfile({ teamId: team.id, teamName: team.name }, true);
+  };
+
+  const handleJoinTeam = async (teamId: string) => {
+    const activeUid = profile.id || authUser?.uid;
+    if (!activeUid) return;
+    const joined = await joinCombatTeam(activeUid, profile.callsign, teamId);
+    if (joined) {
+      updateProfile({ teamId: joined.id, teamName: joined.name }, true);
     }
+  };
+
+  const handleLeaveTeam = async (teamId: string) => {
+    const activeUid = profile.id || authUser?.uid;
+    if (!activeUid) return;
+    await leaveCombatTeam(activeUid, teamId);
+    updateProfile({ teamId: null, teamName: null }, true);
+  };
+
+  const handleClaimUsernameInSettings = async (
+    newUsername: string,
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const activeUid = profile.id || authUser?.uid;
+    if (!activeUid) return { ok: false, error: 'Please create a username first.' };
+    if (isAdminIdentifier(newUsername)) {
+      const unlocked = applyAdminFullUnlock(profileRef.current);
+      setAdminUnlocked(true);
+      accountLoadedUidRef.current = unlocked.id;
+      setSavedSessionUid(unlocked.id);
+      setProfile(unlocked);
+      scheduleCloudSave(unlocked, true);
+      return { ok: true };
+    }
+    const res = await claimUniqueUsername(activeUid, newUsername, profile);
+    if (res.ok && res.username) {
+      updateProfile({ callsign: res.username, usernameClaimed: true }, true);
+      return { ok: true };
+    }
+    return { ok: false, error: res.error || 'Could not claim username.' };
+  };
+
+  const handleSignOutUser = async () => {
+    const activeUid = profile.id || authUser?.uid;
+    if (activeUid) {
+      await setPilotPresenceStatus(activeUid, 'offline');
+    }
+    await signOutAccount();
+    accountLoadedUidRef.current = null;
+    setAdminUnlocked(false);
+    setSettingsOpen(false);
+    setHubTab(null);
+    setOnlinePilots([]);
+    setConnections([]);
+    setTeams([]);
+    const guestProfile = { ...makeDefaultProfile('guest'), usernameClaimed: false };
+    savePlayerProfile(guestProfile);
+    setProfile(guestProfile);
   };
 
   const handleClaimEventReward = (ev: SeasonalEvent) => {
     if (profile.claimedEvents.includes(ev.id) || profile.wins < ev.targetWins) return;
     const owned = new Set(profile.ownedParts ?? []);
     if (ev.rewardUnlock) owned.add(ev.rewardUnlock);
-    updateProfile({
-      scrap: profile.scrap + ev.rewardScrap,
-      skillPoints: profile.skillPoints + ev.rewardSkillPoints,
-      pilotTitle: ev.badgeTitle || profile.pilotTitle,
-      claimedEvents: [...profile.claimedEvents, ev.id],
-      ownedParts: [...owned],
-    });
+    const nextCoins = (profile.coins ?? profile.scrap) + ev.rewardScrap;
+    updateProfile(
+      {
+        coins: nextCoins,
+        scrap: nextCoins,
+        skillPoints: profile.skillPoints + ev.rewardSkillPoints,
+        pilotTitle: ev.badgeTitle || profile.pilotTitle,
+        claimedEvents: [...profile.claimedEvents, ev.id],
+        ownedParts: [...owned],
+      },
+      true,
+    );
     soundEngine.playPickup();
   };
 
   const handleBuyPart = (cat: PartCategory, id: string): boolean => {
     if (isPartOwned(profile, cat, id)) return true;
+    const reqLevel = getPartUnlockLevel(cat, id);
+    if (profile.level < reqLevel) return false;
     const price = getPartPrice(cat, id);
-    if (profile.scrap < price) return false;
-    updateProfile({
-      scrap: profile.scrap - price,
-      ownedParts: [...(profile.ownedParts ?? []), partKey(cat, id)],
-    });
+    const curCoins = profile.coins ?? profile.scrap;
+    if (curCoins < price) return false;
+    const nextCoins = curCoins - price;
+    const nextOwned = [...new Set([...(profile.ownedParts ?? []), partKey(cat, id)])];
+    const nextArenas =
+      cat === 'arena'
+        ? [...new Set([...(profile.unlockedArenas ?? ['foundry', 'colosseum']), id as ArenaId])]
+        : profile.unlockedArenas;
+    updateProfile(
+      {
+        coins: nextCoins,
+        scrap: nextCoins,
+        ownedParts: nextOwned,
+        unlockedArenas: nextArenas,
+      },
+      true,
+    );
+    soundEngine.playPickup();
+    return true;
+  };
+
+  const handleBuyArena = (arenaId: ArenaId): boolean => {
+    return handleBuyPart('arena', arenaId);
+  };
+
+  const handleUpgradePart = (cat: PartCategory, id: string): boolean => {
+    if (!isPartOwned(profile, cat, id)) return false;
+    const curLv = getPartUpgradeLevel(profile, cat, id);
+    if (curLv >= MAX_PART_UPGRADE_LEVEL) return false;
+    const cost = getPartUpgradeCost(cat, id, curLv);
+    const curCoins = profile.coins ?? profile.scrap;
+    if (curCoins < cost) return false;
+    const nextCoins = curCoins - cost;
+    updateProfile(
+      {
+        coins: nextCoins,
+        scrap: nextCoins,
+        partUpgrades: {
+          ...(profile.partUpgrades ?? {}),
+          [partKey(cat, id)]: curLv + 1,
+        },
+      },
+      true,
+    );
     soundEngine.playPickup();
     return true;
   };
@@ -1731,6 +2143,11 @@ export default function App() {
     activeDeviceMode === 'tablet' ||
     (activeDeviceMode === 'auto' && !showTouchControls);
 
+  const isCompactMobile =
+    activeDeviceMode === 'mobile' || (activeDeviceMode === 'auto' && viewportWidth < 768);
+  const onlineNowCount = onlinePilots.filter((p) => p.isOnline).length;
+  const coinsBalance = profile.coins ?? profile.scrap ?? 0;
+
   const playerCombatBot = hudSnapshot?.bots.find((b) => b.id === activeCombatPlayerId);
 
   return (
@@ -1746,6 +2163,7 @@ export default function App() {
         inputRef={inputRef}
         onStepLocalPhysics={sceneMode === 'combat' && !isMultiplayerMatch ? stepLocalPhysics : undefined}
         cameraPreset={cameraPreset}
+        cameraSensitivity={profile.cameraSensitivity ?? 0.65}
         explodedRatio={explodedRatio}
         lightingPreset={lightingPreset}
         turntableSpeed={turntableSpeed}
@@ -1763,13 +2181,32 @@ export default function App() {
         />
       )}
 
+      {/* Pilot Username & Personal Login Code Gate */}
+      {!showIntroSplash && (
+        <AuthGateModal
+          authUser={authUser}
+          authLoading={authLoading}
+          profile={profile}
+          onProfileUpdated={(next) => {
+            accountLoadedUidRef.current = next.id;
+            setSavedSessionUid(next.id);
+            setProfile(next);
+            setBotHistory([next.botConfig]);
+            setBotHistoryIdx(0);
+            if (next.isAdmin || isAdminIdentifier(next.callsign) || isAdminIdentifier(next.email)) {
+              setAdminUnlocked(true);
+            }
+          }}
+        />
+      )}
+
       {/* Top Navigation Bar (Workshop / Hangar Mode) */}
       {sceneMode === 'workshop' && (
-        <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center justify-between gap-4 border-b border-slate-800/90 bg-[#0D1014]/92 px-4 sm:px-6 pt-safe">
+        <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center justify-between gap-2 sm:gap-4 border-b border-slate-800/90 bg-[#0D1014]/92 px-3 sm:px-6 pt-safe">
           {/* Zone 1: Brand Wordmark + Developer Badge */}
-          <div className="flex items-center gap-3 shrink-0">
-            <span className="font-display text-lg font-bold tracking-tight text-white whitespace-nowrap">
-              Aetheris Bot Wars
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <span className="font-display text-sm sm:text-lg font-bold tracking-tight text-white whitespace-nowrap">
+              {isCompactMobile ? 'Aetheris' : 'Aetheris Bot Wars'}
             </span>
             <a
               href="https://lovable.dev/@theonlyarchitect"
@@ -1795,83 +2232,129 @@ export default function App() {
             </a>
           </div>
 
-          {/* Zone 2: Concise single-line nav links */}
-          <nav className="flex items-center gap-2.5 sm:gap-5 overflow-x-auto text-xs sm:text-sm font-medium text-slate-300">
-            <button
-              type="button"
-              onClick={() => setGarageOpen(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-fuchsia-500/50 bg-fuchsia-500/15 px-2.5 py-1.5 font-bold text-fuchsia-200 hover:bg-fuchsia-500/25 transition whitespace-nowrap shrink-0"
-            >
-              <Layers className="h-3.5 w-3.5 text-fuchsia-300" />
-              <span>Garage & Fusion</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setHubTab('rankings')}
-              className="hover:text-amber-400 transition whitespace-nowrap shrink-0"
-            >
-              Rankings
-            </button>
-            <button
-              type="button"
-              onClick={() => setHubTab('clans')}
-              className="hover:text-amber-400 transition whitespace-nowrap shrink-0"
-            >
-              Clans & Teams
-            </button>
-            <button
-              type="button"
-              onClick={() => setHubTab('events')}
-              className="hover:text-amber-400 transition whitespace-nowrap shrink-0"
-            >
-              Season 05
-            </button>
-            <button
-              type="button"
-              onClick={() => setHubTab('skills')}
-              className="hover:text-amber-400 transition whitespace-nowrap shrink-0"
-            >
-              Skills ({profile.skillPoints} SP)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAiStudioTab('music');
-                setAiStudioOpen(true);
-              }}
-              className="flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-2.5 py-1.5 font-bold text-amber-200 hover:bg-amber-500/25 transition whitespace-nowrap shrink-0"
-            >
-              <Music className="h-3.5 w-3.5 text-amber-400" />
-              <span>AI Music & Lab</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setLiveVoiceOpen((prev) => !prev)}
-              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-bold transition whitespace-nowrap shrink-0 ${
-                liveVoiceOpen
-                  ? 'border-emerald-400 bg-emerald-500/25 text-emerald-200 shadow'
-                  : 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25'
-              }`}
-            >
-              <Radio className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Live Voice AI</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setAdminModalOpen(true)}
-              className="flex items-center gap-1 rounded-lg border border-slate-700 bg-[#161C24] px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:border-amber-400/60 hover:text-amber-300 transition whitespace-nowrap shrink-0"
-            >
-              <KeyRound className="h-3.5 w-3.5 text-amber-400" />
-              <span>{adminUnlocked ? '2P Arena' : 'Admin Login'}</span>
-            </button>
-          </nav>
+          {/* Zone 2: Simplified Mobile Bar vs Full Desktop Nav */}
+          {isCompactMobile ? (
+            <nav className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setHubTab('online')}
+                className="flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-2.5 py-2 min-h-[38px] text-[11px] font-bold text-emerald-200"
+              >
+                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                <span>Online ({onlineNowCount})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setGarageOpen(true)}
+                className="flex items-center gap-1 rounded-lg border border-fuchsia-500/50 bg-fuchsia-500/15 px-2.5 py-2 min-h-[38px] text-[11px] font-bold text-fuchsia-200"
+              >
+                <Layers className="h-3.5 w-3.5" />
+                <span>Garage</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Open Settings"
+                className="flex items-center gap-1 rounded-lg border border-slate-700 bg-[#161C24] px-2.5 py-2 min-h-[38px] text-[11px] font-bold text-slate-200"
+              >
+                <Settings className="h-3.5 w-3.5 text-sky-300" />
+                <span>Settings</span>
+              </button>
+            </nav>
+          ) : (
+            <nav className="flex items-center gap-2.5 sm:gap-4 overflow-x-auto text-xs sm:text-sm font-medium text-slate-300">
+              <button
+                type="button"
+                onClick={() => setHubTab('online')}
+                className="flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-2.5 py-1.5 font-bold text-emerald-200 hover:bg-emerald-500/25 transition whitespace-nowrap shrink-0"
+              >
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Online ({onlineNowCount})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setGarageOpen(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-fuchsia-500/50 bg-fuchsia-500/15 px-2.5 py-1.5 font-bold text-fuchsia-200 hover:bg-fuchsia-500/25 transition whitespace-nowrap shrink-0"
+              >
+                <Layers className="h-3.5 w-3.5 text-fuchsia-300" />
+                <span>Garage & Fusion</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setHubTab('rankings')}
+                className="hover:text-amber-400 transition whitespace-nowrap shrink-0"
+              >
+                Rankings
+              </button>
+              <button
+                type="button"
+                onClick={() => setHubTab('clans')}
+                className="hover:text-amber-400 transition whitespace-nowrap shrink-0"
+              >
+                Clans & Teams
+              </button>
+              <button
+                type="button"
+                onClick={() => setHubTab('events')}
+                className="hover:text-amber-400 transition whitespace-nowrap shrink-0"
+              >
+                Season 05
+              </button>
+              <button
+                type="button"
+                onClick={() => setHubTab('skills')}
+                className="hover:text-amber-400 transition whitespace-nowrap shrink-0"
+              >
+                Skills ({profile.skillPoints} SP)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAiStudioTab('music');
+                  setAiStudioOpen(true);
+                }}
+                className="flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-2.5 py-1.5 font-bold text-amber-200 hover:bg-amber-500/25 transition whitespace-nowrap shrink-0"
+              >
+                <Music className="h-3.5 w-3.5 text-amber-400" />
+                <span>AI Music & Lab</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLiveVoiceOpen((prev) => !prev)}
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-bold transition whitespace-nowrap shrink-0 ${
+                  liveVoiceOpen
+                    ? 'border-emerald-400 bg-emerald-500/25 text-emerald-200 shadow'
+                    : 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25'
+                }`}
+              >
+                <Radio className="h-3.5 w-3.5 text-emerald-400" />
+                <span>Live Voice AI</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdminModalOpen(true)}
+                className="flex items-center gap-1 rounded-lg border border-slate-700 bg-[#161C24] px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:border-amber-400/60 hover:text-amber-300 transition whitespace-nowrap shrink-0"
+              >
+                <KeyRound className="h-3.5 w-3.5 text-amber-400" />
+                <span>{adminUnlocked ? '2P Arena' : 'Admin Login'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="flex items-center gap-1 rounded-lg border border-slate-700 bg-[#161C24] px-2.5 py-1.5 text-xs font-semibold text-slate-200 hover:border-sky-400 transition whitespace-nowrap shrink-0"
+              >
+                <Settings className="h-3.5 w-3.5 text-sky-300" />
+                <span>Settings</span>
+              </button>
+            </nav>
+          )}
 
           {/* Zone 3: Single Primary Action */}
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => setLauncherOpen(true)}
-              className="rounded-lg bg-amber-500 px-3.5 py-2 min-h-[38px] text-xs font-bold text-slate-950 hover:bg-amber-400 transition whitespace-nowrap shrink-0"
+              className="rounded-lg bg-amber-500 px-3 sm:px-3.5 py-2 min-h-[38px] text-xs font-bold text-slate-950 hover:bg-amber-400 transition whitespace-nowrap shrink-0"
             >
               Deploy Arena
             </button>
@@ -1879,136 +2362,188 @@ export default function App() {
         </header>
       )}
 
-      {/* Subtle Pilot Metadata, Control Scheme, Device Mode & Audio Strip below top bar in Workshop */}
+      {/* Clean Pilot Status Strip below top bar in Workshop */}
       {sceneMode === 'workshop' && (
-        <div className="pointer-events-none fixed inset-x-0 top-16 z-20 flex flex-wrap items-center justify-between gap-2 px-4 sm:px-6">
+        <div className="pointer-events-none fixed inset-x-0 top-16 z-20 flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6">
           <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-xl border border-slate-800/90 bg-[#12161C]/90 px-3 py-1.5 text-xs text-slate-300 font-mono-tabular">
             <span className="font-semibold text-white">
               [{profile.clanTag}] {profile.callsign}
             </span>
-            {profile.pilotTitle && (
+            {profile.teamName && !isCompactMobile && (
               <>
                 <span aria-hidden="true">·</span>
-                <span className="font-sans text-[11px] font-semibold text-sky-400">
-                  {profile.pilotTitle}
+                <span className="font-sans text-[11px] font-semibold text-sky-300">
+                  Team: {profile.teamName}
                 </span>
               </>
             )}
             <span aria-hidden="true">·</span>
-            <span>Lv {profile.level}</span>
+            <span className="text-emerald-300 font-bold">Lv {profile.level}</span>
             <span aria-hidden="true">·</span>
-            <span className="text-amber-400">{profile.scrap} Scrap</span>
-            <span aria-hidden="true">·</span>
-            <span>{profile.skillPoints} SP</span>
+            <span className="text-amber-400 font-bold">{coinsBalance} Coins</span>
+            {!isCompactMobile && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{profile.skillPoints} SP</span>
+              </>
+            )}
           </div>
 
-          <div className="pointer-events-auto flex flex-wrap items-center gap-1.5">
-            {/* Control Scheme Selector: WASD Drive / Arrows Drive (WASD Wpns) / Mouse Drive */}
-            <div
-              className="flex items-center gap-1 rounded-xl border border-slate-700/90 bg-[#12161C]/95 p-1 text-[11px]"
-              title="Choose Driving & Weapon Controls"
-            >
-              <Gamepad2 className="ml-1.5 h-3.5 w-3.5 text-amber-400 shrink-0" />
-              {(
-                [
-                  { id: 'wasd_drive', label: 'WASD Drive' },
-                  { id: 'arrows_drive', label: 'Arrows Drive (WASD Wpns)' },
-                  { id: 'mouse_drive', label: 'Mouse Drive' },
-                ] as const
-              ).map((scheme) => (
-                <button
-                  key={scheme.id}
-                  type="button"
-                  onClick={() => updateProfile({ controlScheme: scheme.id })}
-                  className={`rounded-lg px-2 py-1 font-bold transition whitespace-nowrap ${
-                    activeScheme === scheme.id
-                      ? 'bg-amber-500 text-slate-950 shadow'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  {scheme.label}
-                </button>
-              ))}
+          {isCompactMobile ? (
+            <div className="pointer-events-auto flex items-center gap-1.5">
+              <PWAInstallButton compact alwaysShowIOSOption />
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-sky-500/40 bg-[#12161C]/95 px-2.5 text-xs font-bold text-sky-200"
+              >
+                <Sliders className="h-3.5 w-3.5 text-sky-300" />
+                <span>Controls & Audio</span>
+              </button>
             </div>
-
-            {/* Device Mode Selector: Desktop / Tablet / Mobile */}
-            <div
-              className="flex items-center gap-1 rounded-xl border border-slate-700/90 bg-[#12161C]/95 p-1 text-[11px]"
-              title="Switch between Desktop, Tablet, and Mobile Layout Mode"
-            >
-              {(
-                [
-                  { id: 'desktop', label: 'Desktop', Icon: Monitor },
-                  { id: 'tablet', label: 'Tablet', Icon: Tablet },
-                  { id: 'mobile', label: 'Mobile', Icon: Smartphone },
-                ] as const
-              ).map(({ id, label, Icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() =>
-                    updateProfile({
-                      deviceLayoutMode: activeDeviceMode === id ? 'auto' : id,
-                    })
-                  }
-                  className={`flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition whitespace-nowrap ${
-                    activeDeviceMode === id
-                      ? 'bg-sky-500 text-slate-950 shadow'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  <Icon className="h-3 w-3" />
-                  <span className="hidden md:inline">{label}</span>
-                </button>
-              ))}
-            </div>
-
-            {!isOnline && (
-              <div className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-[#1B1710]/95 px-2.5 py-1.5 text-xs font-medium text-amber-300">
-                <WifiOff className="h-3.5 w-3.5" />
-                <span>Offline Solo Ready</span>
+          ) : (
+            <div className="pointer-events-auto flex flex-wrap items-center gap-1.5">
+              {/* Control Scheme Selector: WASD Drive / Arrows Drive (WASD Wpns) / Mouse Drive */}
+              <div
+                className="flex items-center gap-1 rounded-xl border border-slate-700/90 bg-[#12161C]/95 p-1 text-[11px]"
+                title="Choose Driving & Weapon Controls"
+              >
+                <Gamepad2 className="ml-1.5 h-3.5 w-3.5 text-amber-400 shrink-0" />
+                {(
+                  [
+                    { id: 'wasd_drive', label: 'WASD Drive' },
+                    { id: 'arrows_drive', label: 'Arrows Drive (WASD Wpns)' },
+                    { id: 'mouse_drive', label: 'Mouse Drive' },
+                  ] as const
+                ).map((scheme) => (
+                  <button
+                    key={scheme.id}
+                    type="button"
+                    onClick={() => updateProfile({ controlScheme: scheme.id })}
+                    className={`rounded-lg px-2 py-1 font-bold transition whitespace-nowrap ${
+                      activeScheme === scheme.id
+                        ? 'bg-amber-500 text-slate-950 shadow'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    {scheme.label}
+                  </button>
+                ))}
               </div>
-            )}
-            <PWAInstallButton compact />
-            <button
-              type="button"
-              onClick={() => setAudioSettingsOpen(true)}
-              title="Open Audio & Volume Mixer (Music, SFX, Crowd, Commentary)"
-              className="flex h-9 items-center gap-1.5 rounded-lg border border-amber-500/50 bg-[#12161C]/90 px-2.5 text-xs font-bold text-amber-300 hover:border-amber-400 transition cursor-pointer"
-            >
-              <Sliders className="h-3.5 w-3.5 text-amber-400" />
-              <span className="hidden sm:inline">Audio Mixer</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => updateProfile({ commentaryMuted: !profile.commentaryMuted })}
-              title={
-                profile.commentaryMuted
-                  ? 'Turn Commentary Voices ON'
-                  : 'Turn Commentary Voices OFF'
-              }
-              className={`flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-bold transition ${
-                profile.commentaryMuted
-                  ? 'border-slate-700 bg-[#12161C]/90 text-slate-400 hover:text-white'
-                  : 'border-sky-500/50 bg-[#12161C]/90 text-sky-300 hover:border-sky-400'
-              }`}
-            >
-              {profile.commentaryMuted ? (
-                <MicOff className="h-3.5 w-3.5 text-slate-400" />
-              ) : (
-                <Mic className="h-3.5 w-3.5 text-sky-300" />
+
+              {/* Device Mode Selector: Desktop / Tablet / Mobile */}
+              <div
+                className="flex items-center gap-1 rounded-xl border border-slate-700/90 bg-[#12161C]/95 p-1 text-[11px]"
+                title="Switch between Desktop, Tablet, and Mobile Layout Mode"
+              >
+                {(
+                  [
+                    { id: 'desktop', label: 'Desktop', Icon: Monitor },
+                    { id: 'tablet', label: 'Tablet', Icon: Tablet },
+                    { id: 'mobile', label: 'Mobile', Icon: Smartphone },
+                  ] as const
+                ).map(({ id, label, Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() =>
+                      updateProfile({
+                        deviceLayoutMode: activeDeviceMode === id ? 'auto' : id,
+                      })
+                    }
+                    className={`flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition whitespace-nowrap ${
+                      activeDeviceMode === id
+                        ? 'bg-sky-500 text-slate-950 shadow'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <Icon className="h-3 w-3" />
+                    <span className="hidden md:inline">{label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {!isOnline && (
+                <div className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-[#1B1710]/95 px-2.5 py-1.5 text-xs font-medium text-amber-300">
+                  <WifiOff className="h-3.5 w-3.5" />
+                  <span>Offline Solo Ready</span>
+                </div>
               )}
-              <span className="hidden sm:inline">
-                {profile.commentaryMuted ? 'Commentary Off' : 'Commentary On'}
-              </span>
+              <PWAInstallButton compact alwaysShowIOSOption />
+              <button
+                type="button"
+                onClick={() => setAudioSettingsOpen(true)}
+                title="Open Audio & Volume Mixer (Music, SFX, Crowd, Commentary)"
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-amber-500/50 bg-[#12161C]/90 px-2.5 text-xs font-bold text-amber-300 hover:border-amber-400 transition cursor-pointer"
+              >
+                <Sliders className="h-3.5 w-3.5 text-amber-400" />
+                <span className="hidden sm:inline">Audio Mixer</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => updateProfile({ commentaryMuted: !profile.commentaryMuted })}
+                title={
+                  profile.commentaryMuted
+                    ? 'Turn Commentary Voices ON'
+                    : 'Turn Commentary Voices OFF'
+                }
+                className={`flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-bold transition ${
+                  profile.commentaryMuted
+                    ? 'border-slate-700 bg-[#12161C]/90 text-slate-400 hover:text-white'
+                    : 'border-sky-500/50 bg-[#12161C]/90 text-sky-300 hover:border-sky-400'
+                }`}
+              >
+                {profile.commentaryMuted ? (
+                  <MicOff className="h-3.5 w-3.5 text-slate-400" />
+                ) : (
+                  <Mic className="h-3.5 w-3.5 text-sky-300" />
+                )}
+                <span className="hidden sm:inline">
+                  {profile.commentaryMuted ? 'Commentary Off' : 'Commentary On'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => updateProfile({ muted: !profile.muted })}
+                aria-label={profile.muted ? 'Unmute audio' : 'Mute audio'}
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 bg-[#12161C]/90 text-slate-300 hover:text-white"
+              >
+                {profile.muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Campaign Pit-Stop Garage Banner when returning from a Campaign fight for repairs/upgrades */}
+      {sceneMode === 'workshop' && resumeCampaignLevelId && (
+        <div className="fixed top-[104px] sm:top-[108px] left-1/2 -translate-x-1/2 z-30 w-[94vw] max-w-xl rounded-2xl border border-emerald-500/60 bg-[#111820]/95 px-4 py-2.5 shadow-2xl backdrop-blur-md flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs text-slate-200">
+            <span className="font-bold text-emerald-300">Garage Pit-Stop · Hull 100% Repaired</span>
+            <span className="hidden sm:inline text-slate-400"> — Upgrade weapons, armor &amp; skills below</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setGarageOpen(true)}
+              className="rounded-lg border border-amber-500/50 bg-amber-500/15 px-2.5 py-1.5 text-xs font-bold text-amber-300 hover:bg-amber-500/25 transition"
+            >
+              Bot Roster
             </button>
             <button
               type="button"
-              onClick={() => updateProfile({ muted: !profile.muted })}
-              aria-label={profile.muted ? 'Unmute audio' : 'Mute audio'}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 bg-[#12161C]/90 text-slate-300 hover:text-white"
+              onClick={() => startCampaignLevel(resumeCampaignLevelId, true)}
+              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-extrabold text-slate-950 hover:bg-emerald-400 transition shadow"
             >
-              {profile.muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+              Fight: {getCampaignLevel(resumeCampaignLevelId)?.title ?? 'Next Stage'} →
+            </button>
+            <button
+              type="button"
+              onClick={() => setResumeCampaignLevelId(null)}
+              aria-label="Dismiss campaign pit-stop banner"
+              className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-400 hover:text-white"
+            >
+              ✕
             </button>
           </div>
         </div>
@@ -2027,6 +2562,7 @@ export default function App() {
           onSelectArena={setSelectedArena}
           profile={profile}
           onBuyPart={handleBuyPart}
+          onUpgradePart={handleUpgradePart}
           onUpdateFavorites={(favorites) => updateProfile({ favorites })}
           canStepBack={botHistoryIdx > 0}
           canStepForward={botHistoryIdx < botHistory.length - 1}
@@ -2073,6 +2609,7 @@ export default function App() {
         open={garageOpen}
         currentBotConfig={profile.botConfig}
         skills={profile.skills}
+        profile={profile}
         customGarageBots={profile.customGarageBots ?? []}
         onSelectBotToPlay={handleBotConfigChange}
         onSaveCustomBotToRoster={handleSaveCustomBotToRoster}
@@ -2181,6 +2718,7 @@ export default function App() {
           playerId={activeCombatPlayerId}
           adminSeat={adminSeat}
           cameraPreset={cameraPreset}
+          cameraSensitivity={profile.cameraSensitivity ?? 0.65}
           muted={profile.muted}
           commentaryMuted={Boolean(profile.commentaryMuted)}
           controlScheme={activeScheme}
@@ -2202,18 +2740,21 @@ export default function App() {
             )
           }
           onSelectCamera={setCameraPreset}
+          onChangeCameraSensitivity={(sens) => updateProfile({ cameraSensitivity: sens })}
           onToggleMute={() => updateProfile({ muted: !profile.muted })}
           onToggleCommentary={() => updateProfile({ commentaryMuted: !profile.commentaryMuted })}
           onOpenAudioSettings={() => setAudioSettingsOpen(true)}
           onSelectControlScheme={(scheme) => updateProfile({ controlScheme: scheme })}
           onSelectDeviceLayoutMode={(mode) => updateProfile({ deviceLayoutMode: mode })}
           onExitArena={handleExitArena}
+          onGoToGarageUpgrades={handleGoToGarageUpgrades}
+          onNextCampaignLevel={(nextLevelId) => startCampaignLevel(nextLevelId, true)}
           onRematch={() => {
             if (isMultiplayerMatch) {
               handleExitArena();
               setLauncherOpen(true);
             } else if (lastLocalMode === 'campaign') {
-              if (activeCampaignIdRef.current) startCampaignLevel(activeCampaignIdRef.current);
+              if (activeCampaignIdRef.current) startCampaignLevel(activeCampaignIdRef.current, true);
             } else {
               startLocalMatch(lastLocalMode, isClanWarMatch);
             }
@@ -2290,10 +2831,31 @@ export default function App() {
         onCancelLobby={handleCancelLobby}
         traditionalMode={Boolean(profile.traditionalMode)}
         onToggleTraditionalMode={(next) => updateProfile({ traditionalMode: next })}
+        playerLevel={profile.level}
+        coins={coinsBalance}
+        unlockedArenas={profile.unlockedArenas}
+        ownedParts={profile.ownedParts}
+        onBuyArena={handleBuyArena}
         onClose={() => {
           if (lobbyRoom) handleCancelLobby();
           setLauncherOpen(false);
         }}
+      />
+
+      {/* Simple Mobile-First Settings Hub Modal */}
+      <SettingsHubModal
+        open={settingsOpen}
+        profile={profile}
+        userEmail={authUser?.email ?? profile.email ?? null}
+        onUpdateProfile={(patch) => updateProfile(patch)}
+        onClaimUsername={handleClaimUsernameInSettings}
+        onApplyLoginOrAdminCode={handleApplyLoginOrAdminCode}
+        onOpenFullAudioMixer={() => {
+          setSettingsOpen(false);
+          setAudioSettingsOpen(true);
+        }}
+        onSignOut={() => void handleSignOutUser()}
+        onClose={() => setSettingsOpen(false)}
       />
 
       {/* Audio & Volume Mixer Modal */}
@@ -2312,7 +2874,7 @@ export default function App() {
         onClose={() => setAudioSettingsOpen(false)}
       />
 
-      {/* Social, Rankings, Clans, Seasonal Events & Skill Tree Modal */}
+      {/* Social, Online Pilots, Connections, Teams, Clans, Seasonal Events & Skill Tree Modal */}
       <SocialAndRankingsPanel
         activeTab={hubTab}
         profile={profile}
@@ -2320,6 +2882,10 @@ export default function App() {
         pvpBoard={pvpBoard}
         presence={presence}
         clans={clans}
+        onlinePilots={onlinePilots}
+        connections={connections}
+        teams={teams}
+        currentUid={authUser?.uid || profile.id}
         seasonalEvents={seasonalEvents}
         isOnline={isOnline}
         onChangeTab={setHubTab}
@@ -2335,6 +2901,16 @@ export default function App() {
           setLauncherOpen(true);
         }}
         onClaimEventReward={handleClaimEventReward}
+        onSendConnection={handleSendConnection}
+        onRespondConnection={handleRespondConnection}
+        onRemoveConnection={handleRemoveConnection}
+        onCreateTeam={handleCreateTeam}
+        onJoinTeam={handleJoinTeam}
+        onLeaveTeam={handleLeaveTeam}
+        onOpenSettings={() => {
+          setHubTab(null);
+          setSettingsOpen(true);
+        }}
       />
 
       {/* AI Forge Studio: Lyria 3 Soundtrack Synthesizer & Multimodal Lab */}

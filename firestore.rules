@@ -1,0 +1,432 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---- Global Hardened Primitives ----
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
+    }
+
+    function isValidUsernameKey(key) {
+      return key is string && key.size() >= 3 && key.size() <= 24 && key.matches('^[a-z0-9_]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email_verified == true && (
+        request.auth.token.email == 'militarygradeinsulation@gmail.com' ||
+        request.auth.token.email == 'aisystemsarchitect@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isClanMember(cid) {
+      return exists(/databases/$(database)/documents/clans/$(cid)/members/$(request.auth.uid));
+    }
+
+    // ---- Entity Validation Blueprints ----
+    function isValidPrivateAccount(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'email', 'callsign', 'level', 'xp', 'coins', 'scrap',
+          'skillPoints', 'rating', 'wins', 'losses', 'kos', 'gauntletStage',
+          'botConfig', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid', 'email', 'callsign', 'pilotTitle', 'clanId', 'clanTag',
+          'teamId', 'teamName', 'level', 'xp', 'coins', 'scrap',
+          'skillPoints', 'rating', 'wins', 'losses', 'kos', 'gauntletStage',
+          'bestSurvivalWave', 'activeLoadoutSlot', 'selectedWingmanIndex',
+          'ownedParts', 'unlockedArenas', 'partUpgrades', 'skills',
+          'botConfig', 'savedLoadouts', 'customGarageBots', 'campaignStars',
+          'arenaWins', 'claimedEvents', 'favorites', 'batteryMode',
+          'controlScheme', 'deviceLayoutMode', 'touchControlsMode', 'muted',
+          'commentaryMuted', 'commentaryDefaultOffApplied', 'masterVolume',
+          'musicVolume', 'sfxVolume', 'crowdVolume', 'commentaryVolume',
+          'traditionalMode', 'usernameClaimed', 'isAdmin', 'createdAt', 'updatedAt'
+        ]) &&
+        data.uid is string && data.uid == userId &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.callsign is string && data.callsign.size() >= 2 && data.callsign.size() <= 24 &&
+        (!('pilotTitle' in data) || (data.pilotTitle is string && data.pilotTitle.size() <= 36)) &&
+        (!('clanId' in data) || data.clanId == null || (data.clanId is string && data.clanId.size() <= 128)) &&
+        (!('clanTag' in data) || (data.clanTag is string && data.clanTag.size() <= 6)) &&
+        (!('teamId' in data) || data.teamId == null || (data.teamId is string && data.teamId.size() <= 128)) &&
+        (!('teamName' in data) || data.teamName == null || (data.teamName is string && data.teamName.size() <= 32)) &&
+        (data.level is int || data.level is float) && data.level >= 1 && data.level <= 999 &&
+        (data.xp is int || data.xp is float) && data.xp >= 0 &&
+        (data.coins is int || data.coins is float) && data.coins >= 0 &&
+        (data.scrap is int || data.scrap is float) && data.scrap >= 0 &&
+        (data.skillPoints is int || data.skillPoints is float) && data.skillPoints >= 0 &&
+        (data.rating is int || data.rating is float) && data.rating >= 0 && data.rating <= 9999 &&
+        (data.wins is int || data.wins is float) && data.wins >= 0 &&
+        (data.losses is int || data.losses is float) && data.losses >= 0 &&
+        (data.kos is int || data.kos is float) && data.kos >= 0 &&
+        (data.gauntletStage is int || data.gauntletStage is float) && data.gauntletStage >= 1 &&
+        data.botConfig is map &&
+        (!('ownedParts' in data) || (data.ownedParts is list && data.ownedParts.size() <= 160)) &&
+        (!('unlockedArenas' in data) || (data.unlockedArenas is list && data.unlockedArenas.size() <= 32)) &&
+        (!('partUpgrades' in data) || data.partUpgrades is map) &&
+        (!('skills' in data) || data.skills is map) &&
+        (!('savedLoadouts' in data) || (data.savedLoadouts is list && data.savedLoadouts.size() <= 6)) &&
+        (!('customGarageBots' in data) || (data.customGarageBots is list && data.customGarageBots.size() <= 30)) &&
+        (!('claimedEvents' in data) || (data.claimedEvents is list && data.claimedEvents.size() <= 64)) &&
+        (!('usernameClaimed' in data) || data.usernameClaimed is bool) &&
+        (!('isAdmin' in data) || data.isAdmin is bool) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPilot(data, pilotId) {
+      return data.keys().hasAll([
+          'uid', 'username', 'usernameLower', 'clanTag', 'level', 'rating',
+          'wins', 'losses', 'kos', 'powerScore', 'botName', 'isOnline',
+          'isPublic', 'status', 'lastSeenAt', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid', 'username', 'usernameLower', 'pilotTitle', 'clanId',
+          'clanTag', 'teamId', 'teamName', 'level', 'rating', 'wins',
+          'losses', 'kos', 'powerScore', 'botName', 'primaryWeapon',
+          'primaryArmor', 'isOnline', 'isPublic', 'status', 'lastSeenAt',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.uid is string && data.uid == pilotId &&
+        data.username is string && data.username.size() >= 2 && data.username.size() <= 24 &&
+        data.usernameLower is string && data.usernameLower.size() >= 2 && data.usernameLower.size() <= 24 &&
+        (!('pilotTitle' in data) || (data.pilotTitle is string && data.pilotTitle.size() <= 36)) &&
+        (!('clanId' in data) || data.clanId == null || (data.clanId is string && data.clanId.size() <= 128)) &&
+        data.clanTag is string && data.clanTag.size() <= 6 &&
+        (!('teamId' in data) || data.teamId == null || (data.teamId is string && data.teamId.size() <= 128)) &&
+        (!('teamName' in data) || data.teamName == null || (data.teamName is string && data.teamName.size() <= 32)) &&
+        (data.level is int || data.level is float) && data.level >= 1 && data.level <= 999 &&
+        (data.rating is int || data.rating is float) && data.rating >= 0 && data.rating <= 9999 &&
+        (data.wins is int || data.wins is float) && data.wins >= 0 &&
+        (data.losses is int || data.losses is float) && data.losses >= 0 &&
+        (data.kos is int || data.kos is float) && data.kos >= 0 &&
+        (data.powerScore is int || data.powerScore is float) && data.powerScore >= 0 &&
+        data.botName is string && data.botName.size() >= 1 && data.botName.size() <= 28 &&
+        (!('primaryWeapon' in data) || (data.primaryWeapon is string && data.primaryWeapon.size() <= 32)) &&
+        (!('primaryArmor' in data) || (data.primaryArmor is string && data.primaryArmor.size() <= 32)) &&
+        data.isOnline is bool &&
+        data.isPublic is bool &&
+        data.status in ['garage', 'searching', 'fighting', 'offline'] &&
+        (data.lastSeenAt is int || data.lastSeenAt is float) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUsernameReservation(data, usernameKey) {
+      return data.keys().hasAll(['uid', 'username', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'username', 'createdAt', 'updatedAt']) &&
+        data.uid is string && data.uid == request.auth.uid &&
+        data.username is string && data.username.size() >= 3 && data.username.size() <= 24 &&
+        usernameKey.size() >= 3 &&
+        data.createdAt is timestamp &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidConnection(data) {
+      return data.keys().hasAll([
+          'users', 'requesterId', 'recipientId', 'requesterName',
+          'recipientName', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'users', 'requesterId', 'recipientId', 'requesterName',
+          'recipientName', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.users is list && data.users.size() == 2 &&
+        data.users[0] is string && data.users[1] is string &&
+        data.requesterId is string && data.requesterId.size() <= 128 &&
+        data.recipientId is string && data.recipientId.size() <= 128 &&
+        data.requesterId != data.recipientId &&
+        data.requesterId in data.users && data.recipientId in data.users &&
+        data.requesterName is string && data.requesterName.size() >= 1 && data.requesterName.size() <= 24 &&
+        data.recipientName is string && data.recipientName.size() >= 1 && data.recipientName.size() <= 24 &&
+        data.status in ['pending', 'accepted', 'declined'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidTeam(data, teamId) {
+      return data.keys().hasAll([
+          'id', 'name', 'tag', 'leaderId', 'leaderName', 'memberIds',
+          'memberNames', 'wins', 'rating', 'isPublic', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'name', 'tag', 'motto', 'leaderId', 'leaderName', 'clanId',
+          'memberIds', 'memberNames', 'wins', 'rating', 'isPublic',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.id is string && data.id == teamId &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 32 &&
+        data.tag is string && data.tag.size() >= 2 && data.tag.size() <= 5 &&
+        (!('motto' in data) || (data.motto is string && data.motto.size() <= 90)) &&
+        data.leaderId is string && data.leaderId.size() <= 128 &&
+        data.leaderName is string && data.leaderName.size() >= 2 && data.leaderName.size() <= 24 &&
+        (!('clanId' in data) || data.clanId == null || (data.clanId is string && data.clanId.size() <= 128)) &&
+        data.memberIds is list && data.memberIds.size() >= 1 && data.memberIds.size() <= 6 &&
+        data.memberIds[0] is string &&
+        data.memberNames is list && data.memberNames.size() >= 1 && data.memberNames.size() <= 6 &&
+        data.memberNames[0] is string &&
+        (data.wins is int || data.wins is float) && data.wins >= 0 &&
+        (data.rating is int || data.rating is float) && data.rating >= 0 &&
+        data.isPublic is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidClan(data, clanId) {
+      return data.keys().hasAll([
+          'id', 'name', 'tag', 'motto', 'leaderId', 'warPoints',
+          'memberCount', 'wins', 'tournamentSeed', 'isPublic',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'name', 'tag', 'motto', 'perkLabel', 'leaderId',
+          'warPoints', 'memberCount', 'wins', 'tournamentSeed', 'isPublic',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.id is string && data.id == clanId &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 32 &&
+        data.tag is string && data.tag.size() >= 2 && data.tag.size() <= 5 &&
+        data.motto is string && data.motto.size() <= 100 &&
+        (!('perkLabel' in data) || (data.perkLabel is string && data.perkLabel.size() <= 80)) &&
+        data.leaderId is string && data.leaderId.size() <= 128 &&
+        (data.warPoints is int || data.warPoints is float) && data.warPoints >= 0 &&
+        (data.memberCount is int || data.memberCount is float) && data.memberCount >= 0 &&
+        (data.wins is int || data.wins is float) && data.wins >= 0 &&
+        (data.tournamentSeed is int || data.tournamentSeed is float) && data.tournamentSeed >= 1 &&
+        data.isPublic is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidClanMember(data, cid, mUid) {
+      return data.keys().hasAll(['uid', 'clanId', 'username', 'role', 'joinedAt']) &&
+        data.keys().hasOnly(['uid', 'clanId', 'username', 'role', 'joinedAt']) &&
+        data.uid is string && data.uid == mUid &&
+        data.clanId is string && data.clanId == cid &&
+        data.username is string && data.username.size() >= 2 && data.username.size() <= 24 &&
+        data.role in ['leader', 'member'] &&
+        data.joinedAt is timestamp;
+    }
+
+    function isValidClanMessage(data, cid) {
+      return data.keys().hasAll(['id', 'clanId', 'senderId', 'sender', 'text', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'clanId', 'senderId', 'sender', 'text', 'createdAt']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.clanId is string && data.clanId == cid &&
+        data.senderId is string && data.senderId == request.auth.uid &&
+        data.sender is string && data.sender.size() >= 2 && data.sender.size() <= 24 &&
+        data.text is string && data.text.size() >= 1 && data.text.size() <= 200 &&
+        data.createdAt is timestamp;
+    }
+
+    // ---- Collection Rules ----
+    match /admins/{adminId} {
+      allow get: if isAdmin() && isValidId(adminId);
+      allow list, create, update, delete: if false;
+    }
+
+    match /users/{userId} {
+      allow read, write: if false;
+
+      match /private/{docId} {
+        allow get: if isValidId(userId) && isValidId(docId) && docId == 'account' && (isOwner(userId) || isAdmin());
+        allow list: if false;
+        allow create: if isValidId(userId) && isValidId(docId) && docId == 'account' &&
+          isVerifiedUser() &&
+          isOwner(userId) &&
+          isValidPrivateAccount(incoming(), userId) &&
+          request.resource.data.createdAt == request.time &&
+          request.resource.data.updatedAt == request.time &&
+          (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == false);
+        allow update: if isValidId(userId) && isValidId(docId) && docId == 'account' &&
+          isVerifiedUser() &&
+          (isOwner(userId) || isAdmin()) &&
+          isValidPrivateAccount(incoming(), userId) &&
+          request.resource.data.uid == resource.data.uid &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.updatedAt == request.time &&
+          (isAdmin() || (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'callsign', 'pilotTitle', 'clanId', 'clanTag', 'teamId', 'teamName',
+              'level', 'xp', 'coins', 'scrap', 'skillPoints', 'rating', 'wins',
+              'losses', 'kos', 'gauntletStage', 'bestSurvivalWave',
+              'activeLoadoutSlot', 'selectedWingmanIndex', 'ownedParts',
+              'unlockedArenas', 'partUpgrades', 'skills', 'botConfig',
+              'savedLoadouts', 'customGarageBots', 'campaignStars', 'arenaWins',
+              'claimedEvents', 'favorites', 'batteryMode', 'controlScheme',
+              'deviceLayoutMode', 'touchControlsMode', 'muted', 'commentaryMuted',
+              'commentaryDefaultOffApplied', 'masterVolume', 'musicVolume',
+              'sfxVolume', 'crowdVolume', 'commentaryVolume', 'traditionalMode',
+              'usernameClaimed', 'updatedAt'
+            ])
+          ));
+        allow delete: if isAdmin() && isValidId(userId) && isValidId(docId);
+      }
+    }
+
+    match /pilots/{pilotId} {
+      allow get: if isSignedIn() && isValidId(pilotId);
+      allow list: if isSignedIn() && resource.data.isPublic == true && resource.data.uid is string;
+      allow create: if isValidId(pilotId) && isVerifiedUser() && isOwner(pilotId) &&
+        isValidPilot(incoming(), pilotId) &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time;
+      allow update: if isValidId(pilotId) && isVerifiedUser() && (isOwner(pilotId) || isAdmin()) &&
+        isValidPilot(incoming(), pilotId) &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time &&
+        (isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'username', 'usernameLower', 'pilotTitle', 'clanId', 'clanTag',
+          'teamId', 'teamName', 'level', 'rating', 'wins', 'losses', 'kos',
+          'powerScore', 'botName', 'primaryWeapon', 'primaryArmor',
+          'isOnline', 'status', 'lastSeenAt', 'updatedAt'
+        ]));
+      allow delete: if isAdmin() && isValidId(pilotId);
+    }
+
+    match /usernames/{usernameKey} {
+      allow get: if isSignedIn() && isValidUsernameKey(usernameKey);
+      allow list: if false;
+      allow create: if isVerifiedUser() && isValidUsernameKey(usernameKey) &&
+        isValidUsernameReservation(incoming(), usernameKey) &&
+        request.resource.data.createdAt == request.time;
+      allow update: if isVerifiedUser() && isValidUsernameKey(usernameKey) &&
+        isValidUsernameReservation(incoming(), usernameKey) &&
+        resource.data.uid == request.auth.uid &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time &&
+        (isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['username', 'updatedAt']));
+      allow delete: if isVerifiedUser() && isValidUsernameKey(usernameKey) &&
+        (resource.data.uid == request.auth.uid || isAdmin());
+    }
+
+    match /connections/{connId} {
+      allow get: if isSignedIn() && isValidId(connId) && request.auth.uid in resource.data.users;
+      allow list: if isSignedIn() && request.auth.uid in resource.data.users;
+      allow create: if isVerifiedUser() && isValidId(connId) &&
+        isValidConnection(incoming()) &&
+        request.resource.data.requesterId == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time &&
+        exists(/databases/$(database)/documents/pilots/$(request.resource.data.recipientId));
+      allow update: if isVerifiedUser() && isValidId(connId) &&
+        isValidConnection(incoming()) &&
+        request.resource.data.requesterId == resource.data.requesterId &&
+        request.resource.data.recipientId == resource.data.recipientId &&
+        request.resource.data.users == resource.data.users &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time &&
+        (isAdmin() || (
+          request.auth.uid == resource.data.recipientId &&
+          resource.data.status == 'pending' &&
+          (request.resource.data.status == 'accepted' || request.resource.data.status == 'declined') &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        ));
+      allow delete: if isVerifiedUser() && isValidId(connId) &&
+        (request.auth.uid in resource.data.users || isAdmin());
+    }
+
+    match /teams/{teamId} {
+      allow get: if isSignedIn() && isValidId(teamId);
+      allow list: if resource.data.isPublic == true;
+      allow create: if isVerifiedUser() && isValidId(teamId) &&
+        isValidTeam(incoming(), teamId) &&
+        request.resource.data.leaderId == request.auth.uid &&
+        request.auth.uid in request.resource.data.memberIds &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(teamId) &&
+        isValidTeam(incoming(), teamId) &&
+        request.resource.data.leaderId == resource.data.leaderId &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time &&
+        (isAdmin() ||
+          (request.auth.uid == resource.data.leaderId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'tag', 'motto', 'clanId', 'memberIds', 'memberNames', 'wins', 'rating', 'isPublic', 'updatedAt'])) ||
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds', 'memberNames', 'updatedAt']) &&
+            (
+              (!(request.auth.uid in resource.data.memberIds) && (request.auth.uid in request.resource.data.memberIds) && request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1) ||
+              ((request.auth.uid in resource.data.memberIds) && !(request.auth.uid in request.resource.data.memberIds) && request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1)
+            )
+          ) ||
+          ((request.auth.uid in resource.data.memberIds) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['wins', 'rating', 'updatedAt']))
+        );
+      allow delete: if isVerifiedUser() && isValidId(teamId) &&
+        (resource.data.leaderId == request.auth.uid || isAdmin());
+    }
+
+    match /clans/{clanId} {
+      allow get: if isSignedIn() && isValidId(clanId);
+      allow list: if resource.data.isPublic == true;
+      allow create: if isVerifiedUser() && isValidId(clanId) &&
+        isValidClan(incoming(), clanId) &&
+        request.resource.data.leaderId == request.auth.uid &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(clanId) &&
+        isValidClan(incoming(), clanId) &&
+        request.resource.data.leaderId == resource.data.leaderId &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time &&
+        (isAdmin() ||
+          (request.auth.uid == resource.data.leaderId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'motto', 'perkLabel', 'memberCount', 'warPoints', 'wins', 'tournamentSeed', 'isPublic', 'updatedAt'])) ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberCount', 'warPoints', 'wins', 'updatedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(clanId);
+
+      match /members/{memberUid} {
+        allow get: if isSignedIn() && isValidId(clanId) && isValidId(memberUid);
+        allow list: if isSignedIn() && resource.data.clanId == clanId;
+        allow create: if isValidId(clanId) && isValidId(memberUid) &&
+          isVerifiedUser() &&
+          isOwner(memberUid) &&
+          isValidClanMember(incoming(), clanId, memberUid) &&
+          existsAfter(/databases/$(database)/documents/clans/$(clanId));
+        allow update: if false;
+        allow delete: if isVerifiedUser() && isValidId(clanId) && isValidId(memberUid) &&
+          (request.auth.uid == memberUid || isAdmin());
+      }
+
+      match /messages/{msgId} {
+        allow get: if isSignedIn() && isValidId(clanId) && isValidId(msgId) && isClanMember(clanId);
+        allow list: if isSignedIn() && resource.data.clanId == clanId && isClanMember(clanId);
+        allow create: if isVerifiedUser() && isValidId(clanId) && isValidId(msgId) &&
+          isClanMember(clanId) &&
+          isValidClanMessage(incoming(), clanId) &&
+          request.resource.data.senderId == request.auth.uid &&
+          request.resource.data.createdAt == request.time;
+        allow update, delete: if isAdmin() && isValidId(clanId) && isValidId(msgId);
+      }
+    }
+  }
+}

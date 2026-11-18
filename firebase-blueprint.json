@@ -1,0 +1,224 @@
+{
+  "entities": {
+    "PrivateAccount": {
+      "title": "PrivateAccount",
+      "description": "Private authenticated pilot account storing email PII, coins, XP progression, unlocked arenas/weapons/customizations, upgrade levels, and bot configurations.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "callsign": { "type": "string", "minLength": 2, "maxLength": 24 },
+        "pilotTitle": { "type": "string", "maxLength": 36 },
+        "clanId": { "type": "string", "maxLength": 128 },
+        "clanTag": { "type": "string", "maxLength": 6 },
+        "teamId": { "type": "string", "maxLength": 128 },
+        "teamName": { "type": "string", "maxLength": 32 },
+        "level": { "type": "integer" },
+        "xp": { "type": "integer" },
+        "coins": { "type": "integer" },
+        "scrap": { "type": "integer" },
+        "skillPoints": { "type": "integer" },
+        "rating": { "type": "integer" },
+        "wins": { "type": "integer" },
+        "losses": { "type": "integer" },
+        "kos": { "type": "integer" },
+        "gauntletStage": { "type": "integer" },
+        "bestSurvivalWave": { "type": "integer" },
+        "activeLoadoutSlot": { "type": "integer" },
+        "selectedWingmanIndex": { "type": "integer" },
+        "ownedParts": { "type": "array", "description": "Unlocked weapon, chassis, armor, drive, and cosmetic part keys" },
+        "unlockedArenas": { "type": "array", "description": "Unlocked arena IDs earned through battles or coins" },
+        "partUpgrades": { "type": "object", "description": "Map of part keys to upgrade rank (1-5)" },
+        "skills": { "type": "object" },
+        "botConfig": { "type": "object" },
+        "savedLoadouts": { "type": "array" },
+        "customGarageBots": { "type": "array" },
+        "campaignStars": { "type": "object" },
+        "arenaWins": { "type": "object" },
+        "claimedEvents": { "type": "array" },
+        "favorites": { "type": "object" },
+        "batteryMode": { "type": "string", "enum": ["eco", "balanced", "ultra"] },
+        "controlScheme": { "type": "string", "enum": ["wasd_drive", "arrows_drive", "mouse_drive"] },
+        "deviceLayoutMode": { "type": "string", "enum": ["auto", "desktop", "tablet", "mobile"] },
+        "touchControlsMode": { "type": "string", "enum": ["auto", "always", "off"] },
+        "muted": { "type": "boolean" },
+        "commentaryMuted": { "type": "boolean" },
+        "commentaryDefaultOffApplied": { "type": "boolean" },
+        "masterVolume": { "type": "number" },
+        "musicVolume": { "type": "number" },
+        "sfxVolume": { "type": "number" },
+        "crowdVolume": { "type": "number" },
+        "commentaryVolume": { "type": "number" },
+        "traditionalMode": { "type": "boolean" },
+        "usernameClaimed": { "type": "boolean" },
+        "isAdmin": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "callsign", "level", "xp", "coins", "scrap", "skillPoints", "rating", "wins", "losses", "kos", "gauntletStage", "botConfig", "createdAt", "updatedAt"]
+    },
+    "PilotPublic": {
+      "title": "PilotPublic",
+      "description": "Public online pilot presence, level, combat stats, active bot build summary, clan/team affiliation (strictly no email/PII).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "username": { "type": "string", "minLength": 2, "maxLength": 24 },
+        "usernameLower": { "type": "string", "minLength": 2, "maxLength": 24 },
+        "pilotTitle": { "type": "string", "maxLength": 36 },
+        "clanId": { "type": "string", "maxLength": 128 },
+        "clanTag": { "type": "string", "maxLength": 6 },
+        "teamId": { "type": "string", "maxLength": 128 },
+        "teamName": { "type": "string", "maxLength": 32 },
+        "level": { "type": "integer" },
+        "rating": { "type": "integer" },
+        "wins": { "type": "integer" },
+        "losses": { "type": "integer" },
+        "kos": { "type": "integer" },
+        "powerScore": { "type": "integer" },
+        "botName": { "type": "string", "maxLength": 28 },
+        "primaryWeapon": { "type": "string", "maxLength": 32 },
+        "primaryArmor": { "type": "string", "maxLength": 32 },
+        "isOnline": { "type": "boolean" },
+        "isPublic": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["garage", "searching", "fighting", "offline"] },
+        "lastSeenAt": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "username", "usernameLower", "clanTag", "level", "rating", "wins", "losses", "kos", "powerScore", "botName", "isOnline", "isPublic", "status", "lastSeenAt", "createdAt", "updatedAt"]
+    },
+    "UsernameReservation": {
+      "title": "UsernameReservation",
+      "description": "Unique lowercase username reservation mapped to a pilot UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "username": { "type": "string", "minLength": 3, "maxLength": 24 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "username", "createdAt"]
+    },
+    "PilotConnection": {
+      "title": "PilotConnection",
+      "description": "Friend/connection request or accepted link between two pilots.",
+      "type": "object",
+      "properties": {
+        "users": { "type": "array", "description": "Sorted 2-element array of pilot UIDs" },
+        "requesterId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "recipientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "requesterName": { "type": "string", "maxLength": 24 },
+        "recipientName": { "type": "string", "maxLength": 24 },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["users", "requesterId", "recipientId", "requesterName", "recipientName", "status", "createdAt", "updatedAt"]
+    },
+    "CombatTeam": {
+      "title": "CombatTeam",
+      "description": "Player-created combat team / squad for 2v2, 3v3, and clan wars.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "tag": { "type": "string", "minLength": 2, "maxLength": 5 },
+        "motto": { "type": "string", "maxLength": 90 },
+        "leaderId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "leaderName": { "type": "string", "maxLength": 24 },
+        "clanId": { "type": "string", "maxLength": 128 },
+        "memberIds": { "type": "array", "description": "Up to 6 member UIDs" },
+        "memberNames": { "type": "array", "description": "Up to 6 member usernames" },
+        "wins": { "type": "integer" },
+        "rating": { "type": "integer" },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "tag", "leaderId", "leaderName", "memberIds", "memberNames", "wins", "rating", "isPublic", "createdAt", "updatedAt"]
+    },
+    "Clan": {
+      "title": "Clan",
+      "description": "Persistent syndicate clan with war points, tournament seed, and member count.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "tag": { "type": "string", "minLength": 2, "maxLength": 5 },
+        "motto": { "type": "string", "maxLength": 100 },
+        "perkLabel": { "type": "string", "maxLength": 80 },
+        "leaderId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "warPoints": { "type": "integer" },
+        "memberCount": { "type": "integer" },
+        "wins": { "type": "integer" },
+        "tournamentSeed": { "type": "integer" },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "tag", "motto", "leaderId", "warPoints", "memberCount", "wins", "tournamentSeed", "isPublic", "createdAt", "updatedAt"]
+    },
+    "ClanMember": {
+      "title": "ClanMember",
+      "description": "Clan membership gate record for Master Gate security enforcement.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "clanId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "username": { "type": "string", "maxLength": 24 },
+        "role": { "type": "string", "enum": ["leader", "member"] },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "clanId", "username", "role", "joinedAt"]
+    },
+    "ClanChatMsg": {
+      "title": "ClanChatMsg",
+      "description": "Clan comms message gated by ClanMember membership.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "clanId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "sender": { "type": "string", "maxLength": 24 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "clanId", "senderId", "sender", "text", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/private/account": {
+      "schema": { "$ref": "#/entities/PrivateAccount" },
+      "description": "Private pilot progression, email, coins, unlocks, part upgrade ranks, and saved loadouts (strictly owner or admin read/write)."
+    },
+    "/pilots/{pilotId}": {
+      "schema": { "$ref": "#/entities/PilotPublic" },
+      "description": "Public pilot directory, online status, level, and combat stats (no email or PII)."
+    },
+    "/usernames/{usernameKey}": {
+      "schema": { "$ref": "#/entities/UsernameReservation" },
+      "description": "Unique lowercase username claims mapped to pilot UIDs."
+    },
+    "/connections/{connId}": {
+      "schema": { "$ref": "#/entities/PilotConnection" },
+      "description": "Friend connections and requests between two pilots."
+    },
+    "/teams/{teamId}": {
+      "schema": { "$ref": "#/entities/CombatTeam" },
+      "description": "Player-created combat squads / teams."
+    },
+    "/clans/{clanId}": {
+      "schema": { "$ref": "#/entities/Clan" },
+      "description": "Syndicate clans and war standings."
+    },
+    "/clans/{clanId}/members/{memberUid}": {
+      "schema": { "$ref": "#/entities/ClanMember" },
+      "description": "Membership gate records for clan war rooms and chat."
+    },
+    "/clans/{clanId}/messages/{msgId}": {
+      "schema": { "$ref": "#/entities/ClanChatMsg" },
+      "description": "Clan comms channel gated by clan membership."
+    }
+  }
+}

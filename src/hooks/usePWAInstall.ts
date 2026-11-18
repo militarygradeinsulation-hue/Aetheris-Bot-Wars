@@ -9,6 +9,7 @@ export function usePWAInstall() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
+  const [isSafari, setIsSafari] = useState(false);
 
   useEffect(() => {
     const isStandalone =
@@ -17,7 +18,11 @@ export function usePWAInstall() {
     setIsInstalled(isStandalone);
 
     const userAgent = window.navigator.userAgent.toLowerCase();
-    setIsIOS(/iphone|ipad|ipod/.test(userAgent));
+    const detectedIOS =
+      /iphone|ipad|ipod/.test(userAgent) ||
+      (userAgent.includes('macintosh') && window.navigator.maxTouchPoints > 1);
+    setIsIOS(detectedIOS);
+    setIsSafari(userAgent.includes('safari') && !userAgent.includes('crios') && !userAgent.includes('fxios') && !userAgent.includes('chrome'));
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
@@ -54,6 +59,7 @@ export function usePWAInstall() {
     isInstallable: Boolean(deferredPrompt),
     isInstalled,
     isIOS,
+    isSafari,
     install,
   };
 }

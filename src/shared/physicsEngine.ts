@@ -55,6 +55,7 @@ export interface BotRosterTemplate {
   isBoss?: boolean;
   config: BotConfig;
   skills: SkillTree;
+  partUpgrades?: Record<string, number>;
   isBot: boolean;
   team: number;
 }
@@ -663,7 +664,7 @@ function makeBotState(
   const effectiveConfig = modifiers.includes('traditional_rules')
     ? sanitizeConfigForTraditionalMode(entry.config)
     : entry.config;
-  const stats = computeBotStats(effectiveConfig, entry.skills);
+  const stats = computeBotStats(effectiveConfig, entry.skills, entry.partUpgrades);
   const botWeapons = getBotWeapons(effectiveConfig);
   const scaledHp = Math.round(stats.maxHp * (entry.hpMult ?? 1));
   const maxShield = modifiers.includes('traditional_rules')
@@ -685,6 +686,7 @@ function makeBotState(
       wheelLayout: effectiveConfig.wheelLayout || '4wd_wide',
     },
     skills: entry.skills,
+    partUpgrades: entry.partUpgrades,
     x: spawn[0],
     y: 0,
     z: spawn[1],
@@ -1127,7 +1129,7 @@ function applyDamage(
 ) {
   if (victim.isDead) return 0;
 
-  const stats = computeBotStats(victim.config, victim.skills);
+  const stats = computeBotStats(victim.config, victim.skills, victim.partUpgrades);
   let mult = 1.0;
 
   // Railgun pierces 60% of frontal deflection
@@ -1841,7 +1843,7 @@ export function stepArenaPhysics(
   }
 
   for (const bot of snapshot.bots) {
-    const stats = computeBotStats(bot.config, bot.skills);
+    const stats = computeBotStats(bot.config, bot.skills, bot.partUpgrades);
     const classSpeedMult =
       bot.weightClass === 'Titan' ? 0.72 : bot.weightClass === 'Heavyweight' ? 0.85 : bot.weightClass === 'Lightweight' ? 1.12 : 1.0;
     const classDmgMult =
@@ -2600,7 +2602,7 @@ export function stepArenaPhysics(
           const dist = Math.hypot(dx, dz) || 1;
           const nx = dx / dist;
           const nz = dz / dist;
-          const otherStats = computeBotStats(hitTarget.config, hitTarget.skills);
+          const otherStats = computeBotStats(hitTarget.config, hitTarget.skills, hitTarget.partUpgrades);
           const imp = (slotImpBase * 1.25) / Math.max(0.8, otherStats.mass * otherStats.knockbackResist);
           hitTarget.vx += nx * imp;
           hitTarget.vz += nz * imp;
@@ -2824,7 +2826,7 @@ export function stepArenaPhysics(
             const falloff = Math.max(0.4, 1 - dist / (blastRadius + 1.0));
             const nx = dist > 0.01 ? dx / dist : wfx;
             const nz = dist > 0.01 ? dz / dist : wfz;
-            const vStats = computeBotStats(other.config, other.skills);
+            const vStats = computeBotStats(other.config, other.skills, other.partUpgrades);
             const mass = vStats.mass * Math.pow(other.scale, 1.35);
             other.vx += nx * slotImpBase * falloff;
             other.vz += nz * slotImpBase * falloff;
@@ -2931,7 +2933,7 @@ export function stepArenaPhysics(
           const dist = Math.hypot(dx, dz) || 1;
           const nx = dx / dist;
           const nz = dz / dist;
-          const tStats = computeBotStats(target.config, target.skills);
+          const tStats = computeBotStats(target.config, target.skills, target.partUpgrades);
           const tMass = Math.max(0.7, tStats.mass * Math.pow(target.scale, 1.35) * tStats.knockbackResist);
           const zone = getHitZone(target, nx, nz);
           if (strikeWeapon === 'magnet') {
@@ -2985,7 +2987,7 @@ export function stepArenaPhysics(
           const nz = dz / dist;
           const toTargetDot = nx * wfx + nz * wfz;
           if (toTargetDot > 0.22) {
-            const otherStats = computeBotStats(other.config, other.skills);
+            const otherStats = computeBotStats(other.config, other.skills, other.partUpgrades);
             const attackerEffMass = stats.mass * Math.pow(bot.scale, 1.35);
             const victimEffMass = otherStats.mass * Math.pow(other.scale, 1.35);
             const zone = getHitZone(other, nx, nz);
@@ -3184,8 +3186,8 @@ export function stepArenaPhysics(
         const tz = nx;
         const overlap = minDist - dist;
 
-        const statsA = computeBotStats(a.config, a.skills);
-        const statsB = computeBotStats(b.config, b.skills);
+        const statsA = computeBotStats(a.config, a.skills, a.partUpgrades);
+        const statsB = computeBotStats(b.config, b.skills, b.partUpgrades);
         const massA = statsA.mass * Math.pow(a.scale, 1.35);
         const massB = statsB.mass * Math.pow(b.scale, 1.35);
         const totalMass = massA + massB;
@@ -4241,7 +4243,7 @@ function detonateMortar(snapshot: ArenaSnapshot, p: Projectile, events: CombatEv
     const falloff = Math.max(0.35, 1 - bDist / 4.2);
     const nx = bDist > 0.01 ? bdx / bDist : Math.sin(p.yaw);
     const nz = bDist > 0.01 ? bdz / bDist : Math.cos(p.yaw);
-    const vStats = computeBotStats(other.config, other.skills);
+    const vStats = computeBotStats(other.config, other.skills, other.partUpgrades);
     const mass = vStats.mass * Math.pow(other.scale, 1.35);
     other.vx += nx * impBase * falloff;
     other.vz += nz * impBase * falloff;
@@ -4270,7 +4272,7 @@ function explodeProjectile(snapshot: ArenaSnapshot, p: Projectile, events: Comba
     const falloff = Math.max(0.25, 1 - d / (radius + 0.6));
     const nx = d > 0.01 ? dx / d : Math.sin(p.yaw);
     const nz = d > 0.01 ? dz / d : Math.cos(p.yaw);
-    const vStats = computeBotStats(victim.config, victim.skills);
+    const vStats = computeBotStats(victim.config, victim.skills, victim.partUpgrades);
     const mass = vStats.mass * Math.pow(victim.scale, 1.35);
     const imp = (WEAPON_CATALOG.missiles.impulse * falloff) / Math.max(0.8, mass * vStats.knockbackResist);
     victim.vx += nx * imp;

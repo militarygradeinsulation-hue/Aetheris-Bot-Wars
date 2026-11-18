@@ -361,3 +361,10 @@ export function describeUnlock(key: string | undefined): string {
   const cat = key.split(':')[0];
   return `${cat.charAt(0).toUpperCase()}${cat.slice(1)}: ${describePartKey(key)}`;
 }
+
+export function getNextCampaignLevel(currentId: string): CampaignLevel | undefined {
+  const idx = CAMPAIGN_LEVELS.findIndex((l) => l.id === currentId);
+  if (idx < 0 || idx + 1 >= CAMPAIGN_LEVELS.length) return undefined;
+  return CAMPAIGN_LEVELS[idx + 1];
+}
+

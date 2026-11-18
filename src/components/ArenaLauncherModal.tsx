@@ -29,6 +29,9 @@ import {
 } from '../shared/campaign';
 import {
   ARENA_CATALOG,
+  getPartPrice,
+  getPartUnlockLevel,
+  isPartOwned,
   isTraditionalArena,
   MATCH_MODIFIERS,
   TIMED_BATTLE_OPTIONS,
@@ -89,6 +92,11 @@ interface ArenaLauncherModalProps {
   onClose: () => void;
   traditionalMode?: boolean;
   onToggleTraditionalMode?: (next: boolean) => void;
+  playerLevel?: number;
+  coins?: number;
+  unlockedArenas?: ArenaId[];
+  ownedParts?: string[];
+  onBuyArena?: (arenaId: ArenaId) => boolean;
 }
 
 const RIVAL_TIERS: Array<{ id: RivalTier; label: string; note: string }> = [
@@ -130,9 +138,15 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
   onClose,
   traditionalMode = false,
   onToggleTraditionalMode,
+  playerLevel = 1,
+  coins = 0,
+  unlockedArenas = ['foundry', 'colosseum'],
+  ownedParts = [],
+  onBuyArena,
 }) => {
   const [tab, setTab] = useState<'quick' | 'campaign' | 'online'>('quick');
   const [expandedLevel, setExpandedLevel] = useState<string | null>(null);
+  const [arenaNotice, setArenaNotice] = useState<string | null>(null);
   if (!open) return null;
 
   const bay2Bot = savedLoadouts?.[1];
@@ -389,13 +403,23 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
 
             {/* Arena Stage Picker */}
             <div className="mt-4">
-              <div className="text-xs font-semibold text-slate-300 mb-2">
-                Select Combat Arena (
-                {traditionalMode || selectedModifiers.includes('traditional_rules')
-                  ? '3 Traditional BattleBoxes'
-                  : `${Object.keys(ARENA_CATALOG).length} BattleBoxes`}
-                )
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="text-xs font-semibold text-slate-300">
+                  Select Combat Arena (
+                  {traditionalMode || selectedModifiers.includes('traditional_rules')
+                    ? '3 Traditional BattleBoxes'
+                    : `${Object.keys(ARENA_CATALOG).length} BattleBoxes`}
+                  )
+                </div>
+                <span className="font-mono-tabular text-[11px] font-bold text-amber-300">
+                  Lv {playerLevel} · {coins} Coins
+                </span>
               </div>
+              {arenaNotice && (
+                <div className="mb-2 rounded-lg border border-amber-500/40 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-200">
+                  {arenaNotice}
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
                 {(Object.keys(ARENA_CATALOG) as ArenaId[])
                   .filter((aId) =>
@@ -406,19 +430,45 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
                   .map((aId) => {
                     const a = ARENA_CATALOG[aId];
                     const active = selectedArena === aId;
+                    const unlocked = isPartOwned(
+                      { level: playerLevel, unlockedArenas, ownedParts },
+                      'arena',
+                      aId,
+                    );
+                    const reqLv = getPartUnlockLevel('arena', aId);
+                    const price = getPartPrice('arena', aId);
                     return (
                       <button
                         key={aId}
                         type="button"
-                        onClick={() => onSelectArena(aId)}
+                        onClick={() => {
+                          if (unlocked) {
+                            onSelectArena(aId);
+                            return;
+                          }
+                          if (onBuyArena?.(aId)) {
+                            onSelectArena(aId);
+                            setArenaNotice(`Unlocked ${a.name} for ${price} Coins!`);
+                          } else {
+                            setArenaNotice(
+                              `${a.name} unlocks automatically at Pilot Lv ${reqLv} or purchase now for ${price} Coins.`,
+                            );
+                          }
+                          window.setTimeout(() => setArenaNotice(null), 2600);
+                        }}
                         className={`text-left rounded-xl border p-2.5 transition ${
-                          active
-                            ? 'border-amber-500 bg-amber-500/12'
-                            : 'border-slate-800 bg-[#192029] hover:border-slate-600'
+                          !unlocked
+                            ? 'border-slate-800/80 bg-[#12161D] opacity-80 hover:border-amber-500/50'
+                            : active
+                              ? 'border-amber-500 bg-amber-500/12'
+                              : 'border-slate-800 bg-[#192029] hover:border-slate-600'
                         }`}
                       >
                         <div className="flex items-center justify-between gap-1.5">
-                          <span className="text-xs font-bold text-white truncate">{a.name}</span>
+                          <span className="text-xs font-bold text-white truncate">
+                            {!unlocked && <Lock className="inline h-3 w-3 mr-1 text-amber-400" />}
+                            {a.name}
+                          </span>
                           <span
                             className="h-2.5 w-2.5 rounded-full shrink-0"
                             style={{ backgroundColor: a.accentHex }}
@@ -426,9 +476,9 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
                         </div>
                         <div
                           className="mt-0.5 text-[10px] font-semibold truncate"
-                          style={{ color: a.accentHex }}
+                          style={{ color: unlocked ? a.accentHex : '#fbbf24' }}
                         >
-                          {a.hazardTag}
+                          {unlocked ? a.hazardTag : `🔒 Unlock Lv ${reqLv} or ${price} Coins`}
                         </div>
                         <p className="mt-1 text-[11px] text-slate-400 line-clamp-2 leading-snug">
                           {a.subtitle}

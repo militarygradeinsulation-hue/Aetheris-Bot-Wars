@@ -24,10 +24,11 @@ import {
   Trophy,
   Volume2,
   VolumeX,
+  Wrench,
   Zap,
 } from 'lucide-react';
 import { BotSystemsDiagram } from './BotSystemsDiagram';
-import { describeObjective, describeUnlock, getCampaignLevel } from '../shared/campaign';
+import { describeObjective, describeUnlock, getCampaignLevel, getNextCampaignLevel } from '../shared/campaign';
 import {
   ARENA_CATALOG,
   ARENA_EVENT_INFO,
@@ -66,6 +67,7 @@ interface CombatHudProps {
   playerId: string;
   adminSeat?: 1 | 2 | null;
   cameraPreset: CameraViewPreset;
+  cameraSensitivity?: number;
   muted: boolean;
   commentaryMuted?: boolean;
   controlScheme?: ControlSchemeId;
@@ -73,6 +75,7 @@ interface CombatHudProps {
   isMultiplayer: boolean;
   onCycleCamera: () => void;
   onSelectCamera?: (preset: CameraViewPreset) => void;
+  onChangeCameraSensitivity?: (sens: number) => void;
   onToggleMute: () => void;
   onToggleCommentary?: () => void;
   onOpenAudioSettings?: () => void;
@@ -80,6 +83,8 @@ interface CombatHudProps {
   onSelectDeviceLayoutMode?: (mode: DeviceLayoutMode) => void;
   onExitArena: () => void;
   onRematch: () => void;
+  onNextCampaignLevel?: (nextLevelId: string) => void;
+  onGoToGarageUpgrades?: () => void;
   onWeaponTrigger?: (slotIdx: number, pressed: boolean) => void;
   onRepairTrigger?: (pressed: boolean) => void;
   onBoostTrigger?: (pressed: boolean) => void;
@@ -227,12 +232,14 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   matchResult,
   campaignLevelId,
   cameraPreset,
+  cameraSensitivity = 0.65,
   muted,
   commentaryMuted,
   controlScheme = 'wasd_drive',
   deviceLayoutMode = 'auto',
   isMultiplayer,
   onCycleCamera,
+  onChangeCameraSensitivity,
   onToggleMute,
   onToggleCommentary,
   onOpenAudioSettings,
@@ -240,6 +247,8 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   onSelectDeviceLayoutMode,
   onExitArena,
   onRematch,
+  onNextCampaignLevel,
+  onGoToGarageUpgrades,
   onWeaponTrigger,
   onRepairTrigger,
   onBoostTrigger,
@@ -253,6 +262,8 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   const [minRivalsTile, setMinRivalsTile] = useState(false);
   const [minControlsTile, setMinControlsTile] = useState(false);
   const [minRadarTile, setMinRadarTile] = useState(false);
+  const [autoNextEnabled, setAutoNextEnabled] = useState(true);
+  const [autoNextCountdown, setAutoNextCountdown] = useState<number | null>(null);
 
   const toggleCleanViewAll = () => {
     setCleanViewAll((prev) => {
@@ -305,6 +316,7 @@ export const CombatHud: React.FC<CombatHudProps> = ({
     : undefined;
   const playerTeam = player?.team ?? 0;
   const campaignLevel = campaignLevelId ? getCampaignLevel(campaignLevelId) : undefined;
+  const nextCampaignLevel = campaignLevelId ? getNextCampaignLevel(campaignLevelId) : undefined;
   const arenaEvent = snapshot.arenaEvent;
   const hill = snapshot.hill;
   const isSurvival = snapshot.mode === 'survival';
@@ -380,6 +392,33 @@ export const CombatHud: React.FC<CombatHudProps> = ({
     const scoreB = (b.hp / Math.max(1, b.maxHp)) * 100 + b.damageDealt * 0.16 + b.kos * 30;
     return scoreB - scoreA;
   });
+
+  useEffect(() => {
+    if (snapshot.phase !== 'finished') {
+      setAutoNextCountdown(null);
+      setAutoNextEnabled(true);
+      return;
+    }
+    if (!campaignLevel || !playerWon || !nextCampaignLevel || !onNextCampaignLevel || !autoNextEnabled) {
+      setAutoNextCountdown(null);
+      return;
+    }
+    setAutoNextCountdown(8);
+    const interval = window.setInterval(() => {
+      setAutoNextCountdown((prev) => {
+        if (prev === null) return null;
+        if (prev <= 1) {
+          window.clearInterval(interval);
+          window.setTimeout(() => {
+            onNextCampaignLevel(nextCampaignLevel.id);
+          }, 0);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [snapshot.phase, campaignLevel?.id, playerWon, nextCampaignLevel?.id, onNextCampaignLevel, autoNextEnabled]);
 
   return (
     <>
@@ -651,9 +690,9 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                 {cameraPreset === 'first_person'
                   ? '1st Person'
                   : cameraPreset === 'pilot_booth'
-                    ? 'RC Glass'
+                    ? 'Behind Glass'
                     : cameraPreset === 'chase'
-                      ? 'Chase'
+                      ? 'Follow Cam'
                       : cameraPreset === 'tactical'
                         ? 'Tactical'
                         : 'Orbit'}
@@ -1132,6 +1171,28 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                       {m.label}
                     </button>
                   ))}
+                </div>
+              )}
+
+              {/* Camera Follow Speed / Sensitivity Slider */}
+              {onChangeCameraSensitivity && (
+                <div className="mb-1 rounded-xl border border-slate-800 bg-[#0D1014] px-2 py-1.5">
+                  <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                    <span>Cam Sensitivity</span>
+                    <span className="font-mono-tabular text-amber-300">
+                      {Math.round(cameraSensitivity * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.2}
+                    max={1.8}
+                    step={0.05}
+                    value={cameraSensitivity}
+                    onChange={(e) => onChangeCameraSensitivity(parseFloat(e.target.value))}
+                    aria-label="Follow Camera Sensitivity"
+                    className="mt-1 h-1.5 w-full accent-amber-500 cursor-pointer"
+                  />
                 </div>
               )}
 
@@ -1679,22 +1740,86 @@ export const CombatHud: React.FC<CombatHudProps> = ({
               })}
             </div>
 
-            <div className="mt-5 flex gap-3">
+            {/* Campaign Auto-Advance & Post-Match Actions */}
+            {campaignLevel && (matchResult?.won ?? playerWon) && nextCampaignLevel && onNextCampaignLevel && (
+              <div className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 flex items-center justify-between gap-2">
+                <div className="text-xs text-emerald-200">
+                  {autoNextEnabled && autoNextCountdown !== null ? (
+                    <>
+                      Auto-starting <span className="font-bold text-white">{nextCampaignLevel.title}</span> in{' '}
+                      <span className="font-mono-tabular font-bold text-amber-300">{autoNextCountdown}s</span>
+                    </>
+                  ) : (
+                    <>
+                      Next Stage Ready: <span className="font-bold text-white">{nextCampaignLevel.title}</span>
+                    </>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAutoNextEnabled((prev) => !prev)}
+                  className="shrink-0 rounded-lg border border-emerald-400/40 bg-slate-900/80 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 hover:bg-slate-800 transition"
+                >
+                  {autoNextEnabled ? 'Pause Auto' : 'Auto-Next'}
+                </button>
+              </div>
+            )}
+
+            <div className="mt-4 space-y-2.5">
+              {campaignLevel && (matchResult?.won ?? playerWon) && nextCampaignLevel && onNextCampaignLevel && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAutoNextEnabled(false);
+                    onNextCampaignLevel(nextCampaignLevel.id);
+                  }}
+                  className="w-full flex items-center justify-center gap-2 min-h-[46px] rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20 transition"
+                >
+                  <Swords className="h-4 w-4" />
+                  Next Fight: {nextCampaignLevel.title}
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              )}
+
               <button
                 type="button"
-                onClick={onExitArena}
-                className="flex-1 min-h-[44px] rounded-xl border border-slate-700 bg-[#1A2029] px-4 py-2.5 text-sm font-semibold text-slate-200 hover:bg-slate-800 transition"
+                onClick={() => {
+                  setAutoNextEnabled(false);
+                  if (onGoToGarageUpgrades) {
+                    onGoToGarageUpgrades();
+                  } else {
+                    onExitArena();
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-2 min-h-[44px] rounded-xl border border-amber-500/50 bg-amber-500/15 px-4 py-2.5 text-sm font-bold text-amber-300 hover:bg-amber-500/25 transition"
               >
-                Return to Hangar
+                <Wrench className="h-4 w-4" />
+                Garage: Repairs &amp; Upgrades
               </button>
-              <button
-                type="button"
-                onClick={onRematch}
-                className="flex-1 flex items-center justify-center gap-2 min-h-[44px] rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400 transition"
-              >
-                <RotateCcw className="h-4 w-4" />
-                {campaignLevel ? 'Retry Level' : 'Fight Again'}
-              </button>
+
+              <div className="flex gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAutoNextEnabled(false);
+                    onExitArena();
+                  }}
+                  className="flex-1 min-h-[42px] rounded-xl border border-slate-700 bg-[#1A2029] px-3 py-2 text-xs sm:text-sm font-semibold text-slate-200 hover:bg-slate-800 transition"
+                >
+                  {campaignLevel ? 'Campaign Map' : 'Return to Hangar'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAutoNextEnabled(false);
+                    onRematch();
+                  }}
+                  className="flex-1 flex items-center justify-center gap-1.5 min-h-[42px] rounded-xl bg-amber-500 px-3 py-2 text-xs sm:text-sm font-bold text-slate-950 hover:bg-amber-400 transition"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  {campaignLevel ? 'Retry Level' : 'Fight Again'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

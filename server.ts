@@ -18,20 +18,28 @@ import {
   type BotRosterTemplate,
 } from './src/shared/physicsEngine.ts';
 import {
+  applyAdminFullUnlock,
   ARENA_CATALOG,
   type ArenaId,
   type ArenaSnapshot,
   type BotConfig,
+  type ClanChatMessage,
   type ClanInfo,
+  type CombatTeamInfo,
   computeBotStats,
+  DEFAULT_BOT_CONFIG,
   DEFAULT_SKILLS,
   getBotChassisStyles,
   getBotWeapons,
+  isAdminIdentifier,
   type LeaderboardEntry,
   type OnlinePresence,
+  type PilotConnectionRecord,
+  type PilotDirectoryEntry,
+  type PlayerInputState,
+  type PlayerProfile,
   type PvpMatchResult,
   type PvpRecord,
-  type PlayerInputState,
   type SeasonalEvent,
   type SkillTree,
 } from './src/shared/types.ts';
@@ -47,6 +55,12 @@ interface PersistentStore {
   leaderboard: LeaderboardEntry[];
   clans: ClanInfo[];
   seasonalEvents: SeasonalEvent[];
+  accounts?: Record<string, PlayerProfile>;
+  pilots?: Record<string, PilotDirectoryEntry>;
+  usernames?: Record<string, { uid: string; username: string; updatedAt: number }>;
+  accessCodes?: Record<string, string>;
+  connections?: Record<string, PilotConnectionRecord>;
+  teams?: Record<string, CombatTeamInfo>;
 }
 
 function seedStore(): PersistentStore {
@@ -341,6 +355,12 @@ function saveStore(store: PersistentStore) {
 
 const store = loadStore();
 if (!Array.isArray(store.pvp)) store.pvp = [];
+if (!store.accounts || typeof store.accounts !== 'object') store.accounts = {};
+if (!store.pilots || typeof store.pilots !== 'object') store.pilots = {};
+if (!store.usernames || typeof store.usernames !== 'object') store.usernames = {};
+if (!store.accessCodes || typeof store.accessCodes !== 'object') store.accessCodes = {};
+if (!store.connections || typeof store.connections !== 'object') store.connections = {};
+if (!store.teams || typeof store.teams !== 'object') store.teams = {};
 
 // Live PvP ladder: Elo between real pilots, recorded by the server when a room finishes
 function pvpBoard(): PvpRecord[] {
@@ -1088,9 +1108,742 @@ async function startServer() {
     res.json({ board: pvpBoard(), presence: buildPresence() });
   });
 
+  const normalizeAccessCodeKey = (raw: string): string =>
+    raw.trim().toUpperCase().replace(/\s+/g, '');
+
+  const generateUniqueAccessCode = (): string => {
+    const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    for (let attempt = 0; attempt < 50; attempt++) {
+      let partA = '';
+      let partB = '';
+      for (let i = 0; i < 4; i++) {
+        partA += alphabet[Math.floor(Math.random() * alphabet.length)];
+        partB += alphabet[Math.floor(Math.random() * alphabet.length)];
+      }
+      const candidate = `AETH-${partA}-${partB}`;
+      if (!store.accessCodes?.[candidate]) {
+        return candidate;
+      }
+    }
+    return `AETH-${Date.now().toString(36).toUpperCase()}`;
+  };
+
+  const ensureAdminMasterAccount = (starterTemplate?: Partial<PlayerProfile>): PlayerProfile => {
+    const adminUid = 'admin_the_architect';
+    const existing = store.accounts?.[adminUid];
+    const base: PlayerProfile = existing ?? {
+      id: adminUid,
+      email: 'aisystemsarchitect@gmail.com',
+      callsign: 'The_Architect',
+      usernameClaimed: true,
+      accessCode: '9822',
+      pilotTitle: 'Grand Architect · Supreme Admin',
+      clanId: 'clan_aether',
+      clanTag: 'AETH',
+      teamId: null,
+      teamName: null,
+      rating: 2400,
+      level: 50,
+      xp: 50000,
+      coins: 99999,
+      scrap: 99999,
+      skillPoints: 50,
+      wins: 50,
+      losses: 0,
+      kos: 40,
+      gauntletStage: 10,
+      claimedEvents: [],
+      botConfig: starterTemplate?.botConfig ?? { ...DEFAULT_BOT_CONFIG, name: 'Architect Prime' },
+      savedLoadouts: starterTemplate?.savedLoadouts ?? [{ ...DEFAULT_BOT_CONFIG, name: 'Architect Prime' }],
+      customGarageBots: starterTemplate?.customGarageBots ?? [],
+      activeLoadoutSlot: 0,
+      selectedWingmanIndex: 0,
+      skills: {
+        chassisReinforcement: 5,
+        weaponTorque: 5,
+        gyroStabilizer: 5,
+        kineticArmor: 5,
+        batteryCore: 5,
+        coolingSystem: 5,
+        naniteRepair: 5,
+        overclockCore: 5,
+      },
+      batteryMode: 'balanced',
+      muted: false,
+      commentaryMuted: true,
+      commentaryDefaultOffApplied: true,
+      masterVolume: 0.85,
+      musicVolume: 0.65,
+      sfxVolume: 0.85,
+      crowdVolume: 0.7,
+      commentaryVolume: 0.9,
+      traditionalMode: false,
+      touchControlsMode: 'auto',
+      controlScheme: 'wasd_drive',
+      deviceLayoutMode: 'auto',
+      ownedParts: [],
+      unlockedArenas: [],
+      partUpgrades: {},
+      campaignStars: {},
+      arenaWins: {},
+      bestSurvivalWave: 25,
+      isAdmin: true,
+    };
+
+    const unlocked = applyAdminFullUnlock({
+      ...base,
+      id: adminUid,
+      callsign: 'The_Architect',
+      accessCode: '9822',
+      isAdmin: true,
+      usernameClaimed: true,
+    });
+
+    store.accounts![adminUid] = unlocked;
+    store.usernames!['the_architect'] = {
+      uid: adminUid,
+      username: 'The_Architect',
+      updatedAt: Date.now(),
+    };
+    store.accessCodes!['9822'] = adminUid;
+    store.accessCodes!['ARCH-9822'] = adminUid;
+    const stats = computeBotStats(unlocked.botConfig, unlocked.skills, unlocked.partUpgrades);
+    store.pilots![adminUid] = {
+      uid: adminUid,
+      username: 'The_Architect',
+      usernameLower: 'the_architect',
+      pilotTitle: unlocked.pilotTitle,
+      clanId: unlocked.clanId ?? 'clan_aether',
+      clanTag: unlocked.clanTag || 'AETH',
+      teamId: unlocked.teamId ?? null,
+      teamName: unlocked.teamName ?? null,
+      level: unlocked.level,
+      rating: unlocked.rating,
+      wins: unlocked.wins,
+      losses: unlocked.losses,
+      kos: unlocked.kos,
+      powerScore: Math.round(stats.powerScore),
+      botName: unlocked.botConfig.name || 'Architect Prime',
+      primaryWeapon: getBotWeapons(unlocked.botConfig)[0] ?? 'railgun',
+      primaryArmor: unlocked.botConfig.armor ?? 'aetherium',
+      isOnline: true,
+      isPublic: true,
+      status: 'garage',
+      lastSeenAt: Date.now(),
+    };
+    saveStore(store);
+    return unlocked;
+  };
+
   app.post('/api/admin/verify', (req, res) => {
     const code = String((req.body as { code?: string })?.code || '').trim();
-    res.json({ valid: code === '9822' });
+    const ok = isAdminIdentifier(code);
+    res.json({ valid: ok, verified: ok, isAdmin: ok });
+  });
+
+  app.post('/api/cloud/code-auth/register', (req, res) => {
+    const { username, starterProfile, pilotEntry } = (req.body || {}) as {
+      username?: string;
+      starterProfile?: PlayerProfile;
+      pilotEntry?: PilotDirectoryEntry;
+    };
+    const raw = String(username || '').trim();
+    if (!raw) {
+      res.status(400).json({ ok: false, error: 'Please enter a username.' });
+      return;
+    }
+
+    // Check if the input is an Admin identifier (9822, The Architect, aistystemsarchitect@gmail.com, etc.)
+    if (isAdminIdentifier(raw)) {
+      const adminProfile = ensureAdminMasterAccount(starterProfile);
+      res.json({
+        ok: true,
+        uid: adminProfile.id,
+        code: '9822',
+        isAdmin: true,
+        profile: adminProfile,
+      });
+      return;
+    }
+
+    const display = raw.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 24);
+    const lowerKey = display.toLowerCase();
+    if (lowerKey.length < 3) {
+      res.json({
+        ok: false,
+        error: 'Username must be 3–24 characters using letters, numbers, or underscores.',
+      });
+      return;
+    }
+
+    const existingReservation = store.usernames?.[lowerKey];
+    if (existingReservation) {
+      res.json({
+        ok: false,
+        error: `Username "${display}" is already taken. Enter your login code in "Login with Code" or pick another username.`,
+      });
+      return;
+    }
+
+    const uid = `pilot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const code = generateUniqueAccessCode();
+    const codeKey = normalizeAccessCodeKey(code);
+
+    const newProfile: PlayerProfile = {
+      ...(starterProfile ?? ({} as PlayerProfile)),
+      id: uid,
+      callsign: display,
+      usernameClaimed: true,
+      accessCode: code,
+      isAdmin: false,
+    };
+
+    store.accounts![uid] = newProfile;
+    store.usernames![lowerKey] = {
+      uid,
+      username: display,
+      updatedAt: Date.now(),
+    };
+    store.accessCodes![codeKey] = uid;
+
+    const stats = computeBotStats(newProfile.botConfig, newProfile.skills, newProfile.partUpgrades);
+    store.pilots![uid] = {
+      ...(pilotEntry ?? {}),
+      uid,
+      username: display,
+      usernameLower: lowerKey,
+      pilotTitle: newProfile.pilotTitle ?? 'Aetheris Initiate',
+      clanId: newProfile.clanId ?? 'clan_aether',
+      clanTag: newProfile.clanTag || 'AETH',
+      teamId: newProfile.teamId ?? null,
+      teamName: newProfile.teamName ?? null,
+      level: newProfile.level || 1,
+      rating: newProfile.rating || 1200,
+      wins: newProfile.wins || 0,
+      losses: newProfile.losses || 0,
+      kos: newProfile.kos || 0,
+      powerScore: Math.round(stats.powerScore),
+      botName: newProfile.botConfig?.name || 'Aetheris MK-I',
+      primaryWeapon: getBotWeapons(newProfile.botConfig)[0] ?? 'vspinner',
+      primaryArmor: newProfile.botConfig?.armor ?? 'titanium',
+      isOnline: true,
+      isPublic: true,
+      status: 'garage',
+      lastSeenAt: Date.now(),
+    };
+
+    saveStore(store);
+    res.json({
+      ok: true,
+      uid,
+      code,
+      isAdmin: false,
+      profile: newProfile,
+    });
+  });
+
+  app.post('/api/cloud/code-auth/login', (req, res) => {
+    const { code, starterProfile } = (req.body || {}) as {
+      code?: string;
+      starterProfile?: Partial<PlayerProfile>;
+    };
+    const raw = String(code || '').trim();
+    if (!raw) {
+      res.status(400).json({ ok: false, error: 'Please enter your access code.' });
+      return;
+    }
+
+    if (isAdminIdentifier(raw)) {
+      const adminProfile = ensureAdminMasterAccount(starterProfile);
+      res.json({
+        ok: true,
+        uid: adminProfile.id,
+        code: '9822',
+        isAdmin: true,
+        profile: adminProfile,
+      });
+      return;
+    }
+
+    const codeKey = normalizeAccessCodeKey(raw);
+    let targetUid = store.accessCodes?.[codeKey];
+
+    // Also allow matching without dashes if the user typed the code without hyphens
+    if (!targetUid) {
+      const strippedInput = codeKey.replace(/-/g, '');
+      for (const [savedCode, uidVal] of Object.entries(store.accessCodes ?? {})) {
+        if (savedCode.replace(/-/g, '') === strippedInput) {
+          targetUid = uidVal;
+          break;
+        }
+      }
+    }
+
+    // Also check accounts directly in case accessCode was stored on account
+    if (!targetUid) {
+      for (const [uidVal, acc] of Object.entries(store.accounts ?? {})) {
+        if (
+          acc.accessCode &&
+          normalizeAccessCodeKey(acc.accessCode).replace(/-/g, '') === codeKey.replace(/-/g, '')
+        ) {
+          targetUid = uidVal;
+          break;
+        }
+      }
+    }
+
+    if (!targetUid || !store.accounts?.[targetUid]) {
+      res.json({
+        ok: false,
+        error: 'Access code not found. Check your code and try again, or create a new username.',
+      });
+      return;
+    }
+
+    const account = store.accounts[targetUid];
+    const hydrated: PlayerProfile =
+      account.isAdmin || isAdminIdentifier(account.callsign) || isAdminIdentifier(account.email)
+        ? applyAdminFullUnlock(account)
+        : {
+            ...account,
+            usernameClaimed: true,
+          };
+
+    store.accounts[targetUid] = hydrated;
+    if (store.pilots?.[targetUid]) {
+      store.pilots[targetUid].isOnline = true;
+      store.pilots[targetUid].status = 'garage';
+      store.pilots[targetUid].lastSeenAt = Date.now();
+    }
+    saveStore(store);
+
+    res.json({
+      ok: true,
+      uid: targetUid,
+      code: hydrated.accessCode || raw,
+      isAdmin: Boolean(hydrated.isAdmin),
+      profile: hydrated,
+    });
+  });
+
+  // Persistent Cloud Account, Username, Pilot Directory, Connections, Teams & Clans API
+  app.get('/api/cloud/state', (req, res) => {
+    const uid = String(req.query.uid || '').trim();
+    const clanId = String(req.query.clanId || '').trim();
+    const now = Date.now();
+    const pilots = Object.values(store.pilots ?? {}).map((p) => ({
+      ...p,
+      isOnline: Boolean(p.isOnline) && now - (p.lastSeenAt || 0) < 180_000,
+    }));
+    pilots.sort((a, b) => {
+      if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+      if (b.level !== a.level) return b.level - a.level;
+      return b.rating - a.rating;
+    });
+
+    const connections = uid
+      ? Object.values(store.connections ?? {}).filter(
+          (c) => Array.isArray(c.users) && c.users.includes(uid),
+        )
+      : [];
+
+    const teams = Object.values(store.teams ?? {}).sort(
+      (a, b) => b.wins - a.wins || b.rating - a.rating,
+    );
+
+    const clans = [...store.clans]
+      .sort((a, b) => b.warPoints - a.warPoints)
+      .map((c, idx) => ({ ...c, tournamentSeed: idx + 1 }));
+
+    const targetClan = clanId ? store.clans.find((c) => c.id === clanId) : undefined;
+    const clanMessages: ClanChatMessage[] = targetClan?.chat ?? [];
+
+    res.json({
+      pilots,
+      connections,
+      teams,
+      clans,
+      clanMessages,
+    });
+  });
+
+  app.post('/api/cloud/account/load', (req, res) => {
+    const { uid, email, starterProfile, pilotEntry } = (req.body || {}) as {
+      uid?: string;
+      email?: string;
+      starterProfile?: PlayerProfile;
+      pilotEntry?: PilotDirectoryEntry;
+    };
+    if (!uid) {
+      res.status(400).json({ error: 'uid is required' });
+      return;
+    }
+    const existing = store.accounts?.[uid];
+    if (existing) {
+      const lowerKey = (existing.callsign || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-z0-9_]/g, '')
+        .slice(0, 24);
+      const claimed =
+        Boolean(existing.usernameClaimed) ||
+        Boolean(lowerKey && store.usernames?.[lowerKey]?.uid === uid);
+      const hydrated: PlayerProfile = {
+        ...existing,
+        id: uid,
+        email: email || existing.email,
+        usernameClaimed: claimed,
+      };
+      store.accounts![uid] = hydrated;
+      if (pilotEntry) {
+        store.pilots![uid] = {
+          ...pilotEntry,
+          uid,
+          username: hydrated.callsign,
+          usernameLower: lowerKey || pilotEntry.usernameLower,
+          clanId: hydrated.clanId ?? null,
+          clanTag: hydrated.clanTag || pilotEntry.clanTag,
+          teamId: hydrated.teamId ?? null,
+          teamName: hydrated.teamName ?? null,
+          level: hydrated.level,
+          rating: hydrated.rating,
+          wins: hydrated.wins,
+          losses: hydrated.losses,
+          kos: hydrated.kos,
+          isOnline: true,
+          status: 'garage',
+          lastSeenAt: Date.now(),
+        };
+      }
+      saveStore(store);
+      res.json({ exists: true, profile: hydrated });
+      return;
+    }
+
+    if (starterProfile) {
+      store.accounts![uid] = {
+        ...starterProfile,
+        id: uid,
+        email: email || starterProfile.email,
+      };
+    }
+    if (pilotEntry) {
+      store.pilots![uid] = {
+        ...pilotEntry,
+        uid,
+        isOnline: true,
+        isPublic: true,
+        lastSeenAt: Date.now(),
+      };
+    }
+    saveStore(store);
+    res.json({ exists: false, profile: store.accounts![uid] ?? starterProfile });
+  });
+
+  app.post('/api/cloud/account/save', (req, res) => {
+    const { uid, profile, pilotEntry } = (req.body || {}) as {
+      uid?: string;
+      profile?: PlayerProfile;
+      pilotEntry?: PilotDirectoryEntry;
+    };
+    if (!uid || !profile) {
+      res.status(400).json({ error: 'uid and profile are required' });
+      return;
+    }
+    store.accounts![uid] = { ...profile, id: uid };
+    if (pilotEntry) {
+      store.pilots![uid] = {
+        ...(store.pilots![uid] ?? {}),
+        ...pilotEntry,
+        uid,
+        isPublic: true,
+        lastSeenAt: Date.now(),
+      };
+    }
+    saveStore(store);
+    res.json({ ok: true });
+  });
+
+  app.post('/api/cloud/pilot/status', (req, res) => {
+    const { uid, status } = (req.body || {}) as {
+      uid?: string;
+      status?: 'garage' | 'searching' | 'fighting' | 'offline';
+    };
+    if (!uid || !status) {
+      res.status(400).json({ error: 'uid and status required' });
+      return;
+    }
+    const existing = store.pilots?.[uid];
+    if (existing) {
+      existing.isOnline = status !== 'offline';
+      existing.status = status;
+      existing.lastSeenAt = Date.now();
+      saveStore(store);
+    }
+    res.json({ ok: true });
+  });
+
+  app.post('/api/cloud/username/claim', (req, res) => {
+    const { uid, display, newKey, oldKey, profile, pilotEntry } = (req.body || {}) as {
+      uid?: string;
+      display?: string;
+      newKey?: string;
+      oldKey?: string;
+      profile?: PlayerProfile;
+      pilotEntry?: PilotDirectoryEntry;
+    };
+    if (!uid || !display || !newKey) {
+      res.status(400).json({ ok: false, error: 'Missing username parameters.' });
+      return;
+    }
+    const currentReservation = store.usernames?.[newKey];
+    if (currentReservation && currentReservation.uid !== uid) {
+      res.json({ ok: false, error: `Username "${display}" is already taken.` });
+      return;
+    }
+    if (oldKey && oldKey !== newKey && store.usernames?.[oldKey]?.uid === uid) {
+      delete store.usernames![oldKey];
+    }
+    store.usernames![newKey] = {
+      uid,
+      username: display,
+      updatedAt: Date.now(),
+    };
+    if (profile) {
+      store.accounts![uid] = {
+        ...(store.accounts![uid] ?? profile),
+        ...profile,
+        id: uid,
+        callsign: display,
+        usernameClaimed: true,
+      };
+    } else if (store.accounts?.[uid]) {
+      store.accounts[uid].callsign = display;
+      store.accounts[uid].usernameClaimed = true;
+    }
+    if (pilotEntry) {
+      store.pilots![uid] = {
+        ...(store.pilots![uid] ?? {}),
+        ...pilotEntry,
+        uid,
+        username: display,
+        usernameLower: newKey,
+        isPublic: true,
+        lastSeenAt: Date.now(),
+      };
+    } else if (store.pilots?.[uid]) {
+      store.pilots[uid].username = display;
+      store.pilots[uid].usernameLower = newKey;
+      store.pilots[uid].lastSeenAt = Date.now();
+    }
+    saveStore(store);
+    res.json({ ok: true, username: display });
+  });
+
+  app.post('/api/cloud/connections/request', (req, res) => {
+    const { connId, record } = (req.body || {}) as {
+      connId?: string;
+      record?: PilotConnectionRecord;
+    };
+    if (!connId || !record) {
+      res.status(400).json({ error: 'connId and record required' });
+      return;
+    }
+    store.connections![connId] = record;
+    saveStore(store);
+    res.json({ ok: true });
+  });
+
+  app.post('/api/cloud/connections/respond', (req, res) => {
+    const { connId, decision } = (req.body || {}) as {
+      connId?: string;
+      decision?: 'accepted' | 'declined';
+    };
+    if (!connId || !decision) {
+      res.status(400).json({ error: 'connId and decision required' });
+      return;
+    }
+    if (decision === 'declined') {
+      delete store.connections![connId];
+    } else if (store.connections?.[connId]) {
+      store.connections[connId].status = 'accepted';
+    }
+    saveStore(store);
+    res.json({ ok: true });
+  });
+
+  app.post('/api/cloud/connections/remove', (req, res) => {
+    const { connId } = (req.body || {}) as { connId?: string };
+    if (connId && store.connections?.[connId]) {
+      delete store.connections[connId];
+      saveStore(store);
+    }
+    res.json({ ok: true });
+  });
+
+  app.post('/api/cloud/teams/create', (req, res) => {
+    const { uid, team } = (req.body || {}) as {
+      uid?: string;
+      team?: CombatTeamInfo;
+    };
+    if (!uid || !team) {
+      res.status(400).json({ error: 'uid and team required' });
+      return;
+    }
+    store.teams![team.id] = team;
+    if (store.accounts?.[uid]) {
+      store.accounts[uid].teamId = team.id;
+      store.accounts[uid].teamName = team.name;
+    }
+    if (store.pilots?.[uid]) {
+      store.pilots[uid].teamId = team.id;
+      store.pilots[uid].teamName = team.name;
+    }
+    saveStore(store);
+    res.json({ ok: true, team });
+  });
+
+  app.post('/api/cloud/teams/join', (req, res) => {
+    const { uid, callsign, teamId } = (req.body || {}) as {
+      uid?: string;
+      callsign?: string;
+      teamId?: string;
+    };
+    if (!uid || !teamId) {
+      res.status(400).json({ error: 'uid and teamId required' });
+      return;
+    }
+    const team = store.teams?.[teamId];
+    if (!team) {
+      res.json({ ok: false, team: null });
+      return;
+    }
+    if (!team.memberIds.includes(uid) && team.memberIds.length < 6) {
+      team.memberIds.push(uid);
+      team.memberNames.push((callsign || 'Pilot').slice(0, 24));
+    }
+    if (store.accounts?.[uid]) {
+      store.accounts[uid].teamId = team.id;
+      store.accounts[uid].teamName = team.name;
+    }
+    if (store.pilots?.[uid]) {
+      store.pilots[uid].teamId = team.id;
+      store.pilots[uid].teamName = team.name;
+    }
+    saveStore(store);
+    res.json({ ok: true, team });
+  });
+
+  app.post('/api/cloud/teams/leave', (req, res) => {
+    const { uid, teamId } = (req.body || {}) as { uid?: string; teamId?: string };
+    if (uid && teamId && store.teams?.[teamId]) {
+      const team = store.teams[teamId];
+      const idx = team.memberIds.indexOf(uid);
+      if (idx >= 0) {
+        if (team.leaderId === uid || team.memberIds.length <= 1) {
+          delete store.teams[teamId];
+        } else {
+          team.memberIds = team.memberIds.filter((id) => id !== uid);
+          team.memberNames = team.memberNames.filter((_, i) => i !== idx);
+        }
+      }
+    }
+    if (uid && store.accounts?.[uid]) {
+      store.accounts[uid].teamId = null;
+      store.accounts[uid].teamName = null;
+    }
+    if (uid && store.pilots?.[uid]) {
+      store.pilots[uid].teamId = null;
+      store.pilots[uid].teamName = null;
+    }
+    saveStore(store);
+    res.json({ ok: true });
+  });
+
+  app.post('/api/cloud/clans/join', (req, res) => {
+    const { uid, clan } = (req.body || {}) as { uid?: string; clan?: ClanInfo };
+    if (!uid || !clan) {
+      res.status(400).json({ error: 'uid and clan required' });
+      return;
+    }
+    const existing = store.clans.find((c) => c.id === clan.id);
+    if (!existing) {
+      store.clans.push({
+        ...clan,
+        chat: clan.chat ?? [],
+      });
+    } else {
+      existing.memberCount = Math.max(1, (existing.memberCount || 1) + 1);
+    }
+    if (store.accounts?.[uid]) {
+      store.accounts[uid].clanId = clan.id;
+      store.accounts[uid].clanTag = clan.tag;
+    }
+    if (store.pilots?.[uid]) {
+      store.pilots[uid].clanId = clan.id;
+      store.pilots[uid].clanTag = clan.tag;
+    }
+    saveStore(store);
+    res.json({ ok: true });
+  });
+
+  app.post('/api/cloud/clans/create', (req, res) => {
+    const { uid, clan } = (req.body || {}) as { uid?: string; clan?: ClanInfo };
+    if (!uid || !clan) {
+      res.status(400).json({ error: 'uid and clan required' });
+      return;
+    }
+    if (!store.clans.some((c) => c.id === clan.id)) {
+      store.clans.push({
+        ...clan,
+        chat: clan.chat ?? [],
+      });
+    }
+    if (store.accounts?.[uid]) {
+      store.accounts[uid].clanId = clan.id;
+      store.accounts[uid].clanTag = clan.tag;
+    }
+    if (store.pilots?.[uid]) {
+      store.pilots[uid].clanId = clan.id;
+      store.pilots[uid].clanTag = clan.tag;
+    }
+    saveStore(store);
+    res.json({ ok: true, clan });
+  });
+
+  app.post('/api/cloud/clans/message', (req, res) => {
+    const { uid, callsign, clan, text } = (req.body || {}) as {
+      uid?: string;
+      callsign?: string;
+      clan?: ClanInfo;
+      text?: string;
+    };
+    const cleanText = String(text || '').trim().slice(0, 200);
+    if (!uid || !clan || !cleanText) {
+      res.status(400).json({ error: 'uid, clan, and text required' });
+      return;
+    }
+    let target = store.clans.find((c) => c.id === clan.id);
+    if (!target) {
+      target = { ...clan, chat: [] };
+      store.clans.push(target);
+    }
+    const chatMsg: ClanChatMessage = {
+      id: `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      sender: (callsign || 'Pilot').slice(0, 24),
+      text: cleanText,
+      timestamp: new Date().toISOString(),
+    };
+    target.chat = [...(target.chat ?? []).slice(-29), chatMsg];
+    saveStore(store);
+
+    broadcastAll({
+      type: 'clan:chat_message',
+      clanId: target.id,
+      message: chatMsg,
+    });
+    res.json({ ok: true, message: chatMsg });
   });
 
   // Server-side Gemini 3.8 Human Broadcast Voice Commentary TTS with in-memory LRU cache
@@ -1116,12 +1869,37 @@ async function startServer() {
     return Buffer.concat([header, pcm]);
   };
 
+  const extractPcmFromAudioBuffer = (buf: Buffer): Buffer => {
+    if (buf.length >= 44 && buf.subarray(0, 4).toString('ascii') === 'RIFF') {
+      return buf.subarray(44);
+    }
+    return buf;
+  };
+
   const ensureWavBase64 = (base64Audio: string): string => {
     const buf = Buffer.from(base64Audio, 'base64');
-    if (buf.length >= 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF') {
-      return base64Audio;
+    const pcm = extractPcmFromAudioBuffer(buf);
+    const tailPad = Buffer.alloc(Math.floor(24000 * 0.08) * 2);
+    return pcm16ToWavBuffer(Buffer.concat([pcm, tailPad]), 24000, 1, 16).toString('base64');
+  };
+
+  const extractWavBase64FromParts = (
+    parts?: Array<{ inlineData?: { data?: string } }>,
+  ): string => {
+    if (!parts || parts.length === 0) return '';
+    const pcmChunks: Buffer[] = [];
+    for (const part of parts) {
+      if (part.inlineData?.data) {
+        const rawBuf = Buffer.from(part.inlineData.data, 'base64');
+        const pcm = extractPcmFromAudioBuffer(rawBuf);
+        if (pcm.length > 0) {
+          pcmChunks.push(pcm);
+        }
+      }
     }
-    return pcm16ToWavBuffer(buf, 24000, 1, 16).toString('base64');
+    if (pcmChunks.length === 0) return '';
+    const tailPad = Buffer.alloc(Math.floor(24000 * 0.08) * 2);
+    return pcm16ToWavBuffer(Buffer.concat([...pcmChunks, tailPad]), 24000, 1, 16).toString('base64');
   };
 
   const synthesizeSpeechViaLive = async (
@@ -1171,7 +1949,7 @@ async function startServer() {
                 prebuiltVoiceConfig: { voiceName },
               },
             },
-            systemInstruction: `${personaGuide} Speak the user's exact broadcast line verbatim with authentic human broadcast energy, natural pacing, and emotion. Output only the spoken line.`,
+            systemInstruction: `${personaGuide} Speak the user's exact broadcast line verbatim from start to finish with authentic human broadcast energy, natural pacing, and complete sentence closure. Output only the spoken line.`,
           },
           callbacks: {
             onmessage: (message: LiveServerMessage) => {
@@ -1279,10 +2057,7 @@ async function startServer() {
           },
         });
 
-        const rawAudio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (rawAudio) {
-          wavBase64 = ensureWavBase64(rawAudio);
-        }
+        wavBase64 = extractWavBase64FromParts(response.candidates?.[0]?.content?.parts);
       } catch (e) {
         primaryErr = e instanceof Error ? e.message : String(e);
       }
@@ -1290,7 +2065,8 @@ async function startServer() {
       if (!wavBase64) {
         try {
           const pcm = await synthesizeSpeechViaLive(ai, cleanText, voiceName, stylePrompt);
-          wavBase64 = pcm16ToWavBuffer(pcm, 24000, 1, 16).toString('base64');
+          const tailPad = Buffer.alloc(Math.floor(24000 * 0.08) * 2);
+          wavBase64 = pcm16ToWavBuffer(Buffer.concat([pcm, tailPad]), 24000, 1, 16).toString('base64');
         } catch (liveErr) {
           const liveMsg = liveErr instanceof Error ? liveErr.message : String(liveErr);
           throw new Error(`TTS failed | primary: ${primaryErr} | live: ${liveMsg}`);
@@ -1318,11 +2094,11 @@ async function startServer() {
     const cleanRex = String(rexText || '')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, 240);
+      .slice(0, 260);
     const cleanKira = String(kiraText || '')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, 240);
+      .slice(0, 260);
 
     if (!cleanRex && !cleanKira) {
       res.status(400).json({ error: 'rexText or kiraText is required' });
@@ -1332,7 +2108,7 @@ async function startServer() {
     const cacheKey = `duo:${cleanRex}||${cleanKira}`;
     const cached = ttsCache.get(cacheKey);
     if (cached) {
-      res.json({ audioBase64: cached, mimeType: 'audio/wav' });
+      res.json({ audioBase64: cached, mimeType: 'audio/wav', cached: true });
       return;
     }
 
@@ -1341,69 +2117,105 @@ async function startServer() {
 
       let wavBase64 = '';
       let primaryErr = '';
-      try {
-        const parts: Array<{
-          text: string;
-          speechMetadata: { speaker: string; style: string };
-        }> = [];
-        if (cleanRex) {
-          parts.push({
-            text: `Rex: ${cleanRex}\n`,
-            speechMetadata: {
-              speaker: 'Rex',
-              style:
-                'Live sports play-by-play arena host, natural, warm, energetic, conversational human broadcast voice',
-            },
-          });
-        }
-        if (cleanKira) {
-          parts.push({
-            text: `Kira: ${cleanKira}`,
-            speechMetadata: {
-              speaker: 'Kira',
-              style:
-                'Live robotics combat engineer and color analyst, natural, sharp, insightful, conversational human broadcast voice',
-            },
-          });
-        }
+      const isSingleSpeaker = Boolean(cleanRex) !== Boolean(cleanKira);
 
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash-tts',
-          contents: [
-            {
-              role: 'user',
-              parts,
-            },
-          ],
-          config: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              multiSpeakerVoiceConfig: {
-                speakerVoiceConfigs: [
+      if (isSingleSpeaker) {
+        const singleText = cleanRex || cleanKira;
+        const voiceName: 'Puck' | 'Kore' = cleanRex ? 'Puck' : 'Kore';
+        const stylePrompt = cleanRex
+          ? 'Live sports play-by-play arena announcer, natural, excited, crisp human broadcast delivery'
+          : 'Live robotics combat analyst, natural, sharp, expressive human broadcast delivery';
+        try {
+          const response = await ai.models.generateContent({
+            model: 'gemini-3.8-flash-lite-tts',
+            contents: [
+              {
+                role: 'user',
+                parts: [
                   {
-                    speaker: 'Rex',
-                    voiceConfig: {
-                      prebuiltVoiceConfig: { voiceName: 'Puck' },
-                    },
-                  },
-                  {
-                    speaker: 'Kira',
-                    voiceConfig: {
-                      prebuiltVoiceConfig: { voiceName: 'Kore' },
+                    text: singleText,
+                    speechMetadata: {
+                      style: stylePrompt,
                     },
                   },
                 ],
               },
+            ],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName },
+                },
+              },
             },
-          },
-        });
-
-        const rawAudio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (rawAudio) {
-          wavBase64 = ensureWavBase64(rawAudio);
+          });
+          wavBase64 = extractWavBase64FromParts(response.candidates?.[0]?.content?.parts);
+        } catch (e) {
+          primaryErr = e instanceof Error ? e.message : String(e);
         }
-      } catch (e) {
-        primaryErr = e instanceof Error ? e.message : String(e);
+      } else {
+        try {
+          const parts: Array<{
+            text: string;
+            speechMetadata: { speaker: string; style: string };
+          }> = [];
+          if (cleanRex) {
+            parts.push({
+              text: `Rex: ${cleanRex}\n`,
+              speechMetadata: {
+                speaker: 'Rex',
+                style:
+                  'Live sports play-by-play arena host, natural, warm, energetic, conversational human broadcast voice',
+              },
+            });
+          }
+          if (cleanKira) {
+            parts.push({
+              text: `Kira: ${cleanKira}`,
+              speechMetadata: {
+                speaker: 'Kira',
+                style:
+                  'Live robotics combat analyst, natural, sharp, reactive, conversational human broadcast voice',
+              },
+            });
+          }
+
+          const response = await ai.models.generateContent({
+            model: 'gemini-3.8-flash-tts',
+            contents: [
+              {
+                role: 'user',
+                parts,
+              },
+            ],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                multiSpeakerVoiceConfig: {
+                  speakerVoiceConfigs: [
+                    {
+                      speaker: 'Rex',
+                      voiceConfig: {
+                        prebuiltVoiceConfig: { voiceName: 'Puck' },
+                      },
+                    },
+                    {
+                      speaker: 'Kira',
+                      voiceConfig: {
+                        prebuiltVoiceConfig: { voiceName: 'Kore' },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          });
+
+          wavBase64 = extractWavBase64FromParts(response.candidates?.[0]?.content?.parts);
+        } catch (e) {
+          primaryErr = e instanceof Error ? e.message : String(e);
+        }
       }
 
       if (!wavBase64) {
@@ -1414,7 +2226,7 @@ async function startServer() {
                   ai,
                   cleanRex,
                   'Puck',
-                  'You are Rex Vance, energetic warm human sports play-by-play host.',
+                  'You are Rex Vance, energetic human sports play-by-play host.',
                 )
               : Promise.resolve(Buffer.alloc(0)),
             cleanKira
@@ -1426,9 +2238,10 @@ async function startServer() {
                 )
               : Promise.resolve(Buffer.alloc(0)),
           ]);
-          const silenceGap = cleanRex && cleanKira ? Buffer.alloc(Math.floor(24000 * 0.16) * 2) : Buffer.alloc(0);
-          const combinedPcm = Buffer.concat([tracks[0], silenceGap, tracks[1]]);
-          if (combinedPcm.length === 0) {
+          const silenceGap = cleanRex && cleanKira ? Buffer.alloc(Math.floor(24000 * 0.12) * 2) : Buffer.alloc(0);
+          const tailPad = Buffer.alloc(Math.floor(24000 * 0.08) * 2);
+          const combinedPcm = Buffer.concat([tracks[0], silenceGap, tracks[1], tailPad]);
+          if (tracks[0].length === 0 && tracks[1].length === 0) {
             res.status(502).json({ error: 'No audio returned from Gemini voice synthesis' });
             return;
           }
@@ -1439,7 +2252,7 @@ async function startServer() {
         }
       }
 
-      if (ttsCache.size >= 120) {
+      if (ttsCache.size >= 160) {
         const firstKey = ttsCache.keys().next().value;
         if (firstKey) ttsCache.delete(firstKey);
       }

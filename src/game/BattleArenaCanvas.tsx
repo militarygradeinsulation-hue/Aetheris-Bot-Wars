@@ -39,6 +39,7 @@ export interface BattleArenaCanvasProps {
   onStepLocalPhysics?: (dt: number) => void;
   onCombatEvents?: (events: CombatEvent[]) => void;
   cameraPreset?: 'chase' | 'first_person' | 'pilot_booth' | 'tactical' | 'cinematic';
+  cameraSensitivity?: number;
   explodedRatio?: number;
   lightingPreset?: StudioLightingPreset;
   turntableSpeed?: number;
@@ -79,6 +80,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   onStepLocalPhysics,
   onCombatEvents,
   cameraPreset = 'chase',
+  cameraSensitivity = 0.65,
   explodedRatio = 0,
   lightingPreset = 'arena',
   turntableSpeed = 1,
@@ -98,6 +100,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   const stepLocalRef = useRef(onStepLocalPhysics);
   const onEventsRef = useRef(onCombatEvents);
   const camPresetRef = useRef(cameraPreset);
+  const camSensitivityRef = useRef(cameraSensitivity);
   const explodedRatioRef = useRef(explodedRatio);
   const lightingPresetRef = useRef<StudioLightingPreset>(lightingPreset);
   const turntableSpeedRef = useRef(turntableSpeed);
@@ -113,6 +116,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   stepLocalRef.current = onStepLocalPhysics;
   onEventsRef.current = onCombatEvents;
   camPresetRef.current = cameraPreset;
+  camSensitivityRef.current = cameraSensitivity;
   explodedRatioRef.current = explodedRatio;
   lightingPresetRef.current = lightingPreset;
   turntableSpeedRef.current = turntableSpeed;
@@ -428,6 +432,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     let crowdExcitement = 0.2;
     let workshopWeaponAngle = 0;
     let lastEcoRender = 0;
+    let smoothFollowYaw: number | null = null;
 
     function applyEventDecal(ev: CombatEvent) {
       if (
@@ -1210,10 +1215,12 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           // Smooth Camera Tracking
           if (playerBot) {
             const preset = camPresetRef.current;
+            const sens = THREE.MathUtils.clamp(camSensitivityRef.current ?? 0.65, 0.2, 2.0);
             const isFirstPerson = preset === 'first_person';
             const isPilotBooth = preset === 'pilot_booth';
             const arenaHalf = ARENA_CATALOG[arenaIdRef.current]?.halfSize ?? 18;
             if (isFirstPerson) {
+              smoothFollowYaw = playerBot.yaw;
               const fx = Math.sin(playerBot.yaw);
               const fz = Math.cos(playerBot.yaw);
               const hoodDist = 0.58 * playerBot.scale;
@@ -1229,14 +1236,21 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
                 playerBot.z + fz * 14,
               );
             } else if (isPilotBooth) {
-              // Elevated VIP RC Pilot Control Booth behind the upper Lexan blast glass (well above the perimeter wall & stands)
-              _camGoal.set(playerBot.x * 0.34, 10.8, arenaHalf + 0.65);
-              _lookGoal.set(playerBot.x * 0.78, playerBot.y + 0.45, playerBot.z * 0.72);
+              smoothFollowYaw = playerBot.yaw;
+              // Ringside Fan / Driver Booth Perspective right behind the clear South Lexan blast glass
+              // Eye-level height (2.15m) looking straight through the glass into the BattleBox at your bot
+              const boothX = THREE.MathUtils.clamp(playerBot.x * 0.48, -arenaHalf * 0.65, arenaHalf * 0.65);
+              _camGoal.set(boothX, 2.18, arenaHalf + 1.25);
+              _lookGoal.set(
+                playerBot.x + playerBot.vx * 0.08,
+                playerBot.y + 0.52,
+                playerBot.z + playerBot.vz * 0.08,
+              );
             } else if (preset === 'tactical') {
               _camGoal.set(playerBot.x * 0.55, 22, playerBot.z * 0.55 + 15);
               _lookGoal.set(playerBot.x * 0.5, 0.2, playerBot.z * 0.5);
             } else if (preset === 'cinematic') {
-              const orbitA = elapsed * 0.32;
+              const orbitA = elapsed * 0.28 * sens;
               _camGoal.set(
                 playerBot.x + Math.sin(orbitA) * 10.5,
                 6.5,
@@ -1244,22 +1258,35 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
               );
               _lookGoal.set(playerBot.x, 0.5, playerBot.z);
             } else {
-              // Chase camera anchored behind player's travel / facing direction with wide arena view
+              // Smooth Follow / Chase camera: gently damp yaw so quick bot turns don't whip the camera around
+              if (smoothFollowYaw === null) {
+                smoothFollowYaw = playerBot.yaw;
+              } else {
+                let angleDiff = playerBot.yaw - smoothFollowYaw;
+                while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                const yawAlpha = 1 - Math.exp(-1.75 * sens * dt);
+                smoothFollowYaw += angleDiff * yawAlpha;
+              }
               const speed = Math.hypot(playerBot.vx, playerBot.vz);
-              const backX = -Math.sin(playerBot.yaw);
-              const backZ = -Math.cos(playerBot.yaw);
-              const dist = 10.2 + Math.min(2.5, speed * 0.14);
-              _camGoal.set(playerBot.x + backX * dist, 7.6, playerBot.z + backZ * dist);
-              _lookGoal.set(playerBot.x + Math.sin(playerBot.yaw) * 2.2, 0.5, playerBot.z + Math.cos(playerBot.yaw) * 2.2);
+              const backX = -Math.sin(smoothFollowYaw);
+              const backZ = -Math.cos(smoothFollowYaw);
+              const dist = 10.4 + Math.min(2.2, speed * 0.12);
+              _camGoal.set(playerBot.x + backX * dist, 7.2, playerBot.z + backZ * dist);
+              _lookGoal.set(
+                playerBot.x + Math.sin(smoothFollowYaw) * 2.0,
+                0.52,
+                playerBot.z + Math.cos(smoothFollowYaw) * 2.0,
+              );
             }
 
             // Clamp camera within arena overhead envelope
-            const maxCamBound = isPilotBooth ? arenaHalf + 1.2 : 21;
+            const maxCamBound = isPilotBooth ? arenaHalf + 1.4 : 21;
             _camGoal.x = THREE.MathUtils.clamp(_camGoal.x, -maxCamBound, maxCamBound);
             _camGoal.z = THREE.MathUtils.clamp(_camGoal.z, -maxCamBound, maxCamBound);
 
-            const posDamp = isFirstPerson ? 20 : isPilotBooth ? 7.5 : 4.8;
-            const lookDamp = isFirstPerson ? 24 : isPilotBooth ? 10 : 6.5;
+            const posDamp = isFirstPerson ? 14 * sens : isPilotBooth ? 3.8 * sens : 2.6 * sens;
+            const lookDamp = isFirstPerson ? 18 * sens : isPilotBooth ? 5.2 * sens : 3.8 * sens;
 
             camera.position.x = THREE.MathUtils.damp(camera.position.x, _camGoal.x, posDamp, dt);
             camera.position.y = THREE.MathUtils.damp(camera.position.y, _camGoal.y, posDamp, dt);

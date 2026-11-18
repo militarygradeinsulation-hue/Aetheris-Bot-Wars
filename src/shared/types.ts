@@ -113,15 +113,21 @@ export type GameMode =
 
 // ---- Livery patterns ----
 export type PatternId = 'none' | 'stripes' | 'flames' | 'digital_camo' | 'hex' | 'checker' | 'tiger' | 'circuit';
-export const PATTERN_CATALOG: Record<PatternId, { id: PatternId; label: string }> = {
+export interface PatternSpec {
+  id: PatternId;
+  label: string;
+  price?: number;
+  unlockLevel?: number;
+}
+export const PATTERN_CATALOG: Record<PatternId, PatternSpec> = {
   none: { id: 'none', label: 'Solid' },
   stripes: { id: 'stripes', label: 'Racing Stripes' },
-  flames: { id: 'flames', label: 'Hot Rod Flames' },
-  digital_camo: { id: 'digital_camo', label: 'Digital Camo' },
-  hex: { id: 'hex', label: 'Hex Mesh' },
-  checker: { id: 'checker', label: 'Checkered Flag' },
-  tiger: { id: 'tiger', label: 'Tiger Slash' },
-  circuit: { id: 'circuit', label: 'Circuit Trace' },
+  flames: { id: 'flames', label: 'Hot Rod Flames', price: 140, unlockLevel: 2 },
+  digital_camo: { id: 'digital_camo', label: 'Digital Camo', price: 160, unlockLevel: 2 },
+  hex: { id: 'hex', label: 'Hex Mesh', price: 180, unlockLevel: 3 },
+  checker: { id: 'checker', label: 'Checkered Flag', price: 200, unlockLevel: 4 },
+  tiger: { id: 'tiger', label: 'Tiger Slash', price: 240, unlockLevel: 5 },
+  circuit: { id: 'circuit', label: 'Circuit Trace', price: 300, unlockLevel: 6 },
 };
 
 // ---- Match modifiers (mutators) ----
@@ -409,6 +415,7 @@ export interface BotPhysicsState {
   scale: number;
   config: BotConfig;
   skills: SkillTree;
+  partUpgrades?: Record<string, number>;
   x: number;
   y: number;
   z: number;
@@ -828,15 +835,71 @@ export interface FavoritesList {
 export type ControlSchemeId = 'wasd_drive' | 'arrows_drive' | 'mouse_drive';
 export type DeviceLayoutMode = 'auto' | 'desktop' | 'tablet' | 'mobile';
 
-export interface PlayerProfile {
-  id: string;
-  callsign: string;
+export interface PilotDirectoryEntry {
+  uid: string;
+  username: string;
+  usernameLower: string;
   pilotTitle?: string;
   clanId: string | null;
   clanTag: string;
+  teamId?: string | null;
+  teamName?: string | null;
+  level: number;
+  rating: number;
+  wins: number;
+  losses: number;
+  kos: number;
+  powerScore: number;
+  botName: string;
+  primaryWeapon?: string;
+  primaryArmor?: string;
+  isOnline: boolean;
+  isPublic: boolean;
+  status: 'garage' | 'searching' | 'fighting' | 'offline';
+  lastSeenAt: number;
+}
+
+export interface PilotConnectionRecord {
+  id: string;
+  users: [string, string];
+  requesterId: string;
+  recipientId: string;
+  requesterName: string;
+  recipientName: string;
+  status: 'pending' | 'accepted' | 'declined';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CombatTeamInfo {
+  id: string;
+  name: string;
+  tag: string;
+  motto?: string;
+  leaderId: string;
+  leaderName: string;
+  clanId?: string | null;
+  memberIds: string[];
+  memberNames: string[];
+  wins: number;
+  rating: number;
+  isPublic: boolean;
+}
+
+export interface PlayerProfile {
+  id: string;
+  email?: string;
+  callsign: string;
+  usernameClaimed?: boolean;
+  pilotTitle?: string;
+  clanId: string | null;
+  clanTag: string;
+  teamId?: string | null;
+  teamName?: string | null;
   rating: number;
   level: number;
   xp: number;
+  coins?: number;
   scrap: number;
   skillPoints: number;
   wins: number;
@@ -863,39 +926,213 @@ export interface PlayerProfile {
   touchControlsMode: 'auto' | 'always' | 'off';
   controlScheme?: ControlSchemeId;
   deviceLayoutMode?: DeviceLayoutMode;
+  cameraSensitivity?: number;
   ownedParts?: string[];
+  unlockedArenas?: ArenaId[];
+  partUpgrades?: Record<string, number>;
   campaignStars?: Record<string, number>;
   arenaWins?: Partial<Record<ArenaId, number>>;
   bestSurvivalWave?: number;
   favorites?: FavoritesList;
+  accessCode?: string;
   isAdmin?: boolean;
   adminSeat?: 1 | 2;
 }
 
-// ---- Part economy: premium parts cost scrap or unlock via campaign & events ----
-export type PartCategory = 'weapon' | 'armor' | 'chassis' | 'drive';
+// ---- Part & Arena economy: locked progression + Coin upgrades (Lv 1..5) ----
+export type PartCategory =
+  | 'weapon'
+  | 'armor'
+  | 'chassis'
+  | 'drive'
+  | 'finish'
+  | 'pattern'
+  | 'accessory'
+  | 'arena';
+
+export const STARTER_UNLOCKED_ARENAS: ArenaId[] = ['foundry', 'colosseum'];
+export const MAX_PART_UPGRADE_LEVEL = 5;
+
+export function isAdminIdentifier(raw: string | undefined | null): boolean {
+  if (!raw) return false;
+  const cleaned = raw.trim().toLowerCase();
+  const compact = cleaned.replace(/[\s_-]+/g, '');
+  return (
+    cleaned === '9822' ||
+    cleaned === 'arch-9822' ||
+    cleaned === 'aistystemsarchitect@gmail.com' ||
+    cleaned === 'aisystemsarchitect@gmail.com' ||
+    cleaned === 'militarygradeinsulation@gmail.com' ||
+    cleaned === 'the architect' ||
+    cleaned === 'the_architect' ||
+    compact === 'thearchitect'
+  );
+}
+
+export function getAllPartKeysAndUpgrades(): {
+  allPartKeys: string[];
+  allArenas: ArenaId[];
+  maxUpgrades: Record<string, number>;
+} {
+  const allPartKeys: string[] = [];
+  const maxUpgrades: Record<string, number> = {};
+  const allArenas = Object.keys(ARENA_CATALOG) as ArenaId[];
+
+  const addCat = (cat: PartCategory, ids: string[]) => {
+    for (const id of ids) {
+      const k = partKey(cat, id);
+      allPartKeys.push(k);
+      if (cat !== 'arena') {
+        maxUpgrades[k] = MAX_PART_UPGRADE_LEVEL;
+      }
+    }
+  };
+
+  addCat('weapon', Object.keys(WEAPON_CATALOG));
+  addCat('armor', Object.keys(ARMOR_CATALOG));
+  addCat('chassis', Object.keys(CHASSIS_CATALOG));
+  addCat('drive', Object.keys(DRIVE_CATALOG));
+  addCat('finish', Object.keys(FINISH_CATALOG));
+  addCat('pattern', Object.keys(PATTERN_CATALOG));
+  addCat('accessory', Object.keys(ACCESSORY_CATALOG));
+  addCat('arena', allArenas);
+
+  return { allPartKeys, allArenas, maxUpgrades };
+}
+
+export function applyAdminFullUnlock(profile: PlayerProfile): PlayerProfile {
+  const { allPartKeys, allArenas, maxUpgrades } = getAllPartKeysAndUpgrades();
+  return {
+    ...profile,
+    callsign:
+      isAdminIdentifier(profile.callsign) || !profile.usernameClaimed
+        ? 'The_Architect'
+        : profile.callsign,
+    pilotTitle: 'Grand Architect · Supreme Admin',
+    usernameClaimed: true,
+    isAdmin: true,
+    accessCode: profile.accessCode || '9822',
+    level: Math.max(profile.level || 1, 50),
+    xp: Math.max(profile.xp || 0, 50000),
+    coins: Math.max(profile.coins ?? profile.scrap ?? 0, 99999),
+    scrap: Math.max(profile.coins ?? profile.scrap ?? 0, 99999),
+    skillPoints: Math.max(profile.skillPoints || 0, 50),
+    rating: Math.max(profile.rating || 1200, 2400),
+    gauntletStage: Math.max(profile.gauntletStage || 1, 10),
+    ownedParts: [...new Set([...(profile.ownedParts ?? []), ...allPartKeys])],
+    unlockedArenas: [...allArenas],
+    partUpgrades: { ...(profile.partUpgrades ?? {}), ...maxUpgrades },
+    skills: {
+      chassisReinforcement: 5,
+      weaponTorque: 5,
+      gyroStabilizer: 5,
+      kineticArmor: 5,
+      batteryCore: 5,
+      coolingSystem: 5,
+      naniteRepair: 5,
+      overclockCore: 5,
+    },
+  };
+}
+
 export function partKey(cat: PartCategory, id: string): string {
   return `${cat}:${id}`;
 }
+
 export function getPartPrice(cat: PartCategory, id: string): number {
   if (cat === 'weapon') return WEAPON_CATALOG[id as WeaponId]?.price ?? 0;
   if (cat === 'armor') return ARMOR_CATALOG[id as ArmorId]?.price ?? 0;
   if (cat === 'chassis') return CHASSIS_CATALOG[id as ChassisId]?.price ?? 0;
-  return DRIVE_CATALOG[id as DriveId]?.price ?? 0;
+  if (cat === 'drive') return DRIVE_CATALOG[id as DriveId]?.price ?? 0;
+  if (cat === 'finish') return FINISH_CATALOG[id as FinishStyleId]?.price ?? 0;
+  if (cat === 'pattern') return PATTERN_CATALOG[id as PatternId]?.price ?? 0;
+  if (cat === 'accessory') return ACCESSORY_CATALOG[id as AccessoryId]?.price ?? 0;
+  if (cat === 'arena') return ARENA_CATALOG[id as ArenaId]?.price ?? 0;
+  return 0;
 }
-export function isPartOwned(profile: Pick<PlayerProfile, 'ownedParts'>, cat: PartCategory, id: string): boolean {
-  if (getPartPrice(cat, id) <= 0) return true;
+
+export function getPartUnlockLevel(cat: PartCategory, id: string): number {
+  if (cat === 'weapon') return WEAPON_CATALOG[id as WeaponId]?.unlockLevel ?? 1;
+  if (cat === 'armor') return ARMOR_CATALOG[id as ArmorId]?.unlockLevel ?? 1;
+  if (cat === 'chassis') return CHASSIS_CATALOG[id as ChassisId]?.unlockLevel ?? 1;
+  if (cat === 'drive') return DRIVE_CATALOG[id as DriveId]?.unlockLevel ?? 1;
+  if (cat === 'finish') return FINISH_CATALOG[id as FinishStyleId]?.unlockLevel ?? 1;
+  if (cat === 'pattern') return PATTERN_CATALOG[id as PatternId]?.unlockLevel ?? 1;
+  if (cat === 'accessory') return ACCESSORY_CATALOG[id as AccessoryId]?.unlockLevel ?? 1;
+  if (cat === 'arena') return ARENA_CATALOG[id as ArenaId]?.unlockLevel ?? 1;
+  return 1;
+}
+
+export function isPartOwned(
+  profile: Pick<PlayerProfile, 'ownedParts' | 'unlockedArenas' | 'level'> &
+    Partial<Pick<PlayerProfile, 'isAdmin' | 'callsign' | 'email'>>,
+  cat: PartCategory,
+  id: string,
+): boolean {
+  if (
+    profile.isAdmin ||
+    isAdminIdentifier(profile.callsign) ||
+    isAdminIdentifier(profile.email)
+  ) {
+    return true;
+  }
+  if (cat === 'arena') {
+    const aId = id as ArenaId;
+    if (STARTER_UNLOCKED_ARENAS.includes(aId)) return true;
+    if ((profile.unlockedArenas ?? []).includes(aId)) return true;
+    if ((profile.ownedParts ?? []).includes(partKey('arena', aId))) return true;
+    const reqLv = getPartUnlockLevel('arena', aId);
+    return (profile.level ?? 1) >= reqLv;
+  }
+  if (getPartPrice(cat, id) <= 0 && getPartUnlockLevel(cat, id) <= 1) return true;
   return (profile.ownedParts ?? []).includes(partKey(cat, id));
 }
-/** Every premium part key a config uses (for granting ownership of builds that predate the economy). */
+
+export function getPartUpgradeLevel(
+  profile: Pick<PlayerProfile, 'partUpgrades'> | Record<string, number> | undefined,
+  cat: PartCategory,
+  id: string,
+): number {
+  let map: Record<string, number> = {};
+  if (profile) {
+    if ('partUpgrades' in profile && (typeof profile.partUpgrades === 'object' || profile.partUpgrades === undefined)) {
+      map = (profile.partUpgrades as Record<string, number> | undefined) ?? {};
+    } else {
+      map = profile as Record<string, number>;
+    }
+  }
+  const raw = map[partKey(cat, id)] ?? 1;
+  return Math.max(1, Math.min(MAX_PART_UPGRADE_LEVEL, Math.round(raw)));
+}
+
+export function getPartUpgradeCost(cat: PartCategory, id: string, currentLv: number): number {
+  if (currentLv >= MAX_PART_UPGRADE_LEVEL) return 0;
+  const basePrice = getPartPrice(cat, id);
+  const tierFactor = basePrice > 0 ? Math.round(basePrice * 0.32) : 90;
+  const catBase =
+    cat === 'weapon' || cat === 'armor' ? 100 : cat === 'chassis' || cat === 'drive' ? 85 : 65;
+  return Math.round((catBase + tierFactor) * currentLv);
+}
+
+/** Every premium/locked part key a config uses. */
 export function premiumPartsInConfig(config: BotConfig): string[] {
   const keys: string[] = [];
   for (const w of getBotWeapons(config)) if (getPartPrice('weapon', w) > 0) keys.push(partKey('weapon', w));
   for (const c of getBotChassisStyles(config)) if (getPartPrice('chassis', c) > 0) keys.push(partKey('chassis', c));
   if (getPartPrice('armor', config.armor) > 0) keys.push(partKey('armor', config.armor));
   if (getPartPrice('drive', config.drive) > 0) keys.push(partKey('drive', config.drive));
+  if (config.finishStyle && getPartPrice('finish', config.finishStyle) > 0) {
+    keys.push(partKey('finish', config.finishStyle));
+  }
+  if (config.pattern && getPartPrice('pattern', config.pattern) > 0) {
+    keys.push(partKey('pattern', config.pattern));
+  }
+  if (config.accessory && getPartPrice('accessory', config.accessory) > 0) {
+    keys.push(partKey('accessory', config.accessory));
+  }
   return keys;
 }
+
 export function describePartKey(key: string | undefined): string {
   if (!key) return '';
   const [cat, id] = key.split(':');
@@ -906,7 +1143,15 @@ export function describePartKey(key: string | undefined): string {
         ? ARMOR_CATALOG[id as ArmorId]?.label
         : cat === 'chassis'
           ? CHASSIS_CATALOG[id as ChassisId]?.label
-          : DRIVE_CATALOG[id as DriveId]?.label;
+          : cat === 'drive'
+            ? DRIVE_CATALOG[id as DriveId]?.label
+            : cat === 'arena'
+              ? ARENA_CATALOG[id as ArenaId]?.name
+              : cat === 'finish'
+                ? FINISH_CATALOG[id as FinishStyleId]?.label
+                : cat === 'pattern'
+                  ? PATTERN_CATALOG[id as PatternId]?.label
+                  : ACCESSORY_CATALOG[id as AccessoryId]?.label;
   return label ?? id;
 }
 
@@ -921,6 +1166,7 @@ export interface ChassisSpec {
   speedMult: number;
   frontDeflect: number;
   price?: number;
+  unlockLevel?: number;
 }
 
 export interface ArmorSpec {
@@ -936,6 +1182,7 @@ export interface ArmorSpec {
   roughness: number;
   metalness: number;
   price?: number;
+  unlockLevel?: number;
 }
 
 export interface WeaponSpec {
@@ -950,6 +1197,7 @@ export interface WeaponSpec {
   cooldown: number;
   energyCost: number;
   price?: number;
+  unlockLevel?: number;
 }
 
 export interface WheelLayoutSpec {
@@ -971,6 +1219,7 @@ export interface DriveSpec {
   turnRate: number;
   knockbackResist: number;
   price?: number;
+  unlockLevel?: number;
 }
 
 export interface FinishStyleSpec {
@@ -981,12 +1230,16 @@ export interface FinishStyleSpec {
   metalnessAdd: number;
   clearcoat: number;
   iridescence: number;
+  price?: number;
+  unlockLevel?: number;
 }
 
 export interface AccessorySpec {
   id: AccessoryId;
   label: string;
   subtitle: string;
+  price?: number;
+  unlockLevel?: number;
 }
 
 export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
@@ -1022,6 +1275,8 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Wide 1.08×',
     speedMult: 0.84,
     frontDeflect: 0.3,
+    price: 180,
+    unlockLevel: 2,
   },
   rammer: {
     id: 'rammer',
@@ -1044,6 +1299,8 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Domed',
     speedMult: 0.88,
     frontDeflect: 0.36,
+    price: 200,
+    unlockLevel: 2,
   },
   spider: {
     id: 'spider',
@@ -1055,6 +1312,8 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Wide Wing',
     speedMult: 1.08,
     frontDeflect: 0.22,
+    price: 220,
+    unlockLevel: 2,
   },
   micro: {
     id: 'micro',
@@ -1066,6 +1325,8 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Tiny 0.72×',
     speedMult: 1.24,
     frontDeflect: 0.34,
+    price: 240,
+    unlockLevel: 3,
   },
   behemoth: {
     id: 'behemoth',
@@ -1077,6 +1338,8 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Giant 1.32×',
     speedMult: 0.72,
     frontDeflect: 0.32,
+    price: 540,
+    unlockLevel: 6,
   },
   ufo: {
     id: 'ufo',
@@ -1088,6 +1351,8 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Saucer',
     speedMult: 1.02,
     frontDeflect: 0.44,
+    price: 280,
+    unlockLevel: 3,
   },
   tripod: {
     id: 'tripod',
@@ -1099,6 +1364,8 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Tri-Pod',
     speedMult: 1.06,
     frontDeflect: 0.24,
+    price: 260,
+    unlockLevel: 3,
   },
   monolith: {
     id: 'monolith',
@@ -1110,6 +1377,8 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Tall Spire',
     speedMult: 0.85,
     frontDeflect: 0.3,
+    price: 320,
+    unlockLevel: 4,
   },
   claw: {
     id: 'claw',
@@ -1121,6 +1390,8 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: 'Pincer',
     speedMult: 0.92,
     frontDeflect: 0.38,
+    price: 340,
+    unlockLevel: 4,
   },
   scorpion: {
     id: 'scorpion',
@@ -1133,6 +1404,7 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     speedMult: 1.04,
     frontDeflect: 0.32,
     price: 360,
+    unlockLevel: 4,
   },
   juggernaut: {
     id: 'juggernaut',
@@ -1145,6 +1417,7 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     speedMult: 0.76,
     frontDeflect: 0.38,
     price: 480,
+    unlockLevel: 6,
   },
   hover_disc: {
     id: 'hover_disc',
@@ -1157,6 +1430,7 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     speedMult: 1.1,
     frontDeflect: 0.42,
     price: 420,
+    unlockLevel: 5,
   },
   hydra: {
     id: 'hydra',
@@ -1169,6 +1443,7 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     speedMult: 0.95,
     frontDeflect: 0.35,
     price: 440,
+    unlockLevel: 5,
   },
   shell_spinner: {
     id: 'shell_spinner',
@@ -1180,6 +1455,8 @@ export const CHASSIS_CATALOG: Record<ChassisId, ChassisSpec> = {
     sizeTag: '360° Shell',
     speedMult: 1.04,
     frontDeflect: 0.48,
+    price: 520,
+    unlockLevel: 6,
   },
 };
 
@@ -1209,6 +1486,8 @@ export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
     speedMult: 0.93,
     roughness: 0.42,
     metalness: 0.3,
+    price: 220,
+    unlockLevel: 2,
   },
   kevlar: {
     id: 'kevlar',
@@ -1222,6 +1501,8 @@ export const ARMOR_CATALOG: Record<ArmorId, ArmorSpec> = {
     speedMult: 1.09,
     roughness: 0.58,
     metalness: 0.18,
+    price: 260,
+    unlockLevel: 3,
   },
   steel: {
     id: 'steel',
@@ -1355,6 +1636,8 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 2.45,
     cooldown: 1.35,
     energyCost: 18,
+    price: 180,
+    unlockLevel: 2,
   },
   hammer: {
     id: 'hammer',
@@ -1367,6 +1650,8 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 2.45,
     cooldown: 1.2,
     energyCost: 15,
+    price: 220,
+    unlockLevel: 2,
   },
   crush_jaw: {
     id: 'crush_jaw',
@@ -1380,6 +1665,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     cooldown: 1.3,
     energyCost: 16,
     price: 400,
+    unlockLevel: 4,
   },
   flame: {
     id: 'flame',
@@ -1392,6 +1678,8 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 4.1,
     cooldown: 0.42,
     energyCost: 6,
+    price: 240,
+    unlockLevel: 2,
   },
   cryo_jet: {
     id: 'cryo_jet',
@@ -1405,6 +1693,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     cooldown: 0.44,
     energyCost: 7,
     price: 420,
+    unlockLevel: 4,
   },
   tesla: {
     id: 'tesla',
@@ -1418,6 +1707,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     cooldown: 0.95,
     energyCost: 14,
     price: 520,
+    unlockLevel: 5,
   },
   laser: {
     id: 'laser',
@@ -1430,6 +1720,8 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 11.5,
     cooldown: 0.36,
     energyCost: 8,
+    price: 360,
+    unlockLevel: 3,
   },
   railgun: {
     id: 'railgun',
@@ -1443,6 +1735,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     cooldown: 1.85,
     energyCost: 24,
     price: 680,
+    unlockLevel: 6,
   },
   mortar: {
     id: 'mortar',
@@ -1456,6 +1749,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     cooldown: 1.65,
     energyCost: 20,
     price: 640,
+    unlockLevel: 6,
   },
   lance: {
     id: 'lance',
@@ -1469,6 +1763,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     cooldown: 1.05,
     energyCost: 14,
     price: 380,
+    unlockLevel: 3,
   },
   magnet: {
     id: 'magnet',
@@ -1482,6 +1777,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     cooldown: 1.8,
     energyCost: 16,
     price: 560,
+    unlockLevel: 5,
   },
   missiles: {
     id: 'missiles',
@@ -1495,6 +1791,7 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     cooldown: 2.2,
     energyCost: 22,
     price: 720,
+    unlockLevel: 6,
   },
   body_spinner: {
     id: 'body_spinner',
@@ -1507,6 +1804,8 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 2.85,
     cooldown: 0.65,
     energyCost: 9,
+    price: 460,
+    unlockLevel: 4,
   },
   lightning_strike: {
     id: 'lightning_strike',
@@ -1519,6 +1818,8 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 13.5,
     cooldown: 1.55,
     energyCost: 22,
+    price: 760,
+    unlockLevel: 7,
   },
   bomb_drop: {
     id: 'bomb_drop',
@@ -1531,6 +1832,8 @@ export const WEAPON_CATALOG: Record<WeaponId, WeaponSpec> = {
     range: 14.0,
     cooldown: 1.65,
     energyCost: 24,
+    price: 820,
+    unlockLevel: 8,
   },
 };
 
@@ -1627,6 +1930,8 @@ export const DRIVE_CATALOG: Record<DriveId, DriveSpec> = {
     accel: 19,
     turnRate: 2.65,
     knockbackResist: 0.88,
+    price: 220,
+    unlockLevel: 2,
   },
   heavy_torque: {
     id: 'heavy_torque',
@@ -1636,6 +1941,8 @@ export const DRIVE_CATALOG: Record<DriveId, DriveSpec> = {
     accel: 27,
     turnRate: 2.15,
     knockbackResist: 1.48,
+    price: 260,
+    unlockLevel: 3,
   },
   mecanum: {
     id: 'mecanum',
@@ -1645,6 +1952,8 @@ export const DRIVE_CATALOG: Record<DriveId, DriveSpec> = {
     accel: 20,
     turnRate: 3.35,
     knockbackResist: 0.96,
+    price: 320,
+    unlockLevel: 3,
   },
   maglev: {
     id: 'maglev',
@@ -1655,6 +1964,7 @@ export const DRIVE_CATALOG: Record<DriveId, DriveSpec> = {
     turnRate: 3.15,
     knockbackResist: 0.92,
     price: 600,
+    unlockLevel: 5,
   },
   crawler_nuclear: {
     id: 'crawler_nuclear',
@@ -1665,6 +1975,7 @@ export const DRIVE_CATALOG: Record<DriveId, DriveSpec> = {
     turnRate: 2.45,
     knockbackResist: 1.55,
     price: 560,
+    unlockLevel: 5,
   },
   hover: {
     id: 'hover',
@@ -1675,6 +1986,7 @@ export const DRIVE_CATALOG: Record<DriveId, DriveSpec> = {
     turnRate: 3.0,
     knockbackResist: 0.78,
     price: 650,
+    unlockLevel: 6,
   },
 };
 
@@ -1696,6 +2008,8 @@ export const FINISH_CATALOG: Record<FinishStyleId, FinishStyleSpec> = {
     metalnessAdd: 0.25,
     clearcoat: 1.0,
     iridescence: 0.1,
+    price: 160,
+    unlockLevel: 2,
   },
   matte: {
     id: 'matte',
@@ -1714,6 +2028,8 @@ export const FINISH_CATALOG: Record<FinishStyleId, FinishStyleSpec> = {
     metalnessAdd: 0.15,
     clearcoat: 0.95,
     iridescence: 0.95,
+    price: 380,
+    unlockLevel: 5,
   },
   gold_leaf: {
     id: 'gold_leaf',
@@ -1723,6 +2039,8 @@ export const FINISH_CATALOG: Record<FinishStyleId, FinishStyleSpec> = {
     metalnessAdd: 0.2,
     clearcoat: 0.9,
     iridescence: 0.35,
+    price: 280,
+    unlockLevel: 4,
   },
   carbon_stealth: {
     id: 'carbon_stealth',
@@ -1732,6 +2050,8 @@ export const FINISH_CATALOG: Record<FinishStyleId, FinishStyleSpec> = {
     metalnessAdd: -0.1,
     clearcoat: 0.75,
     iridescence: 0.15,
+    price: 220,
+    unlockLevel: 3,
   },
 };
 
@@ -1745,11 +2065,15 @@ export const ACCESSORY_CATALOG: Record<AccessoryId, AccessorySpec> = {
     id: 'halo_crown',
     label: 'Aether Halo Ring',
     subtitle: 'Floating illuminated quantum energy ring above the core',
+    price: 340,
+    unlockLevel: 4,
   },
   twin_flags: {
     id: 'twin_flags',
     label: 'Clan War Pennants',
     subtitle: 'Twin dorsal battle standards bearing your accent colors',
+    price: 150,
+    unlockLevel: 2,
   },
   radar_dish: {
     id: 'radar_dish',
@@ -1760,16 +2084,22 @@ export const ACCESSORY_CATALOG: Record<AccessoryId, AccessorySpec> = {
     id: 'thruster_wings',
     label: 'Aero Booster Fins',
     subtitle: 'Swept supersonic stabilizer wings with glowing afterburners',
+    price: 240,
+    unlockLevel: 3,
   },
   tesla_horns: {
     id: 'tesla_horns',
     label: 'Arc Bull Horns',
     subtitle: 'Menacing twin chrome horns with glowing plasma tips',
+    price: 290,
+    unlockLevel: 4,
   },
   boss_spikes: {
     id: 'boss_spikes',
     label: 'Dreadnought Spikes',
     subtitle: 'Row of hardened steel dorsal spikes along the hull spine',
+    price: 360,
+    unlockLevel: 5,
   },
 };
 
@@ -1795,6 +2125,8 @@ export interface ArenaSpec {
   skyHex: string;
   floorHex: string;
   accentHex: string;
+  price?: number;
+  unlockLevel?: number;
 }
 
 export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
@@ -1810,6 +2142,7 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     skyHex: '#101318',
     floorHex: '#1B2028',
     accentHex: '#F59E0B',
+    unlockLevel: 1,
   },
   cryo: {
     id: 'cryo',
@@ -1823,6 +2156,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     skyHex: '#0C141D',
     floorHex: '#19293A',
     accentHex: '#38BDF8',
+    price: 240,
+    unlockLevel: 2,
   },
   reactor: {
     id: 'reactor',
@@ -1836,6 +2171,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     skyHex: '#121019',
     floorHex: '#1E1A2B',
     accentHex: '#A855F7',
+    price: 400,
+    unlockLevel: 4,
   },
   colosseum: {
     id: 'colosseum',
@@ -1849,6 +2186,7 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     skyHex: '#12151C',
     floorHex: '#202631',
     accentHex: '#EF4444',
+    unlockLevel: 1,
   },
   aether_nexus: {
     id: 'aether_nexus',
@@ -1862,6 +2200,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     skyHex: '#090D1A',
     floorHex: '#131C31',
     accentHex: '#06B6D4',
+    price: 950,
+    unlockLevel: 8,
   },
   toxic_scrapyard: {
     id: 'toxic_scrapyard',
@@ -1875,6 +2215,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     skyHex: '#0B1510',
     floorHex: '#16261E',
     accentHex: '#10B981',
+    price: 320,
+    unlockLevel: 3,
   },
   volcano_caldera: {
     id: 'volcano_caldera',
@@ -1888,6 +2230,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     skyHex: '#1A0D0A',
     floorHex: '#2B1612',
     accentHex: '#F97316',
+    price: 580,
+    unlockLevel: 6,
   },
   cyber_grid: {
     id: 'cyber_grid',
@@ -1901,6 +2245,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     skyHex: '#13091C',
     floorHex: '#221330',
     accentHex: '#EC4899',
+    price: 490,
+    unlockLevel: 5,
   },
   skyforge: {
     id: 'skyforge',
@@ -1914,6 +2260,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     skyHex: '#1A2740',
     floorHex: '#26303F',
     accentHex: '#22D3EE',
+    price: 700,
+    unlockLevel: 7,
   },
   storm: {
     id: 'storm',
@@ -1927,6 +2275,8 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaSpec> = {
     skyHex: '#0A0D1A',
     floorHex: '#141A2E',
     accentHex: '#60A5FA',
+    price: 820,
+    unlockLevel: 7,
   },
 };
 
@@ -1957,7 +2307,7 @@ export const DEFAULT_SKILLS: SkillTree = {
 };
 
 export const DEFAULT_BOT_CONFIG: BotConfig = {
-  name: 'Aetheris MK-V',
+  name: 'Aetheris MK-I',
   chassis: 'wedge',
   chassisStyles: ['wedge'],
   armor: 'titanium',
@@ -1968,11 +2318,16 @@ export const DEFAULT_BOT_CONFIG: BotConfig = {
   primaryColor: '#0F172A',
   accentColor: '#38BDF8',
   finishStyle: 'standard',
-  accessory: 'halo_crown',
+  accessory: 'none',
   underglowColor: '#38BDF8',
+  pattern: 'none',
 };
 
-export function computeBotStats(config: BotConfig, skills: SkillTree): BotComputedStats {
+export function computeBotStats(
+  config: BotConfig,
+  skills: SkillTree,
+  partUpgrades?: Record<string, number>,
+): BotComputedStats {
   const styles = getBotChassisStyles(config);
   const weapons = getBotWeapons(config);
 
@@ -1983,6 +2338,17 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
   const extraWeapons = weapons.slice(1).map((id) => WEAPON_CATALOG[id]);
   const wl = WHEEL_LAYOUT_CATALOG[config.wheelLayout || '4wd_wide'] || WHEEL_LAYOUT_CATALOG['4wd_wide'];
   const dr = DRIVE_CATALOG[config.drive] || DRIVE_CATALOG.omni;
+
+  // Coin-funded upgrade bonuses per equipped part (Lv 1..5)
+  const upg = (cat: PartCategory, id: string) => getPartUpgradeLevel(partUpgrades, cat, id) - 1;
+  const chassisRank = upg('chassis', primaryCh.id);
+  const armorRank = upg('armor', ar.id);
+  const weaponRank = primaryWp ? upg('weapon', primaryWp.id) : 0;
+  const driveRank = upg('drive', dr.id);
+  const finishRank = upg('finish', config.finishStyle || 'standard');
+  const patternRank = upg('pattern', config.pattern || 'none');
+  const accessoryRank = upg('accessory', config.accessory || 'none');
+  const cosmeticMasteryRanks = finishRank + patternRank + accessoryRank;
 
   const coolingRank = skills.coolingSystem ?? 0;
   const naniteRank = skills.naniteRepair ?? 0;
@@ -2004,27 +2370,35 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
   );
 
   // Multi-weapon fusion: primary weapon + auxiliary mounted weapons (with mass/cooldown trade-off)
-  const extraWeaponDamage = extraWeapons.reduce((acc, w, idx) => acc + w.damage * (idx === 0 ? 0.36 : 0.26), 0);
+  const extraWeaponDamage = extraWeapons.reduce((acc, w, idx) => {
+    const wBoost = 1 + upg('weapon', w.id) * 0.08;
+    return acc + w.damage * wBoost * (idx === 0 ? 0.36 : 0.26);
+  }, 0);
   const extraWeaponImpulse = extraWeapons.reduce((acc, w, idx) => acc + w.impulse * (idx === 0 ? 0.42 : 0.32), 0);
   const extraWeaponMass = weapons.length === 0 ? -0.06 : extraWeapons.length * 0.14;
   const extraWeaponSpeedDrag = weapons.length === 0 ? 1.04 : Math.max(0.84, 1 - extraWeapons.length * 0.055);
   const combinedLift = primaryWp ? Math.max(primaryWp.lift, ...extraWeapons.map((w) => w.lift * 0.85)) : 0;
   const combinedRange = primaryWp ? Math.max(primaryWp.range, ...extraWeapons.map((w) => w.range)) : 0;
 
+  const upgradedChassisHp = primaryCh.baseHp * (1 + chassisRank * 0.08);
+  const upgradedArmorHp = ar.hpBonus * (1 + armorRank * 0.1);
   const maxHp = Math.round(
-    (primaryCh.baseHp + hybridHpBonus + ar.hpBonus) *
-      (1 + skills.chassisReinforcement * 0.09 + naniteRank * 0.03),
+    (upgradedChassisHp + hybridHpBonus + upgradedArmorHp) *
+      (1 + skills.chassisReinforcement * 0.09 + naniteRank * 0.03 + cosmeticMasteryRanks * 0.015),
   );
   const armorZoneHp = Math.round(
-    (ar.zoneHp + wl.sideArmorBonus + extraStyles.length * 18) * (1 + skills.kineticArmor * 0.14),
+    (ar.zoneHp * (1 + armorRank * 0.12) + wl.sideArmorBonus + extraStyles.length * 18) *
+      (1 + skills.kineticArmor * 0.14),
   );
   const maxShieldHp = Math.round(
-    ar.shieldBonus > 0 ? ar.shieldBonus * (1 + skills.batteryCore * 0.08 + overclockRank * 0.06) : 0,
+    (ar.shieldBonus > 0 ? ar.shieldBonus * (1 + armorRank * 0.08) * (1 + skills.batteryCore * 0.08 + overclockRank * 0.06) : 0) +
+      cosmeticMasteryRanks * 6,
   );
   const mass = Number((primaryCh.baseMass + hybridMass + ar.massBonus + extraWeaponMass).toFixed(2));
   const maxSpeed = Number(
     (
       dr.maxSpeed *
+      (1 + driveRank * 0.05) *
       1.18 *
       primaryCh.speedMult *
       hybridSpeedMult *
@@ -2037,6 +2411,7 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
   const accel = Number(
     (
       dr.accel *
+      (1 + driveRank * 0.06) *
       1.22 *
       primaryCh.speedMult *
       ar.speedMult *
@@ -2044,12 +2419,24 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
       (1 + overclockRank * 0.03)
     ).toFixed(2),
   );
-  const turnRate = Number((dr.turnRate * 1.1 * wl.turnMult * (1 + skills.gyroStabilizer * 0.04)).toFixed(2));
+  const turnRate = Number(
+    (dr.turnRate * (1 + driveRank * 0.035) * 1.1 * wl.turnMult * (1 + skills.gyroStabilizer * 0.04)).toFixed(2),
+  );
   const weaponDamage = primaryWp
-    ? Number(((primaryWp.damage + extraWeaponDamage) * (1 + skills.weaponTorque * 0.075)).toFixed(1))
+    ? Number(
+        (
+          (primaryWp.damage * (1 + weaponRank * 0.09) + extraWeaponDamage) *
+          (1 + skills.weaponTorque * 0.075)
+        ).toFixed(1),
+      )
     : 0;
   const weaponImpulse = primaryWp
-    ? Number(((primaryWp.impulse + extraWeaponImpulse) * (1 + skills.weaponTorque * 0.05)).toFixed(2))
+    ? Number(
+        (
+          (primaryWp.impulse * (1 + weaponRank * 0.04) + extraWeaponImpulse) *
+          (1 + skills.weaponTorque * 0.05)
+        ).toFixed(2),
+      )
     : 0;
   const weaponLift = Number(combinedLift.toFixed(2));
   const weaponRange = Number(combinedRange.toFixed(2));
@@ -2059,26 +2446,33 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
           0.22,
           primaryWp.cooldown *
             (1 + extraWeapons.length * 0.09) *
-            (1 - skills.weaponTorque * 0.035 - coolingRank * 0.045),
+            (1 - skills.weaponTorque * 0.035 - coolingRank * 0.045 - weaponRank * 0.03),
         ).toFixed(2),
       )
     : 0.5;
-  const frontDeflect = Math.min(0.72, primaryCh.frontDeflect + hybridDeflect + skills.kineticArmor * 0.035);
+  const frontDeflect = Math.min(
+    0.72,
+    primaryCh.frontDeflect + chassisRank * 0.02 + hybridDeflect + skills.kineticArmor * 0.035,
+  );
   const knockbackResist = Number(
     (
       dr.knockbackResist *
+      (1 + driveRank * 0.04) *
       wl.knockbackResistMult *
       (1 + extraStyles.length * 0.06 + skills.gyroStabilizer * 0.08)
     ).toFixed(2),
   );
   const driveEnergyBonus = config.drive === 'crawler_nuclear' ? 18 : config.drive === 'maglev' ? 10 : 0;
-  const maxEnergy = Math.round(100 + driveEnergyBonus + skills.batteryCore * 14 + overclockRank * 6);
+  const maxEnergy = Math.round(
+    100 + driveEnergyBonus + skills.batteryCore * 14 + overclockRank * 6 + cosmeticMasteryRanks * 3,
+  );
   const energyRegen = Number(
     (
       14 +
       (config.drive === 'crawler_nuclear' ? 3.2 : 0) +
       skills.batteryCore * 2.4 +
-      coolingRank * 1.1
+      coolingRank * 1.1 +
+      cosmeticMasteryRanks * 0.35
     ).toFixed(1),
   );
 
@@ -2099,7 +2493,12 @@ export function computeBotStats(config: BotConfig, skills: SkillTree): BotComput
     skills.batteryCore +
     coolingRank +
     naniteRank +
-    overclockRank;
+    overclockRank +
+    chassisRank +
+    armorRank +
+    weaponRank +
+    driveRank +
+    cosmeticMasteryRanks;
 
   const fusionSynergy = config.fusionParents && config.fusionParents.length === 2 ? 1.08 : 1.0;
   const finalMaxHp = Math.round(maxHp * fusionSynergy);
