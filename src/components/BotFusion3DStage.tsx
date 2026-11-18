@@ -44,25 +44,36 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
   const mountRef = useRef<HTMLDivElement>(null);
   const [animPhaseLabel, setAnimPhaseLabel] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'side_by_side' | 'merged_focus'>('side_by_side');
+  const [wireframeOverlay, setWireframeOverlay] = useState(false);
+  const [dofFocusEnabled, setDofFocusEnabled] = useState(true);
 
   const botARef = useRef(botA);
   const botBRef = useRef(botB);
   const fusedBotRef = useRef(fusedBot);
   const viewModeRef = useRef(viewMode);
+  const wireframeRef = useRef(wireframeOverlay);
+  const dofFocusRef = useRef(dofFocusEnabled);
   const onCompleteRef = useRef(onFusionAnimationComplete);
 
   botARef.current = botA;
   botBRef.current = botB;
   fusedBotRef.current = fusedBot;
   viewModeRef.current = viewMode;
+  wireframeRef.current = wireframeOverlay;
+  dofFocusRef.current = dofFocusEnabled;
   onCompleteRef.current = onFusionAnimationComplete;
 
   const rebuildBotsRef = useRef<(() => void) | null>(null);
+  const applyWireframeRef = useRef<((wf: boolean) => void) | null>(null);
   const triggerMergeAnimRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     rebuildBotsRef.current?.();
   }, [botA, botB, fusedBot]);
+
+  useEffect(() => {
+    applyWireframeRef.current?.(wireframeOverlay);
+  }, [wireframeOverlay]);
 
   useEffect(() => {
     if (fusionTriggerSignal > 0) {
@@ -81,7 +92,7 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.18;
+    renderer.toneMappingExposure = 1.22;
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 1.75));
 
     const width = container.clientWidth || 720;
@@ -129,7 +140,7 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
     rimRight.position.set(4.2, 2.6, -2.0);
     scene.add(rimRight);
 
-    const fusionCoreLight = new THREE.PointLight(0xe879f9, 1.5, 16);
+    const fusionCoreLight = new THREE.PointLight(0xe879f9, 1.8, 16);
     fusionCoreLight.position.set(0, 1.4, 0.2);
     scene.add(fusionCoreLight);
 
@@ -156,7 +167,11 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
     ringGeo.rotateX(Math.PI / 2);
     const centerRingGeo = new THREE.TorusGeometry(1.66, 0.045, 10, 56);
     centerRingGeo.rotateX(Math.PI / 2);
-    geometries.push(pedGeo, pedCenterGeo, ringGeo, centerRingGeo);
+
+    // Volumetric Light Bake Cones over the 3 pedestals to emphasize neon glows
+    const volSideGeo = new THREE.CylinderGeometry(0.55, 1.42, 3.6, 24, 1, true);
+    const volCenterGeo = new THREE.CylinderGeometry(0.68, 1.72, 4.2, 28, 1, true);
+    geometries.push(pedGeo, pedCenterGeo, ringGeo, centerRingGeo, volSideGeo, volCenterGeo);
 
     const pedBaseMat = new THREE.MeshStandardMaterial({
       color: 0x171e2b,
@@ -166,26 +181,53 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
     const ringMatA = new THREE.MeshStandardMaterial({
       color: 0xf59e0b,
       emissive: 0xf59e0b,
-      emissiveIntensity: 1.1,
+      emissiveIntensity: 1.25,
     });
     const ringMatB = new THREE.MeshStandardMaterial({
       color: 0x38bdf8,
       emissive: 0x38bdf8,
-      emissiveIntensity: 1.1,
+      emissiveIntensity: 1.25,
     });
     const ringMatCenter = new THREE.MeshStandardMaterial({
       color: 0xe879f9,
       emissive: 0xe879f9,
-      emissiveIntensity: 1.35,
+      emissiveIntensity: 1.55,
     });
-    materials.push(pedBaseMat, ringMatA, ringMatB, ringMatCenter);
+
+    const volMatA = new THREE.MeshBasicMaterial({
+      color: 0xf59e0b,
+      transparent: true,
+      opacity: 0.09,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const volMatB = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.09,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const volMatCenter = new THREE.MeshBasicMaterial({
+      color: 0xe879f9,
+      transparent: true,
+      opacity: 0.16,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    materials.push(pedBaseMat, ringMatA, ringMatB, ringMatCenter, volMatA, volMatB, volMatCenter);
 
     const pedLeft = new THREE.Group();
     pedLeft.position.set(-2.95, -0.09, 0.15);
     const pedLeftMesh = new THREE.Mesh(pedGeo, pedBaseMat);
     const pedLeftRing = new THREE.Mesh(ringGeo, ringMatA);
     pedLeftRing.position.y = 0.09;
-    pedLeft.add(pedLeftMesh, pedLeftRing);
+    const volConeLeft = new THREE.Mesh(volSideGeo, volMatA);
+    volConeLeft.position.y = 1.85;
+    pedLeft.add(pedLeftMesh, pedLeftRing, volConeLeft);
     scene.add(pedLeft);
 
     const pedRight = new THREE.Group();
@@ -193,7 +235,9 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
     const pedRightMesh = new THREE.Mesh(pedGeo, pedBaseMat);
     const pedRightRing = new THREE.Mesh(ringGeo, ringMatB);
     pedRightRing.position.y = 0.09;
-    pedRight.add(pedRightMesh, pedRightRing);
+    const volConeRight = new THREE.Mesh(volSideGeo, volMatB);
+    volConeRight.position.y = 1.85;
+    pedRight.add(pedRightMesh, pedRightRing, volConeRight);
     scene.add(pedRight);
 
     const pedCenter = new THREE.Group();
@@ -201,7 +245,9 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
     const pedCenterMesh = new THREE.Mesh(pedCenterGeo, pedBaseMat);
     const pedCenterRing = new THREE.Mesh(centerRingGeo, ringMatCenter);
     pedCenterRing.position.y = 0.11;
-    pedCenter.add(pedCenterMesh, pedCenterRing);
+    const volConeCenter = new THREE.Mesh(volCenterGeo, volMatCenter);
+    volConeCenter.position.y = 2.15;
+    pedCenter.add(pedCenterMesh, pedCenterRing, volConeCenter);
     scene.add(pedCenter);
 
     // Energy Conduit Rings & Core Flash Sphere for the 3D Fusion Animation
@@ -252,6 +298,31 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
     let scaleA = 1;
     let scaleB = 1;
     let scaleFused = 1;
+
+    const applyWireframeToRig = (rig: BuiltBotRig | null, wf: boolean) => {
+      if (!rig) return;
+      rig.root.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.material) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const m of mats) {
+          if ('wireframe' in m) {
+            // Skip flat shadow plane
+            if (m.transparent && (m as THREE.MeshBasicMaterial).opacity < 0.45 && !(m as THREE.MeshStandardMaterial).emissive) {
+              continue;
+            }
+            (m as THREE.MeshStandardMaterial).wireframe = wf;
+          }
+        }
+      });
+    };
+
+    const setAllWireframes = (wf: boolean) => {
+      applyWireframeToRig(rigA, wf);
+      applyWireframeToRig(rigB, wf);
+      applyWireframeToRig(rigFused, wf);
+    };
+    applyWireframeRef.current = setAllWireframes;
 
     const rebuildAllBots = () => {
       if (rigA) {
@@ -304,6 +375,10 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
       rigFused.root.scale.setScalar(scaleFused);
       rigFused.root.position.set(0, 0.02, -0.35);
       scene.add(rigFused.root);
+
+      if (wireframeRef.current) {
+        setAllWireframes(true);
+      }
     };
 
     rebuildBotsRef.current = rebuildAllBots;
@@ -371,6 +446,13 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
       const dt = Math.min(clock.getDelta(), 0.05);
       const elapsed = clock.elapsedTime;
 
+      // Depth-of-field camera focal isolation on central hybrid pedestal
+      const targetFov = dofFocusRef.current ? (viewModeRef.current === 'merged_focus' ? 36 : 42) : 48;
+      if (Math.abs(camera.fov - targetFov) > 0.05) {
+        camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 6);
+        camera.updateProjectionMatrix();
+      }
+
       if (mergeAnimActive && rigA && rigB && rigFused) {
         mergeAnimElapsed += dt;
         const p = Math.min(1, mergeAnimElapsed / MERGE_DURATION);
@@ -393,6 +475,9 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
           rigB.root.scale.setScalar(scaleB);
 
           fusionCoreLight.intensity = 2.0 + ease * 6.0;
+          volMatA.opacity = 0.12 + ease * 0.18;
+          volMatB.opacity = 0.12 + ease * 0.18;
+          volMatCenter.opacity = 0.18 + ease * 0.22;
           shockRingMat.opacity = ease * 0.75;
           shockRingMesh.scale.setScalar(0.8 + Math.sin(elapsed * 18) * 0.15);
           flashSphereMat.opacity = ease * 0.25;
@@ -446,6 +531,9 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
           sparkInst.instanceMatrix.needsUpdate = true;
 
           fusionCoreLight.intensity = 8 + easeIn * 18;
+          volMatA.opacity = 0.25 * (1 - easeIn);
+          volMatB.opacity = 0.25 * (1 - easeIn);
+          volMatCenter.opacity = 0.32 + easeIn * 0.35;
           shockRingMat.opacity = 0.9;
           shockRingMesh.scale.setScalar(0.6 + k * 2.4);
           flashSphereMat.opacity = 0.3 + easeIn * 0.7;
@@ -494,6 +582,9 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
           sparkInst.instanceMatrix.needsUpdate = true;
 
           fusionCoreLight.intensity = 24 * (1 - easeOut) + 2.5;
+          volMatA.opacity = 0.08 * easeOut;
+          volMatB.opacity = 0.08 * easeOut;
+          volMatCenter.opacity = 0.48 * (1 - easeOut) + 0.18;
           shockRingMat.opacity = Math.max(0, (1 - k) * 0.95);
           shockRingMesh.scale.setScalar(1.2 + easeOut * 4.2);
           flashSphereMat.opacity = Math.max(0, (1 - k * 1.65) * 0.95);
@@ -516,6 +607,9 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
         const showDonors = viewModeRef.current === 'side_by_side';
         pedLeft.visible = showDonors;
         pedRight.visible = showDonors;
+        volMatA.opacity = showDonors ? 0.08 + Math.sin(elapsed * 2.2) * 0.02 : 0;
+        volMatB.opacity = showDonors ? 0.08 + Math.cos(elapsed * 2.2) * 0.02 : 0;
+        volMatCenter.opacity = 0.16 + Math.sin(elapsed * 3.1) * 0.04;
 
         if (rigA) {
           rigA.root.visible = showDonors;
@@ -570,6 +664,19 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
     <div className="relative w-full h-[270px] sm:h-[320px] rounded-2xl border border-fuchsia-500/45 bg-[#0B0F17] overflow-hidden shadow-2xl">
       <div ref={mountRef} className="h-full w-full cursor-grab active:cursor-grabbing" />
 
+      {/* Pedestal Camera Depth-of-Field (DoF) Optical Blur Vignette */}
+      {dofFocusEnabled && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 transition-opacity duration-300"
+          style={{
+            boxShadow: 'inset 0 0 65px 22px rgba(7, 10, 16, 0.82)',
+            background:
+              'radial-gradient(circle at 50% 48%, rgba(11,15,23,0) 36%, rgba(11,15,23,0.42) 72%, rgba(8,10,16,0.78) 100%)',
+          }}
+        />
+      )}
+
       {/* Top 3D Stage Labels for Donor A, Fused Hybrid, and Donor B */}
       <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2.5 sm:p-3">
         {viewMode === 'side_by_side' ? (
@@ -587,7 +694,7 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
 
         <div className="rounded-xl border border-fuchsia-400/70 bg-[#181024]/92 px-3 py-1 text-center shadow-lg">
           <div className="text-[9px] font-mono uppercase tracking-wider text-fuchsia-300 font-extrabold">
-            {animPhaseLabel || 'CENTER · MERGED HYBRID 3D WARBOT'}
+            {animPhaseLabel || (wireframeOverlay ? 'WIREFRAME CAD MESH INSPECTION' : 'CENTER · MERGED HYBRID 3D WARBOT')}
           </div>
           <div className="text-xs sm:text-sm font-extrabold text-white truncate max-w-[180px] sm:max-w-[230px]">
             {fusedBot.name}
@@ -610,7 +717,7 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
 
       {/* Bottom Interactive Controls on the 3D Fusion Stage */}
       <div className="pointer-events-auto absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-between gap-2 bg-gradient-to-t from-[#090C12]/95 via-[#090C12]/70 to-transparent px-3 py-2">
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => setViewMode('side_by_side')}
@@ -633,10 +740,34 @@ export const BotFusion3DStage: React.FC<BotFusion3DStageProps> = ({
           >
             Solo Merged Bot
           </button>
+          <button
+            type="button"
+            onClick={() => setWireframeOverlay((v) => !v)}
+            title="Toggle wireframe mesh overlay during merging & inspection"
+            className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${
+              wireframeOverlay
+                ? 'border-cyan-400 bg-cyan-500/25 text-cyan-200'
+                : 'border-slate-700 bg-[#12161E]/90 text-slate-300 hover:text-white'
+            }`}
+          >
+            {wireframeOverlay ? 'Wireframe: ON' : 'Wireframe'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setDofFocusEnabled((v) => !v)}
+            title="Toggle pedestal Depth-of-Field lens focus on central hybrid warbot"
+            className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${
+              dofFocusEnabled
+                ? 'border-purple-400 bg-purple-500/20 text-purple-200'
+                : 'border-slate-700 bg-[#12161E]/90 text-slate-300 hover:text-white'
+            }`}
+          >
+            {dofFocusEnabled ? 'DoF Focus: ON' : 'DoF Focus'}
+          </button>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="hidden sm:inline text-[10px] font-mono text-slate-400">
+          <span className="hidden lg:inline text-[10px] font-mono text-slate-400">
             Drag to orbit 3D · Scroll to zoom
           </span>
           <button

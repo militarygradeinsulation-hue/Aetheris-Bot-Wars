@@ -1,24 +1,31 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
+  Activity,
   BookmarkPlus,
   CheckSquare,
   ChevronLeft,
   ChevronRight,
   CircleDot,
+  Download,
   Gauge,
+  GripVertical,
   Lock,
   MapPin,
   Palette,
   RotateCcw,
+  Search,
   Shield,
   Shuffle,
   Sparkles,
   Square,
   Star,
   Swords,
+  Tag,
   Trash2,
+  Upload,
   Wrench,
   XCircle,
+  Zap,
 } from 'lucide-react';
 import {
   ACCESSORY_CATALOG,
@@ -30,28 +37,35 @@ import {
   type BotConfig,
   CHASSIS_CATALOG,
   type ChassisId,
+  computeBotMassAndCog,
   computeBotStats,
   DRIVE_CATALOG,
   type DriveId,
   type DeviceLayoutMode,
+  type FavoriteBuildEntry,
   type FavoritesList,
   FINISH_CATALOG,
   type FinishStyleId,
   generateRandomBotName,
+  getActiveWeaponSynergies,
   getBotChassisStyles,
   getBotWeaponPlacements,
   getBotWeapons,
   getDefaultWeaponPlacement,
+  getPartCompatibilityTag,
   getPartPrice,
   getPartUnlockLevel,
   getPartUpgradeCost,
   getPartUpgradeLevel,
+  getPartWeightCategory,
   isPartOwned,
   isTraditionalArena,
   isTraditionalWeapon,
   MAX_PART_UPGRADE_LEVEL,
   PAINT_PRESETS,
   type PartCategory,
+  type PartCompatibilityTag,
+  type PartWeightFilter,
   PATTERN_CATALOG,
   type PatternId,
   type PlayerProfile,
@@ -134,6 +148,23 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
   const [notice, setNotice] = useState<string | null>(null);
   const [placementSlot, setPlacementSlot] = useState(0);
 
+  // Interactive Stat Modifier Inspector (Mass & Center of Gravity)
+  const [showInspector, setShowInspector] = useState(false);
+  // Searchable Part Library & Weight / Compatibility Tag Filters
+  const [partSearch, setPartSearch] = useState('');
+  const [weightFilter, setWeightFilter] = useState<PartWeightFilter>('all');
+  const [compatFilter, setCompatFilter] = useState<PartCompatibilityTag>('all');
+  // Dynamic Weapon Synergy Hover State
+  const [hoveredWeaponId, setHoveredWeaponId] = useState<WeaponId | null>(null);
+  // Drag-and-Drop Weapon Assembly State
+  const [draggedWeaponId, setDraggedWeaponId] = useState<WeaponId | null>(null);
+  const [draggedFromSlot, setDraggedFromSlot] = useState<number | null>(null);
+  const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
+  // Saved Build Profile Tagging & Search State
+  const [buildSearchTag, setBuildSearchTag] = useState('');
+  const [newTagByBuildId, setNewTagByBuildId] = useState<Record<string, string>>({});
+  const fileImportRef = useRef<HTMLInputElement | null>(null);
+
   const favorites: FavoritesList = profile.favorites ?? {
     weapons: ['laser', 'vspinner', 'railgun'],
     chassis: ['wedge', 'brawler'],
@@ -172,19 +203,32 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
     });
   };
 
+  const inferDefaultTagsForConfig = (cfg: BotConfig): string[] => {
+    const weps = getBotWeapons(cfg);
+    const st = computeBotStats(cfg, skills, profile.partUpgrades);
+    const autoTags: string[] = [
+      st.weightClass.toLowerCase(),
+      cfg.chassis,
+      ...weps.map((w) => getPartCompatibilityTag('weapon', w)),
+    ];
+    if (cfg.fusionParents && cfg.fusionParents.length === 2) autoTags.push('hybrid');
+    return Array.from(new Set(autoTags)).slice(0, 5);
+  };
+
   const saveCurrentBuildToFavorites = () => {
-    const newBuild = {
+    const newBuild: FavoriteBuildEntry = {
       id: `fav_build_${Date.now()}`,
       label: `${config.name || 'Custom Bot'} (${getBotWeapons(config)
         .map((w) => WEAPON_CATALOG[w].label.split(' ')[0])
         .join('+') || 'Unarmed'})`,
       config: JSON.parse(JSON.stringify(config)) as BotConfig,
       savedAt: new Date().toISOString(),
+      tags: inferDefaultTagsForConfig(config),
     };
     updateFavs({
-      builds: [newBuild, ...(favorites.builds || []).slice(0, 14)],
+      builds: [newBuild, ...(favorites.builds || []).slice(0, 24)],
     });
-    setNotice(`Saved "${config.name}" to your Favorites List!`);
+    setNotice(`Saved "${config.name}" to your Saved Build Profiles!`);
     window.setTimeout(() => setNotice(null), 2400);
   };
 
@@ -192,6 +236,147 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
     updateFavs({
       builds: (favorites.builds || []).filter((b) => b.id !== id),
     });
+  };
+
+  const addTagToBuild = (buildId: string, rawTag: string) => {
+    const clean = rawTag.trim().toLowerCase().replace(/^#+/, '').slice(0, 16);
+    if (!clean) return;
+    const nextBuilds = (favorites.builds || []).map((b) => {
+      if (b.id !== buildId) return b;
+      const curTags = b.tags ?? inferDefaultTagsForConfig(b.config);
+      if (curTags.includes(clean)) return b;
+      return { ...b, tags: [...curTags, clean] };
+    });
+    updateFavs({ builds: nextBuilds });
+    setNewTagByBuildId((prev) => ({ ...prev, [buildId]: '' }));
+  };
+
+  const removeTagFromBuild = (buildId: string, tagToRemove: string) => {
+    const nextBuilds = (favorites.builds || []).map((b) => {
+      if (b.id !== buildId) return b;
+      return { ...b, tags: (b.tags ?? []).filter((t) => t !== tagToRemove) };
+    });
+    updateFavs({ builds: nextBuilds });
+  };
+
+  const exportBuildProfileJson = (entry?: FavoriteBuildEntry) => {
+    const payload = entry
+      ? {
+          schema: 'aetheris_warbot_build_v1',
+          exportedAt: new Date().toISOString(),
+          builds: [entry],
+        }
+      : {
+          schema: 'aetheris_warbot_build_v1',
+          exportedAt: new Date().toISOString(),
+          activeBot: config,
+          builds:
+            (favorites.builds || []).length > 0
+              ? favorites.builds
+              : [
+                  {
+                    id: `fav_build_${Date.now()}`,
+                    label: config.name || 'Custom Warbot',
+                    config,
+                    savedAt: new Date().toISOString(),
+                    tags: inferDefaultTagsForConfig(config),
+                  },
+                ],
+        };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeName = (entry?.config.name || config.name || 'warbot_build')
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '_');
+    a.href = url;
+    a.download = `${safeName}_profile.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setNotice(`Exported "${entry?.label || config.name}" JSON build profile!`);
+    window.setTimeout(() => setNotice(null), 2500);
+  };
+
+  const handleImportBuildJsonFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || '{}'));
+        const importedEntries: FavoriteBuildEntry[] = [];
+        const sanitizeBotCfg = (rawCfg: Partial<BotConfig>): BotConfig | null => {
+          if (!rawCfg || typeof rawCfg !== 'object') return null;
+          const ch: ChassisId = CHASSIS_CATALOG[rawCfg.chassis as ChassisId] ? (rawCfg.chassis as ChassisId) : 'wedge';
+          const ar: ArmorId = ARMOR_CATALOG[rawCfg.armor as ArmorId] ? (rawCfg.armor as ArmorId) : 'titanium';
+          const dr: DriveId = DRIVE_CATALOG[rawCfg.drive as DriveId] ? (rawCfg.drive as DriveId) : 'omni';
+          const wl: WheelLayoutId = WHEEL_LAYOUT_CATALOG[rawCfg.wheelLayout as WheelLayoutId]
+            ? (rawCfg.wheelLayout as WheelLayoutId)
+            : '4wd_wide';
+          const weps = Array.isArray(rawCfg.weapons)
+            ? rawCfg.weapons.filter((w): w is WeaponId => Boolean(WEAPON_CATALOG[w as WeaponId])).slice(0, 3)
+            : WEAPON_CATALOG[rawCfg.weapon as WeaponId]
+              ? [rawCfg.weapon as WeaponId]
+              : ['vspinner'];
+          return {
+            ...config,
+            ...rawCfg,
+            name: String(rawCfg.name || 'Imported Warbot').slice(0, 18),
+            chassis: ch,
+            armor: ar,
+            drive: dr,
+            wheelLayout: wl,
+            weapon: weps[0] ?? 'vspinner',
+            weapons: weps,
+          };
+        };
+
+        if (Array.isArray(parsed.builds)) {
+          for (const b of parsed.builds) {
+            const validCfg = sanitizeBotCfg(b?.config ?? b);
+            if (validCfg) {
+              importedEntries.push({
+                id: `imported_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                label: String(b.label || validCfg.name),
+                config: validCfg,
+                savedAt: new Date().toISOString(),
+                tags: Array.isArray(b.tags)
+                  ? b.tags.map((t: unknown) => String(t).toLowerCase())
+                  : inferDefaultTagsForConfig(validCfg),
+              });
+            }
+          }
+        } else {
+          const single = sanitizeBotCfg(parsed.config ?? parsed);
+          if (single) {
+            importedEntries.push({
+              id: `imported_${Date.now()}`,
+              label: single.name,
+              config: single,
+              savedAt: new Date().toISOString(),
+              tags: inferDefaultTagsForConfig(single),
+            });
+          }
+        }
+
+        if (importedEntries.length > 0) {
+          updateFavs({
+            builds: [...importedEntries, ...(favorites.builds || [])].slice(0, 30),
+          });
+          onChange(importedEntries[0].config);
+          setNotice(`Imported ${importedEntries.length} warbot build profile(s) & equipped "${importedEntries[0].config.name}"!`);
+        } else {
+          setNotice('Invalid JSON build file format.');
+        }
+      } catch {
+        setNotice('Could not parse JSON build profile file.');
+      }
+      window.setTimeout(() => setNotice(null), 3000);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const coinBalance = profile.coins ?? profile.scrap ?? 0;
@@ -280,10 +465,49 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
   };
 
   const stats = computeBotStats(config, skills, profile.partUpgrades);
+  const massCog = computeBotMassAndCog(config, skills, profile.partUpgrades);
   const activeWeapons = getBotWeapons(config);
   const activePlacements = getBotWeaponPlacements(config);
   const activeStyles = getBotChassisStyles(config);
+  const activeSynergies = getActiveWeaponSynergies(activeWeapons, hoveredWeaponId ?? undefined);
   const clampedPlacementSlot = Math.min(placementSlot, Math.max(0, activeWeapons.length - 1));
+
+  // Assign or swap a specific weapon slot via Drag-and-Drop
+  const assignWeaponToSlot = (wId: WeaponId, targetSlot: number, sourceSlot: number | null = null) => {
+    if (!ensureOwned('weapon', wId, WEAPON_CATALOG[wId].label)) return;
+    const nextWeps = [...activeWeapons];
+    const nextPlaces = [...activePlacements];
+
+    if (sourceSlot !== null && sourceSlot >= 0 && sourceSlot < nextWeps.length && targetSlot < nextWeps.length) {
+      // Swap two mounted weapon slots
+      const tmpW = nextWeps[targetSlot];
+      const tmpP = nextPlaces[targetSlot] ?? getDefaultWeaponPlacement(tmpW, targetSlot);
+      nextWeps[targetSlot] = nextWeps[sourceSlot];
+      nextPlaces[targetSlot] = nextPlaces[sourceSlot] ?? getDefaultWeaponPlacement(nextWeps[sourceSlot], targetSlot);
+      nextWeps[sourceSlot] = tmpW;
+      nextPlaces[sourceSlot] = tmpP;
+    } else {
+      // Remove existing duplicate if already mounted in another slot
+      const existingIdx = nextWeps.indexOf(wId);
+      if (existingIdx >= 0 && existingIdx !== targetSlot) {
+        nextWeps.splice(existingIdx, 1);
+        nextPlaces.splice(existingIdx, 1);
+      }
+      const clampedTarget = Math.min(targetSlot, nextWeps.length);
+      nextWeps[clampedTarget] = wId;
+      nextPlaces[clampedTarget] = getDefaultWeaponPlacement(wId, clampedTarget);
+    }
+
+    const finalWeps = nextWeps.slice(0, 3);
+    const finalPlaces = nextPlaces.slice(0, finalWeps.length);
+    setPlacementSlot(Math.min(targetSlot, Math.max(0, finalWeps.length - 1)));
+    onChange({
+      ...config,
+      weapon: finalWeps[0] ?? config.weapon,
+      weapons: finalWeps,
+      weaponPlacements: finalPlaces,
+    });
+  };
 
   // Allow clicking any mounted weapon off (even down to 0 weapons) so you never have to scroll back
   const toggleWeapon = (wId: WeaponId) => {
@@ -438,10 +662,41 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
     );
   }
 
+  const searchQuery = partSearch.trim().toLowerCase();
+  const matchesPartFilter = (
+    cat: 'weapon' | 'chassis' | 'armor' | 'drive',
+    id: string,
+    label: string,
+    subtitle: string,
+  ): boolean => {
+    const wCat = getPartWeightCategory(cat, id);
+    const cTag = getPartCompatibilityTag(cat, id);
+    if (weightFilter !== 'All' && wCat !== weightFilter) return false;
+    if (compatFilter !== 'All' && cTag !== compatFilter) return false;
+    if (searchQuery) {
+      const hay = `${label} ${subtitle} ${wCat} ${cTag}`.toLowerCase();
+      if (!hay.includes(searchQuery)) return false;
+    }
+    return true;
+  };
+
   const displayedWeaponIds = (Object.keys(WEAPON_CATALOG) as WeaponId[]).filter(
     (wId) =>
       (onlyFavWeapons ? favorites.weapons.includes(wId) : true) &&
-      (traditionalMode ? isTraditionalWeapon(wId) : true),
+      (traditionalMode ? isTraditionalWeapon(wId) : true) &&
+      matchesPartFilter('weapon', wId, WEAPON_CATALOG[wId].label, WEAPON_CATALOG[wId].subtitle),
+  );
+
+  const displayedChassisIds = (Object.keys(CHASSIS_CATALOG) as ChassisId[]).filter((cId) =>
+    matchesPartFilter('chassis', cId, CHASSIS_CATALOG[cId].label, CHASSIS_CATALOG[cId].subtitle),
+  );
+
+  const displayedArmorIds = (Object.keys(ARMOR_CATALOG) as ArmorId[]).filter((aId) =>
+    matchesPartFilter('armor', aId, ARMOR_CATALOG[aId].label, ARMOR_CATALOG[aId].subtitle),
+  );
+
+  const displayedDriveIds = (Object.keys(DRIVE_CATALOG) as DriveId[]).filter((dId) =>
+    matchesPartFilter('drive', dId, DRIVE_CATALOG[dId].label, DRIVE_CATALOG[dId].subtitle),
   );
 
   const isForcedMobile = deviceLayoutMode === 'mobile';
@@ -608,7 +863,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
           </div>
         </div>
 
-        {/* Row 3: Live Bot Performance Telemetry */}
+        {/* Row 3: Live Bot Performance Telemetry + Mass/CoG Inspector Toggle */}
         <div className="mt-2 flex flex-wrap items-center justify-between gap-1.5 rounded-xl border border-slate-800 bg-[#0D1014] px-2.5 py-1.5 text-[11px] text-slate-200 font-mono-tabular">
           <span className="font-sans font-bold text-amber-300">
             {stats.weightClass} ({stats.bodyScale}×)
@@ -619,7 +874,60 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
           <span>DMG {stats.weaponDamage}</span>
           <span>SPD {stats.maxSpeed}</span>
           <span className="text-amber-400 font-extrabold">PWR {stats.powerScore}</span>
+          <button
+            type="button"
+            onClick={() => setShowInspector((v) => !v)}
+            title="Toggle Interactive Stat Modifier Inspector (Mass, Center of Gravity & Recoil Torque)"
+            className={`flex items-center gap-1 rounded-lg border px-1.5 py-0.5 font-sans text-[10px] font-extrabold transition cursor-pointer ${
+              showInspector
+                ? 'border-sky-400 bg-sky-500/20 text-sky-200'
+                : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-sky-500/50 hover:text-sky-300'
+            }`}
+          >
+            <Activity className="h-3 w-3" />
+            <span>{showInspector ? 'Inspector: ON' : 'Mass & CoG'}</span>
+          </button>
         </div>
+
+        {/* Interactive Mass & Center-of-Gravity Inspector Drawer */}
+        {showInspector && (
+          <div className="mt-1.5 rounded-xl border border-sky-500/40 bg-[#0A1018]/95 p-2.5 text-[11px] text-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+              <span className="font-extrabold uppercase tracking-wider text-sky-300">
+                Physics Mass & Center of Gravity Inspector
+              </span>
+              <span className="font-mono-tabular font-bold text-amber-300">
+                Total Mass: {massCog.totalMassKg} kg
+              </span>
+            </div>
+            <div className="mt-1.5 grid grid-cols-2 sm:grid-cols-4 gap-1.5 font-mono-tabular text-[10px]">
+              <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-2 py-1">
+                <div className="text-slate-400">Hull / Armor</div>
+                <div className="font-bold text-white">
+                  {massCog.chassisMassKg}kg / +{massCog.armorMassKg}kg
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-2 py-1">
+                <div className="text-slate-400">Weapons / Drive</div>
+                <div className="font-bold text-white">
+                  +{massCog.weaponsMassKg}kg / +{massCog.driveMassKg}kg
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-2 py-1">
+                <div className="text-slate-400">CoG Offset (F/V)</div>
+                <div className="font-bold text-sky-300">
+                  {massCog.cogForwardMm >= 0 ? `+${massCog.cogForwardMm}` : massCog.cogForwardMm}mm · {massCog.cogVerticalMm}mm
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-2 py-1">
+                <div className="text-slate-400">Stability / Recoil</div>
+                <div className="font-bold text-emerald-300">
+                  {massCog.stabilityScore}% · {massCog.recoilTorqueNm} N·m
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Row 4: Unified Customization Category Tabs */}
         <div className="mt-2 grid grid-cols-5 gap-1">
@@ -690,32 +998,176 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
               </div>
             </div>
 
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-              {activeWeapons.length === 0 ? (
-                <span className="text-[11px] font-medium text-amber-300">
-                  All weapons turned OFF — click any weapon card below to equip Slot #1 [←]
-                </span>
-              ) : (
-                activeWeapons.map((wId, idx) => {
-                  const arrowSym = idx === 0 ? '←' : idx === 1 ? '↑' : '→';
+            {/* Drag-and-Drop 3-Slot Weapon Bay */}
+            <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+              {[0, 1, 2].map((slotIndex) => {
+                const slotWeaponId = activeWeapons[slotIndex];
+                const arrowSym = slotIndex === 0 ? '←' : slotIndex === 1 ? '↑' : '→';
+                const isDragOver = dragOverSlot === slotIndex;
+                return (
+                  <div
+                    key={slotIndex}
+                    draggable={Boolean(slotWeaponId)}
+                    onDragStart={() => {
+                      if (slotWeaponId) {
+                        setDraggedWeaponId(slotWeaponId);
+                        setDraggedFromSlot(slotIndex);
+                      }
+                    }}
+                    onDragEnd={() => {
+                      setDraggedWeaponId(null);
+                      setDraggedFromSlot(null);
+                      setDragOverSlot(null);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (dragOverSlot !== slotIndex) setDragOverSlot(slotIndex);
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverSlot === slotIndex) setDragOverSlot(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOverSlot(null);
+                      if (draggedWeaponId) {
+                        assignWeaponToSlot(draggedWeaponId, slotIndex, draggedFromSlot);
+                      }
+                      setDraggedWeaponId(null);
+                      setDraggedFromSlot(null);
+                    }}
+                    className={`flex items-center justify-between gap-1 rounded-lg border px-2 py-1 text-[11px] font-bold transition ${
+                      isDragOver
+                        ? 'border-sky-400 bg-sky-500/25 text-sky-100'
+                        : slotWeaponId
+                          ? 'border-amber-500/60 bg-amber-500/15 text-amber-200 cursor-grab active:cursor-grabbing'
+                          : 'border-dashed border-slate-700 bg-slate-900/70 text-slate-500'
+                    }`}
+                    title={
+                      slotWeaponId
+                        ? `Slot #${slotIndex + 1} [${arrowSym}]: ${WEAPON_CATALOG[slotWeaponId].label} (Drag to swap or click × to remove)`
+                        : `Drag any weapon card here to mount in Slot #${slotIndex + 1} [${arrowSym}]`
+                    }
+                  >
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="font-mono-tabular rounded bg-slate-800 px-1 py-0.5 text-[10px] font-extrabold text-amber-300 shrink-0">
+                        #{slotIndex + 1}{arrowSym}
+                      </span>
+                      <span className="truncate">
+                        {slotWeaponId ? WEAPON_CATALOG[slotWeaponId].label : 'Drop Wpn'}
+                      </span>
+                    </div>
+                    {slotWeaponId && (
+                      <button
+                        type="button"
+                        onClick={() => toggleWeapon(slotWeaponId)}
+                        className="text-slate-400 hover:text-rose-300 shrink-0 ml-0.5"
+                        title="Unmount weapon"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Dynamic Weapon Synergy Tooltip Banner */}
+            {activeSynergies.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {activeSynergies.map((syn) => {
+                  const isPreview =
+                    hoveredWeaponId &&
+                    syn.weapons.includes(hoveredWeaponId) &&
+                    !activeWeapons.includes(hoveredWeaponId);
                   return (
-                    <button
-                      key={wId}
-                      type="button"
-                      onClick={() => toggleWeapon(wId)}
-                      title="Click to turn off this weapon"
-                      className="flex items-center gap-1.5 rounded-lg border border-amber-500/60 bg-amber-500/15 px-2 py-0.5 text-[11px] font-bold text-amber-200 hover:bg-amber-500/25 transition whitespace-nowrap"
+                    <div
+                      key={syn.id}
+                      className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1 text-[11px] ${
+                        isPreview
+                          ? 'border-sky-400/60 bg-sky-500/15 text-sky-200'
+                          : 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200'
+                      }`}
                     >
-                      <span className="font-mono-tabular rounded bg-amber-500/30 px-1 py-0.5 text-[10px] font-extrabold text-amber-100">
-                        {arrowSym}
+                      <div className="min-w-0">
+                        <span className="font-extrabold">
+                          {isPreview ? '⚡ Synergy Preview: ' : '⚡ Active Synergy: '}
+                          {syn.title}
+                        </span>
+                        <span className="ml-1.5 text-[10px] opacity-90">{syn.description}</span>
+                      </div>
+                      <span className="shrink-0 rounded bg-slate-950/70 px-1.5 py-0.5 font-mono-tabular text-[10px] font-extrabold text-amber-300">
+                        {syn.bonusTag}
                       </span>
-                      <span>
-                        #{idx + 1} {WEAPON_CATALOG[wId].label} ×
-                      </span>
-                    </button>
+                    </div>
                   );
-                })
-              )}
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Searchable Part Library & Weight / Compatibility Filter Bar */}
+        {(activeTab === 'weapons' ||
+          activeTab === 'chassis' ||
+          activeTab === 'armor' ||
+          activeTab === 'drive') && (
+          <div className="mt-2 rounded-xl border border-slate-800 bg-[#0D1014]/95 p-2 space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <div className="relative flex-1">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={partSearch}
+                  onChange={(e) => setPartSearch(e.target.value)}
+                  placeholder={`Search ${activeTab} by name, perk, or tag...`}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-900/90 pl-8 pr-6 py-1 text-xs text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none"
+                />
+                {partSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setPartSearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-1 text-[10px]">
+              <div className="flex items-center gap-1">
+                <span className="font-bold text-slate-400">Wt:</span>
+                {(['All', 'Light', 'Balanced', 'Heavy'] as const).map((wOpt) => (
+                  <button
+                    key={wOpt}
+                    type="button"
+                    onClick={() => setWeightFilter(wOpt)}
+                    className={`rounded px-1.5 py-0.5 font-bold transition ${
+                      weightFilter === wOpt
+                        ? 'bg-amber-500 text-slate-950'
+                        : 'bg-slate-900 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    {wOpt}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="font-bold text-slate-400">Tag:</span>
+                {(['All', 'Kinetic', 'Thermal', 'Energy', 'Control'] as const).map((cOpt) => (
+                  <button
+                    key={cOpt}
+                    type="button"
+                    onClick={() => setCompatFilter(cOpt)}
+                    className={`rounded px-1.5 py-0.5 font-bold transition ${
+                      compatFilter === cOpt
+                        ? 'bg-sky-400 text-slate-950'
+                        : 'bg-slate-900 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    {cOpt}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -735,9 +1187,24 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                 const active = slotIdx >= 0;
                 const isFav = favorites.weapons.includes(wId);
                 const slotArrow = slotIdx === 0 ? '←' : slotIdx === 1 ? '↑' : '→';
+                const wWeightCat = getPartWeightCategory('weapon', wId);
+                const wCompatTag = getPartCompatibilityTag('weapon', wId);
+                const estMassKg = Math.round(8 + item.damage * 0.52 + item.impulse * 0.35);
                 return (
                   <div
                     key={wId}
+                    draggable
+                    onDragStart={() => {
+                      setDraggedWeaponId(wId);
+                      setDraggedFromSlot(slotIdx >= 0 ? slotIdx : null);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedWeaponId(null);
+                      setDraggedFromSlot(null);
+                      setDragOverSlot(null);
+                    }}
+                    onMouseEnter={() => setHoveredWeaponId(wId)}
+                    onMouseLeave={() => setHoveredWeaponId((prev) => (prev === wId ? null : prev))}
                     onClick={() => toggleWeapon(wId)}
                     role="button"
                     tabIndex={0}
@@ -755,6 +1222,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
+                        <GripVertical className="h-3.5 w-3.5 text-slate-500 shrink-0 cursor-grab" />
                         <button
                           type="button"
                           onClick={(e) => toggleFavWeapon(wId, e)}
@@ -784,13 +1252,24 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                       </div>
                     </div>
 
-                    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-sky-300 font-mono-tabular">
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-sky-300 font-mono-tabular">
                       <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-bold">{item.category}</span>
+                      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
+                        {wWeightCat}
+                      </span>
+                      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                        {wCompatTag}
+                      </span>
                       <span>Range {item.range}m</span>
                       <span>·</span>
-                      <span>Cooldown {item.cooldown}s</span>
+                      <span>CD {item.cooldown}s</span>
                       <span>·</span>
-                      <span>Knockback {item.impulse}</span>
+                      <span>KB {item.impulse}</span>
+                      {showInspector && (
+                        <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-bold text-sky-200">
+                          +{estMassKg}kg · Recoil {Math.round(item.impulse * 14)}N·m
+                        </span>
+                      )}
                     </div>
                     <p className="mt-1.5 text-xs text-slate-300 leading-relaxed">{item.subtitle}</p>
                   </div>
@@ -984,60 +1463,169 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
 
             {activeTab === 'favorites' && (
               <div className="space-y-3">
-                {/* Saved Favorite Builds */}
+                {/* Saved Favorite Builds + JSON Community Export/Import & Keyword Tagging */}
                 <div className="rounded-2xl border border-yellow-500/40 bg-[#151821] p-3.5">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
                     <span className="text-xs font-extrabold uppercase tracking-wider text-yellow-300">
-                      ★ Saved Favorite Bot Builds ({(favorites.builds || []).length})
+                      ★ Saved Bot Builds ({(favorites.builds || []).length})
                     </span>
-                    <button
-                      type="button"
-                      onClick={saveCurrentBuildToFavorites}
-                      className="rounded-lg bg-yellow-400 px-2.5 py-1 text-[11px] font-extrabold text-slate-950 hover:bg-yellow-300 transition"
-                    >
-                      + Save Current Bot
-                    </button>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => exportBuildProfileJson()}
+                        title="Export current warbot configuration & saved build profiles as a shareable JSON file"
+                        className="flex items-center gap-1 rounded-lg border border-sky-500/50 bg-sky-500/15 px-2 py-1 text-[10px] font-extrabold text-sky-200 hover:bg-sky-500/25 transition"
+                      >
+                        <Download className="h-3 w-3" />
+                        <span>Export JSON</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => fileImportRef.current?.click()}
+                        title="Import a shared warbot JSON build file"
+                        className="flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-2 py-1 text-[10px] font-extrabold text-emerald-200 hover:bg-emerald-500/25 transition"
+                      >
+                        <Upload className="h-3 w-3" />
+                        <span>Import JSON</span>
+                      </button>
+                      <input
+                        ref={fileImportRef}
+                        type="file"
+                        accept=".json,application/json"
+                        onChange={handleImportBuildJsonFile}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={saveCurrentBuildToFavorites}
+                        className="rounded-lg bg-yellow-400 px-2.5 py-1 text-[11px] font-extrabold text-slate-950 hover:bg-yellow-300 transition"
+                      >
+                        + Save Current
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Searchable Keyword Tag Filter for Saved Build Profiles */}
+                  {(favorites.builds || []).length > 0 && (
+                    <div className="mt-2 relative">
+                      <Tag className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                      <input
+                        type="text"
+                        value={buildSearchTag}
+                        onChange={(e) => setBuildSearchTag(e.target.value)}
+                        placeholder="Filter saved build profiles by keyword tag or name..."
+                        className="w-full rounded-lg border border-slate-700 bg-[#0D1014] pl-8 pr-6 py-1 text-xs text-white placeholder-slate-500 focus:border-yellow-400 focus:outline-none"
+                      />
+                      {buildSearchTag && (
+                        <button
+                          type="button"
+                          onClick={() => setBuildSearchTag('')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {(favorites.builds || []).length === 0 ? (
                     <p className="mt-2 text-xs text-slate-400">
-                      Click "+ Save Current Bot" anytime to bookmark your favorite custom bot loadouts and return to them with one click.
+                      Click "+ Save Current" or "Import JSON" to manage, tag, and export your hybrid warbot build library.
                     </p>
                   ) : (
                     <div className="mt-2.5 space-y-2">
-                      {(favorites.builds || []).map((b) => (
-                        <div
-                          key={b.id}
-                          className="flex items-center justify-between gap-2 rounded-xl border border-slate-800 bg-[#0D1014] px-3 py-2"
-                        >
-                          <div className="min-w-0">
-                            <div className="text-xs font-bold text-white truncate">{b.label}</div>
-                            <div className="text-[11px] text-slate-400 truncate">
-                              {CHASSIS_CATALOG[b.config.chassis]?.label} · {ARMOR_CATALOG[b.config.armor]?.label}
+                      {(favorites.builds || [])
+                        .filter((b) => {
+                          const q = buildSearchTag.trim().toLowerCase();
+                          if (!q) return true;
+                          const tagStr = (b.tags || []).join(' ').toLowerCase();
+                          return (
+                            b.label.toLowerCase().includes(q) ||
+                            tagStr.includes(q) ||
+                            b.config.chassis.toLowerCase().includes(q)
+                          );
+                        })
+                        .map((b) => (
+                          <div
+                            key={b.id}
+                            className="rounded-xl border border-slate-800 bg-[#0D1014] px-3 py-2 space-y-1.5"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-xs font-bold text-white truncate">{b.label}</div>
+                                <div className="text-[11px] text-slate-400 truncate">
+                                  {CHASSIS_CATALOG[b.config.chassis]?.label} · {ARMOR_CATALOG[b.config.armor]?.label}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => exportBuildProfileJson(b)}
+                                  title="Export this build profile as JSON"
+                                  className="rounded-lg border border-sky-500/40 bg-sky-500/10 p-1 text-sky-300 hover:bg-sky-500/20"
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onChange({ ...b.config });
+                                    setNotice(`Loaded favorite build: ${b.label}`);
+                                    window.setTimeout(() => setNotice(null), 2000);
+                                  }}
+                                  className="rounded-lg bg-amber-500 px-2.5 py-1 text-xs font-bold text-slate-950 hover:bg-amber-400"
+                                >
+                                  Load
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removeFavBuild(b.id)}
+                                  className="rounded-lg border border-slate-700 p-1 text-slate-400 hover:text-rose-400"
+                                  title="Remove build from favorites"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Keyword Tags Row */}
+                            <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                              {(b.tags || []).map((t) => (
+                                <span
+                                  key={t}
+                                  className="inline-flex items-center gap-1 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300"
+                                >
+                                  #{t}
+                                  <button
+                                    type="button"
+                                    onClick={() => removeTagFromBuild(b.id, t)}
+                                    className="text-slate-400 hover:text-rose-300"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                              <form
+                                onSubmit={(e) => {
+                                  e.preventDefault();
+                                  addTagToBuild(b.id, newTagByBuildId[b.id] || '');
+                                }}
+                                className="inline-flex items-center gap-1"
+                              >
+                                <input
+                                  type="text"
+                                  maxLength={16}
+                                  value={newTagByBuildId[b.id] || ''}
+                                  onChange={(e) =>
+                                    setNewTagByBuildId((prev) => ({ ...prev, [b.id]: e.target.value }))
+                                  }
+                                  placeholder="+ tag"
+                                  className="w-16 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+                                />
+                              </form>
                             </div>
                           </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onChange({ ...b.config });
-                                setNotice(`Loaded favorite build: ${b.label}`);
-                                window.setTimeout(() => setNotice(null), 2000);
-                              }}
-                              className="rounded-lg bg-amber-500 px-2.5 py-1 text-xs font-bold text-slate-950 hover:bg-amber-400"
-                            >
-                              Load
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeFavBuild(b.id)}
-                              className="rounded-lg border border-slate-700 p-1 text-slate-400 hover:text-rose-400"
-                              title="Remove build from favorites"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                        ))}
                     </div>
                   )}
                 </div>
@@ -1129,7 +1717,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
             )}
 
             {activeTab === 'chassis' &&
-              (Object.keys(CHASSIS_CATALOG) as ChassisId[]).map((cId) => {
+              displayedChassisIds.map((cId) => {
                 const item = CHASSIS_CATALOG[cId];
                 const slotIdx = activeStyles.indexOf(cId);
                 const active = slotIdx >= 0;
@@ -1250,7 +1838,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                 })}
 
             {activeTab === 'armor' &&
-              (Object.keys(ARMOR_CATALOG) as ArmorId[]).map((aId) => {
+              displayedArmorIds.map((aId) => {
                 const item = ARMOR_CATALOG[aId];
                 const active = config.armor === aId;
                 return (
@@ -1310,7 +1898,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
               })}
 
             {activeTab === 'drive' &&
-              (Object.keys(DRIVE_CATALOG) as DriveId[]).map((dId) => {
+              displayedDriveIds.map((dId) => {
                 const item = DRIVE_CATALOG[dId];
                 const active = config.drive === dId;
                 return (

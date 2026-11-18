@@ -74,6 +74,9 @@ class SoundEngine {
   private crowdVolume = 0.7;
   private baseMusicGain = 0.28;
   private currentTrackTitle = 'Garage Rock Intro';
+  private hapticEnabled = true;
+  private duckMultiplier = 1.0;
+  private duckRestoreTimer: number | null = null;
 
   // Background music playback (Workshop customization & Rotating Battle playlist)
   private musicEl: HTMLAudioElement | null = null;
@@ -130,7 +133,8 @@ class SoundEngine {
 
     try {
       const isCrowd = cooldownKey.includes('cheer');
-      const channelMult = this.masterVolume * (isCrowd ? this.crowdVolume : this.sfxVolume);
+      const duckMult = isCrowd ? this.duckMultiplier : 1.0;
+      const channelMult = this.masterVolume * (isCrowd ? this.crowdVolume : this.sfxVolume) * duckMult;
       if (channelMult <= 0.005) return;
       const audio = new Audio(src);
       const startVol = Math.max(0, Math.min(1, volume * channelMult * 1.25));
@@ -237,7 +241,10 @@ class SoundEngine {
     if (typeof vols.crowd === 'number') this.crowdVolume = Math.max(0, Math.min(1, vols.crowd));
 
     if (this.musicEl) {
-      const targetMusicVol = Math.max(0, Math.min(1, this.baseMusicGain * 1.45 * this.masterVolume * this.musicVolume));
+      const targetMusicVol = Math.max(
+        0,
+        Math.min(1, this.baseMusicGain * 1.45 * this.masterVolume * this.musicVolume * this.duckMultiplier),
+      );
       this.musicEl.volume = targetMusicVol;
       if (targetMusicVol <= 0.005) {
         this.musicEl.pause();
@@ -253,6 +260,100 @@ class SoundEngine {
         0.04,
       );
     }
+  }
+
+  public setHapticFeedback(enabled: boolean) {
+    this.hapticEnabled = enabled;
+  }
+
+  public isHapticFeedbackEnabled(): boolean {
+    return this.hapticEnabled;
+  }
+
+  /**
+   * Vibrates connected gamepads and mobile devices in sync with hazard activation pings & heavy impacts.
+   */
+  public triggerHapticPulse(kind: 'hazard_ping' | 'impact' | 'explosion', intensity = 1.0) {
+    if (!this.hapticEnabled || typeof navigator === 'undefined') return;
+    const clamped = Math.max(0.2, Math.min(1.0, intensity));
+    try {
+      if (typeof navigator.vibrate === 'function') {
+        if (kind === 'hazard_ping') {
+          navigator.vibrate([38, 45, 55]);
+        } else if (kind === 'explosion') {
+          navigator.vibrate(Math.round(130 * clamped));
+        } else {
+          navigator.vibrate(Math.round(55 * clamped));
+        }
+      }
+      if (typeof navigator.getGamepads === 'function') {
+        const pads = navigator.getGamepads();
+        for (const pad of pads) {
+          if (!pad) continue;
+          const actuator = (pad as unknown as {
+            vibrationActuator?: {
+              playEffect?: (
+                type: string,
+                params: { startDelay: number; duration: number; weakMagnitude: number; strongMagnitude: number },
+              ) => Promise<void>;
+            };
+          }).vibrationActuator;
+          if (actuator && typeof actuator.playEffect === 'function') {
+            const dur = kind === 'explosion' ? 180 : kind === 'hazard_ping' ? 110 : 85;
+            actuator
+              .playEffect('dual-rumble', {
+                startDelay: 0,
+                duration: dur,
+                weakMagnitude: Math.min(1, clamped * (kind === 'hazard_ping' ? 0.85 : 0.65)),
+                strongMagnitude: Math.min(1, clamped * (kind === 'explosion' ? 1.0 : 0.6)),
+              })
+              .catch(() => {});
+          }
+        }
+      }
+    } catch {
+      // Ignore hardware vibration permission errors
+    }
+  }
+
+  /**
+   * Collision-based sound normalization: automatically ducks background arena music & crowd audio
+   * when heavy hazard mechanics or large explosion/impact events occur, then smoothly restores volume.
+   */
+  public triggerAudioDuck(duckTo = 0.35, restoreMs = 680) {
+    if (typeof window === 'undefined') return;
+    this.duckMultiplier = Math.min(this.duckMultiplier, Math.max(0.18, Math.min(0.85, duckTo)));
+    if (this.musicEl && !this.muted) {
+      this.musicEl.volume = Math.max(
+        0,
+        Math.min(1, this.baseMusicGain * 1.45 * this.masterVolume * this.musicVolume * this.duckMultiplier),
+      );
+    }
+    if (this.duckRestoreTimer !== null) {
+      window.clearInterval(this.duckRestoreTimer);
+    }
+    const steps = 8;
+    let step = 0;
+    const startMult = this.duckMultiplier;
+    const stepMs = Math.max(40, Math.round(restoreMs / steps));
+    this.duckRestoreTimer = window.setInterval(() => {
+      step++;
+      if (step >= steps) {
+        this.duckMultiplier = 1.0;
+        if (this.duckRestoreTimer !== null) {
+          window.clearInterval(this.duckRestoreTimer);
+          this.duckRestoreTimer = null;
+        }
+      } else {
+        this.duckMultiplier = startMult + (1.0 - startMult) * (step / steps);
+      }
+      if (this.musicEl && !this.muted) {
+        this.musicEl.volume = Math.max(
+          0,
+          Math.min(1, this.baseMusicGain * 1.45 * this.masterVolume * this.musicVolume * this.duckMultiplier),
+        );
+      }
+    }, stepMs);
   }
 
   public getVolumes() {
@@ -850,6 +951,10 @@ class SoundEngine {
   }
 
   public playImpact(intensity = 1, isCrit = false, weaponId?: WeaponId, _damageKind?: string) {
+    if (intensity >= 0.78 || isCrit) {
+      this.triggerAudioDuck(isCrit ? 0.36 : 0.52, isCrit ? 620 : 440);
+      this.triggerHapticPulse('impact', Math.min(1, intensity * (isCrit ? 1.15 : 0.8)));
+    }
     if (weaponId === 'railgun') {
       this.playRailgunShot();
       return;
@@ -924,6 +1029,8 @@ class SoundEngine {
   }
 
   public playExplosion() {
+    this.triggerAudioDuck(0.3, 820);
+    this.triggerHapticPulse('explosion', 1.0);
     this.playSample(
       EXPLOSION_SAMPLE,
       0.64,
@@ -972,13 +1079,33 @@ class SoundEngine {
   }
 
   public playCrusherSlam() {
+    this.triggerAudioDuck(0.32, 750);
+    this.triggerHapticPulse('explosion', 0.92);
     this.playHammerStrike(1.55);
   }
 
   public playHazardWarning() {
+    this.triggerHapticPulse('hazard_ping', 0.78);
     const ctx = this.ensureContext();
     if (!ctx) return;
-    this.noiseBurst('bandpass', 950, 380, 0, 0.18, 0.16);
+    const now = ctx.currentTime;
+    const dest = this.getSfxDestination(ctx);
+    // Tactical 3-second warning double-ping + metallic servo pre-charge
+    for (let i = 0; i < 2; i++) {
+      const t0 = now + i * 0.095;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(i === 0 ? 740 : 980, t0);
+      osc.frequency.exponentialRampToValueAtTime(i === 0 ? 520 : 680, t0 + 0.075);
+      gain.gain.setValueAtTime(0.14, t0);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.08);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t0);
+      osc.stop(t0 + 0.085);
+    }
+    this.noiseBurst('bandpass', 950, 380, 0, 0.18, 0.14);
   }
 
   public playKo() {

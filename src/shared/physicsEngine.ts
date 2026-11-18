@@ -842,19 +842,19 @@ export function createInitialSnapshot(
   const tier3Unlock = mode === 'practice' ? 16 : Math.min(54, Math.round(effectiveDuration * 0.44));
 
   const pit = (id: string, x: number, z: number, phase: number, unlockAt: number): HazardState => ({
-    id, kind: 'pit', x, z, radius: 1.8, active: false, warning: false, phase, unlockAt, cyclePeriod: 9, warningDuration: 1.4, activeDuration: 5,
+    id, kind: 'pit', x, z, radius: 1.8, active: false, warning: false, phase, unlockAt, cyclePeriod: 10.5, warningDuration: 3.0, activeDuration: 4.5,
   });
   const bolt = (id: string, x: number, z: number, phase: number, unlockAt: number): HazardState => ({
-    id, kind: 'lightning', x, z, radius: 2.3, active: false, warning: false, phase, unlockAt, cyclePeriod: 5.5, warningDuration: 1.5, activeDuration: 0.35,
+    id, kind: 'lightning', x, z, radius: 2.3, active: false, warning: false, phase, unlockAt, cyclePeriod: 7.2, warningDuration: 3.0, activeDuration: 0.4,
   });
   const bomb = (id: string, x: number, z: number, phase: number, unlockAt: number): HazardState => ({
-    id, kind: 'bomb_drop', x, z, radius: 2.75, active: false, warning: false, phase, unlockAt, cyclePeriod: 6.8, warningDuration: 1.8, activeDuration: 0.35, bombY: 1,
+    id, kind: 'bomb_drop', x, z, radius: 2.75, active: false, warning: false, phase, unlockAt, cyclePeriod: 8.2, warningDuration: 3.0, activeDuration: 0.4, bombY: 1,
   });
   const oil = (id: string, x: number, z: number, radius = 2.35): HazardState => ({
     id, kind: 'oil_slick', x, z, radius, active: true, warning: false, phase: 0, unlockAt: 0, ignited: false,
   });
   const laserGrid = (id: string, x: number, z: number, armLength: number, phase: number, unlockAt: number): HazardState => ({
-    id, kind: 'laser_grid', x, z, radius: 1.25, armLength, active: false, warning: false, phase, unlockAt, cyclePeriod: 8.5, warningDuration: 1.3, activeDuration: 5.0, sweepAngle: phase,
+    id, kind: 'laser_grid', x, z, radius: 1.25, armLength, active: false, warning: false, phase, unlockAt, cyclePeriod: 10.0, warningDuration: 3.0, activeDuration: 4.5, sweepAngle: phase,
   });
 
   const arenaHazards: HazardState[] =
@@ -970,6 +970,26 @@ export function createInitialSnapshot(
     );
   }
   const isTraditional = modifiers.includes('traditional_rules');
+  const isHighChaos = modifiers.includes('high_chaos');
+  // Normalize all cyclic hazards to a full 3.0s telegraph warning window for tactical counter-play
+  for (const h of arenaHazards) {
+    if (h.kind !== 'oil_slick' && h.kind !== 'saw') {
+      h.warningDuration = 3.0;
+      const minPeriod = (h.warningDuration ?? 3.0) + (h.activeDuration ?? 1.0) + 2.2;
+      if (!h.cyclePeriod || h.cyclePeriod < minPeriod) {
+        h.cyclePeriod = minPeriod;
+      }
+      if (isHighChaos) {
+        h.unlockAt = Math.round((h.unlockAt ?? 0) * 0.35);
+      }
+    }
+  }
+  if (isHighChaos && !isTraditional) {
+    arenaHazards.push(
+      bolt(`chaos_bolt_${arenaId}`, 0, 0, 1.4, 2),
+      bomb(`chaos_bomb_${arenaId}`, 3.2, -3.2, 2.8, 3),
+    );
+  }
   const filteredHazards = isTraditional
     ? arenaHazards.filter(
         (h) =>
@@ -1314,6 +1334,9 @@ function applyDamage(
     if (hasMod(activeSnap, 'vampire') && !attacker.isDead) {
       attacker.hp = Math.min(attacker.maxHp, attacker.hp + finalDamage * 0.2);
     }
+  } else {
+    // Environmental / hazard damage sustained
+    victim.hazardHitsTaken = (victim.hazardHitsTaken ?? 0) + 1;
   }
 
   const isCritEvent = zone === 'rear' || isWeaponCrit;
@@ -1325,6 +1348,7 @@ function applyDamage(
       z: victim.z,
       intensity: Math.min(2.0, finalDamage / 16),
       force: impactForce,
+      damageAmount: finalDamage,
       damageKind: dmgKind,
       hitLocalX: hx,
       hitLocalY: hy,
@@ -1625,15 +1649,28 @@ export function stepArenaPhysics(
 
   const elapsed = snapshot.elapsedTime;
   const totalDur = snapshot.durationSeconds || 180;
+  // Timer-linked sudden-death pressure (0.0 at match start -> 1.0 as clock reaches 0)
+  const timerPressure = isUntimedMode(snapshot.mode)
+    ? Math.min(1, elapsed / 180)
+    : Math.max(0, Math.min(1, 1 - snapshot.timeRemaining / Math.max(1, totalDur)));
+  const highChaosMult = hasMod(snapshot, 'high_chaos') ? 1.55 : 1.0;
+  const timerTempoMult = 1 + timerPressure * 0.95; // Up to ~2x faster hazard cadence as clock ticks down
+  const magnetTimerMult = (1 + timerPressure * 0.85) * (hasMod(snapshot, 'high_chaos') ? 1.3 : 1.0);
+
   const tier2Unlock = snapshot.mode === 'practice' ? 8 : Math.min(26, Math.round(totalDur * 0.2));
   const tier3Unlock = snapshot.mode === 'practice' ? 16 : Math.min(54, Math.round(totalDur * 0.44));
   const escalation = elapsed >= tier3Unlock ? 3 : elapsed >= tier2Unlock ? 2 : 1;
   snapshot.escalationStage = escalation;
   updateArenaEvent(snapshot, elapsed, clampedDt, events);
   const arenaEventKind = snapshot.arenaEvent?.kind;
-  const cadenceMult = (1 + (escalation - 1) * 0.22) * (arenaEventKind === 'hazard_frenzy' ? 1.7 : 1);
+  const cadenceMult =
+    (1 + (escalation - 1) * 0.22) *
+    timerTempoMult *
+    highChaosMult *
+    (arenaEventKind === 'hazard_frenzy' ? 1.7 : 1);
   gravity *= (hasMod(snapshot, 'low_gravity') ? 0.5 : 1) * (arenaEventKind === 'low_gravity' ? 0.4 : 1);
   const turboMult = hasMod(snapshot, 'turbo') ? 1.3 : 1;
+  const isFrictionless = hasMod(snapshot, 'frictionless_sandbox');
 
   const freshlySlammedCrushers = new Set<string>();
   const freshlyStruckBolts = new Set<string>();
@@ -1646,7 +1683,9 @@ export function stepArenaPhysics(
 
     if (elapsed < unlockAt) {
       h.active = false;
-      h.warning = unlockAt - elapsed <= 2.2;
+      const timeUntilUnlock = unlockAt - elapsed;
+      h.warning = timeUntilUnlock <= 3.0;
+      h.warningTimeLeft = h.warning ? timeUntilUnlock : 0;
       if (h.kind === 'crusher') h.crusherY = 1;
       if (h.kind === 'bomb_drop') h.bombY = 1;
       continue;
@@ -1659,6 +1698,7 @@ export function stepArenaPhysics(
     if (h.kind === 'oil_slick') {
       h.active = true;
       h.warning = false;
+      h.warningTimeLeft = 0;
       if (h.ignited) {
         h.phase = Math.max(0, (h.phase ?? 0) - clampedDt);
         if (h.phase <= 0) h.ignited = false;
@@ -1671,21 +1711,30 @@ export function stepArenaPhysics(
       const sawCycle = activeElapsed * cadenceMult + (h.id.includes('2') || h.id.includes('se') ? Math.PI : h.id.includes('s') ? 1.6 : 0);
       h.active = Math.sin(sawCycle * 1.15) > -0.35;
       h.warning = !h.active && Math.sin((sawCycle + 0.65) * 1.15) > -0.35;
+      h.warningTimeLeft = h.warning ? 1.5 : 0;
     } else if (h.kind === 'flipper_pad') {
-      const period = (h.cyclePeriod ?? 5.0) / cadenceMult;
-      const warnDur = h.warningDuration ?? 0.85;
+      const warnDur = 3.0;
       const activeDur = h.activeDuration ?? 0.5;
+      const basePeriod = Math.max(warnDur + activeDur + 1.5, h.cyclePeriod ?? 6.5);
+      const period = Math.max(warnDur + activeDur + 0.6, basePeriod / cadenceMult);
       const cyclePos = (activeElapsed + h.phase) % period;
-      h.warning = cyclePos >= period - warnDur - activeDur && cyclePos < period - activeDur;
-      h.active = cyclePos >= period - activeDur;
+      const warnStart = period - warnDur - activeDur;
+      const activeStart = period - activeDur;
+      h.warning = cyclePos >= warnStart && cyclePos < activeStart;
+      h.warningTimeLeft = h.warning ? Math.max(0, (activeStart - cyclePos)) : 0;
+      h.active = cyclePos >= activeStart;
     } else if (h.kind === 'pit' || h.kind === 'lightning') {
-      const stormMult = h.kind === 'lightning' && arenaEventKind === 'lightning_storm' ? 2.1 : 1;
-      const period = (h.cyclePeriod ?? 8) / (cadenceMult * stormMult);
-      const warnDur = h.warningDuration ?? 1.2;
-      const activeDur = h.activeDuration ?? 2;
+      const stormMult = h.kind === 'lightning' && arenaEventKind === 'lightning_storm' ? 1.65 : 1;
+      const warnDur = 3.0;
+      const activeDur = h.activeDuration ?? (h.kind === 'pit' ? 4.0 : 0.4);
+      const basePeriod = Math.max(warnDur + activeDur + 2.0, h.cyclePeriod ?? 9.5);
+      const period = Math.max(warnDur + activeDur + 0.6, basePeriod / (cadenceMult * stormMult));
       const cyclePos = (activeElapsed + h.phase) % period;
-      h.warning = cyclePos >= period - warnDur - activeDur && cyclePos < period - activeDur;
-      h.active = cyclePos >= period - activeDur;
+      const warnStart = period - warnDur - activeDur;
+      const activeStart = period - activeDur;
+      h.warning = cyclePos >= warnStart && cyclePos < activeStart;
+      h.warningTimeLeft = h.warning ? Math.max(0, activeStart - cyclePos) : 0;
+      h.active = cyclePos >= activeStart;
       if (h.kind === 'lightning') {
         if (!wasWarning && h.warning) {
           const live = snapshot.bots.filter((b) => !b.isDead);
@@ -1707,19 +1756,22 @@ export function stepArenaPhysics(
         }
       }
     } else if (h.kind === 'bomb_drop') {
-      const barrageMult = arenaEventKind === 'bomb_barrage' ? 2.2 : 1;
-      const period = (h.cyclePeriod ?? 6.8) / (cadenceMult * barrageMult);
-      const warnDur = h.warningDuration ?? 1.8;
-      const activeDur = h.activeDuration ?? 0.35;
+      const barrageMult = arenaEventKind === 'bomb_barrage' ? 1.65 : 1;
+      const warnDur = 3.0;
+      const activeDur = h.activeDuration ?? 0.4;
+      const basePeriod = Math.max(warnDur + activeDur + 2.0, h.cyclePeriod ?? 8.2);
+      const period = Math.max(warnDur + activeDur + 0.6, basePeriod / (cadenceMult * barrageMult));
       const cyclePos = (activeElapsed + h.phase) % period;
       const warnStart = period - warnDur - activeDur;
       const activeStart = period - activeDur;
       if (cyclePos < warnStart) {
         h.warning = false;
+        h.warningTimeLeft = 0;
         h.active = false;
         h.bombY = 1;
       } else if (cyclePos < activeStart) {
         h.warning = true;
+        h.warningTimeLeft = Math.max(0, activeStart - cyclePos);
         h.active = false;
         const progress = (cyclePos - warnStart) / Math.max(0.1, warnDur);
         h.bombY = Math.max(0.05, 1 - progress * progress);
@@ -1737,6 +1789,7 @@ export function stepArenaPhysics(
         }
       } else {
         h.warning = false;
+        h.warningTimeLeft = 0;
         h.active = true;
         h.bombY = 0;
         if (!wasActive) {
@@ -1761,32 +1814,40 @@ export function stepArenaPhysics(
         }
       }
     } else if (h.kind === 'emp_ring' || h.kind === 'lava_vent' || h.kind === 'acid_pool') {
-      const period = (h.cyclePeriod ?? 5.8) / cadenceMult;
-      const warnDur = h.warningDuration ?? 1.1;
+      const warnDur = 3.0;
       const activeDur = h.activeDuration ?? 1.8;
+      const basePeriod = Math.max(warnDur + activeDur + 1.8, h.cyclePeriod ?? 7.5);
+      const period = Math.max(warnDur + activeDur + 0.6, basePeriod / cadenceMult);
       const cyclePos = (activeElapsed + h.phase) % period;
-      h.warning = cyclePos >= period - warnDur - activeDur && cyclePos < period - activeDur;
-      h.active = cyclePos >= period - activeDur;
+      const warnStart = period - warnDur - activeDur;
+      const activeStart = period - activeDur;
+      h.warning = cyclePos >= warnStart && cyclePos < activeStart;
+      h.warningTimeLeft = h.warning ? Math.max(0, activeStart - cyclePos) : 0;
+      h.active = cyclePos >= activeStart;
     } else if (h.kind === 'crusher') {
-      const period = (h.cyclePeriod ?? 11.5) / cadenceMult;
-      const warnDur = h.warningDuration ?? 1.8;
+      const warnDur = 3.0;
       const slamDur = h.activeDuration ?? 1.0;
+      const basePeriod = Math.max(warnDur + slamDur + 2.5, h.cyclePeriod ?? 11.5);
+      const period = Math.max(warnDur + slamDur + 0.8, basePeriod / cadenceMult);
       const cyclePos = (activeElapsed + h.phase) % period;
       const warnStart = period - warnDur - slamDur;
       const slamStart = period - slamDur;
 
       if (cyclePos < warnStart) {
         h.warning = false;
+        h.warningTimeLeft = 0;
         h.active = false;
         h.crusherY = 1;
       } else if (cyclePos < slamStart) {
         h.warning = true;
+        h.warningTimeLeft = Math.max(0, slamStart - cyclePos);
         h.active = false;
         const t = (cyclePos - warnStart) / Math.max(0.1, warnDur);
         h.crusherY = 0.92 - t * 0.18;
       } else {
         const slamElapsed = cyclePos - slamStart;
         h.warning = false;
+        h.warningTimeLeft = 0;
         if (slamElapsed < 0.13) {
           h.crusherY = Math.max(0, 0.74 * (1 - slamElapsed / 0.13));
           h.active = slamElapsed >= 0.08;
@@ -1812,33 +1873,74 @@ export function stepArenaPhysics(
         }
       }
     } else if (h.kind === 'spinner_blade' || h.kind === 'laser_grid') {
-      const period = (h.cyclePeriod ?? 10.5) / cadenceMult;
-      const warnDur = h.warningDuration ?? 1.5;
-      const activeDur = period * (escalation >= 3 ? 0.65 : 0.55);
+      const warnDur = 3.0;
+      const basePeriod = Math.max(9.5, h.cyclePeriod ?? 10.5);
+      const period = Math.max(6.2, basePeriod / cadenceMult);
+      const activeDur = Math.min(period - warnDur - 0.6, period * (escalation >= 3 ? 0.55 : 0.48));
       const cyclePos = (activeElapsed + h.phase) % period;
       const warnStart = period - warnDur - activeDur;
       const activeStart = period - activeDur;
 
       if (cyclePos < warnStart) {
         h.warning = false;
+        h.warningTimeLeft = 0;
         h.active = false;
       } else if (cyclePos < activeStart) {
         h.warning = true;
+        h.warningTimeLeft = Math.max(0, activeStart - cyclePos);
         h.active = false;
       } else {
         h.warning = false;
+        h.warningTimeLeft = 0;
         h.active = true;
         const spinSpeed = h.kind === 'laser_grid' ? 1.85 + escalation * 0.45 : 4.4 + escalation * 1.15;
         h.sweepAngle = ((h.sweepAngle ?? 0) + clampedDt * spinSpeed) % (Math.PI * 2);
       }
     }
 
+    // Track bots inside the 3-second warning telegraph radius so we can reward tactical avoidance
+    if (h.warning) {
+      const dangerRad = (h.kind === 'spinner_blade' || h.kind === 'laser_grid' ? (h.armLength ?? 3.0) : h.radius) + 1.35;
+      for (const b of snapshot.bots) {
+        if (b.isDead) continue;
+        if (Math.hypot(b.x - h.x, b.z - h.z) <= dangerRad) {
+          b.warnedHazardIds ??= [];
+          if (!b.warnedHazardIds.includes(h.id)) {
+            b.warnedHazardIds.push(h.id);
+          }
+        }
+      }
+    }
+
+    // When hazard transitions from warning to active, any bot that was warned and escaped outside the danger zone scores an Avoided Trap!
+    if (wasWarning && h.active) {
+      const hitRad = (h.kind === 'spinner_blade' || h.kind === 'laser_grid' ? (h.armLength ?? 3.0) : h.radius) + 0.65;
+      for (const b of snapshot.bots) {
+        if (b.isDead || !b.warnedHazardIds) continue;
+        const idx = b.warnedHazardIds.indexOf(h.id);
+        if (idx !== -1) {
+          b.warnedHazardIds.splice(idx, 1);
+          if (Math.hypot(b.x - h.x, b.z - h.z) > hitRad) {
+            b.hazardsAvoided = (b.hazardsAvoided ?? 0) + 1;
+          }
+        }
+      }
+    }
+
     if (
       !wasWarning &&
       h.warning &&
-      (h.kind === 'crusher' || h.kind === 'spinner_blade' || h.kind === 'pit' || h.kind === 'lightning' || h.kind === 'bomb_drop' || h.kind === 'laser_grid')
+      (h.kind === 'crusher' ||
+        h.kind === 'spinner_blade' ||
+        h.kind === 'pit' ||
+        h.kind === 'lightning' ||
+        h.kind === 'bomb_drop' ||
+        h.kind === 'laser_grid' ||
+        h.kind === 'flipper_pad' ||
+        h.kind === 'emp_ring' ||
+        h.kind === 'lava_vent')
     ) {
-      events.push(makeEvent({ type: 'hazard_warn', x: h.x, y: 0.5, z: h.z, intensity: 0.7 }));
+      events.push(makeEvent({ type: 'hazard_warn', x: h.x, y: 0.5, z: h.z, intensity: 0.85 }));
     }
   }
 
@@ -2231,7 +2333,13 @@ export function stepArenaPhysics(
       const forwardSpeed = bot.vx * fx + bot.vz * fz;
       const lateralSpeed = bot.vx * rx + bot.vz * rz;
 
-      const slipGripMult = (bot.slipTimer ?? 0) > 0 ? 0.12 : bot.isDrifting ? 0.22 : 1.0;
+      const slipGripMult = isFrictionless
+        ? 0.04
+        : (bot.slipTimer ?? 0) > 0
+          ? 0.12
+          : bot.isDrifting
+            ? 0.22
+            : 1.0;
       const lateralGrip =
         arena.friction *
         slipGripMult *
@@ -2241,7 +2349,11 @@ export function stepArenaPhysics(
             ? 0.5
             : 1.05);
       const dampedLateral = lateralSpeed * Math.exp(-lateralGrip * clampedDt);
-      const forwardDrag = Math.abs(throttleFactor) < 0.05 && !bot.isBoosting ? arena.friction * (bot.isDrifting ? 0.45 : 1.05) : 1.05;
+      const forwardDrag = isFrictionless
+        ? 0.08
+        : Math.abs(throttleFactor) < 0.05 && !bot.isBoosting
+          ? arena.friction * (bot.isDrifting ? 0.45 : 1.05)
+          : 1.05;
       const dampedForward = forwardSpeed * Math.exp(-forwardDrag * clampedDt);
 
       bot.vx = fx * dampedForward + rx * dampedLateral;
@@ -2261,6 +2373,32 @@ export function stepArenaPhysics(
       const pinDamp = Math.exp(-9 * clampedDt);
       bot.vx *= pinDamp;
       bot.vz *= pinDamp;
+    }
+
+    // Record 8x8 Arena Occupancy Heat Map & Telemetry Path Log
+    if (!bot.isDead && !bot.outOfRing) {
+      if (!bot.heatmapGrid || bot.heatmapGrid.length !== 64) {
+        bot.heatmapGrid = new Array(64).fill(0);
+      }
+      const normX = Math.max(0, Math.min(0.999, (bot.x + arena.halfSize) / (arena.halfSize * 2)));
+      const normZ = Math.max(0, Math.min(0.999, (bot.z + arena.halfSize) / (arena.halfSize * 2)));
+      const cellIdx = Math.floor(normZ * 8) * 8 + Math.floor(normX * 8);
+      bot.heatmapGrid[cellIdx] = Number(((bot.heatmapGrid[cellIdx] ?? 0) + clampedDt).toFixed(3));
+
+      if (snapshot.tick % 30 === 0) {
+        bot.pathLog ??= [];
+        if (bot.pathLog.length < 300) {
+          bot.pathLog.push({
+            t: Number(elapsed.toFixed(1)),
+            x: Number(bot.x.toFixed(2)),
+            z: Number(bot.z.toFixed(2)),
+            vx: Number(bot.vx.toFixed(2)),
+            vz: Number(bot.vz.toFixed(2)),
+            hp: Math.round(bot.hp),
+            hazardHits: bot.hazardHitsTaken ?? 0,
+          });
+        }
+      }
     }
 
     const preStepX = bot.x;
@@ -2490,6 +2628,10 @@ export function stepArenaPhysics(
         overdriveMult *
         classDmgMult;
       const slotImpBase = strikeSpec.impulse * (1 + bot.skills.weaponTorque * 0.05);
+      // Apply physical weapon recoil to firing bot (amplified in Frictionless Sandbox to verify recoil vectors)
+      const recoilKick = (strikeSpec.impulse * (isFrictionless ? 0.65 : 0.18)) / Math.max(0.75, stats.mass);
+      bot.vx -= wfx * recoilKick;
+      bot.vz -= wfz * recoilKick;
 
       if (strikeWeapon === 'mortar') {
         // Artillery Mortar: Short click shoots close (~3.2m), Long press shoots far (up to 11.8m)
@@ -2937,8 +3079,8 @@ export function stepArenaPhysics(
           const tMass = Math.max(0.7, tStats.mass * Math.pow(target.scale, 1.35) * tStats.knockbackResist);
           const zone = getHitZone(target, nx, nz);
           if (strikeWeapon === 'magnet') {
-            // Grapple: yank the target into our weapons
-            const pull = slotImpBase / tMass;
+            // Grapple: yank the target into our weapons (magnet strength intensifies as match clock ticks down)
+            const pull = (slotImpBase * magnetTimerMult) / tMass;
             target.vx -= nx * pull;
             target.vz -= nz * pull;
             target.shockTimer = Math.max(target.shockTimer ?? 0, 0.5);

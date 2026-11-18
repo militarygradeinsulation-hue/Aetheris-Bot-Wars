@@ -1,15 +1,17 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Check,
   Flame,
   Layers,
   PlusCircle,
+  Redo2,
   Search,
   Shield,
   Shuffle,
   Sparkles,
   Swords,
   Trash2,
+  Undo2,
   Wrench,
   X,
 } from 'lucide-react';
@@ -49,8 +51,19 @@ interface GarageRosterModalProps {
   onSelectBotToPlay: (config: BotConfig) => void;
   onSaveCustomBotToRoster: (config: BotConfig) => void;
   onDeleteCustomBotFromRoster: (index: number) => void;
+  onLaunchTestRange?: (config: BotConfig) => void;
   onClose: () => void;
 }
+
+interface FusionLabStateSnapshot {
+  parentAId: string;
+  parentBId: string;
+  customName: string;
+  overrideArmor?: string;
+  overrideDrive?: string;
+}
+
+const FUSION_STACK_STORAGE_KEY = 'aetheris_fusion_undo_stack_v1';
 
 interface UnifiedGarageEntry {
   id: string;
@@ -99,17 +112,93 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
   onSelectBotToPlay,
   onSaveCustomBotToRoster,
   onDeleteCustomBotFromRoster,
+  onLaunchTestRange,
   onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<'roster' | 'fusion' | 'create'>('roster');
   const [searchQuery, setSearchQuery] = useState('');
   const [weightFilter, setWeightFilter] = useState<string>('ALL');
   const [customBotName, setCustomBotName] = useState(currentBotConfig.name || 'Custom Warbot');
-  const [fusionParentAId, setFusionParentAId] = useState<string>('preset_0');
-  const [fusionParentBId, setFusionParentBId] = useState<string>('preset_15');
-  const [fusionCustomName, setFusionCustomName] = useState('');
+
+  // Persistent Undo/Redo stack for the Fusion Lab
+  const [fusionStack, setFusionStack] = useState<{
+    history: FusionLabStateSnapshot[];
+    index: number;
+  }>(() => {
+    try {
+      const raw = localStorage.getItem(FUSION_STACK_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed?.history) && parsed.history.length > 0 && typeof parsed.index === 'number') {
+          return {
+            history: parsed.history.slice(0, 30),
+            index: Math.max(0, Math.min(parsed.history.length - 1, parsed.index)),
+          };
+        }
+      }
+    } catch {
+      // Fallback
+    }
+    return {
+      history: [{ parentAId: 'preset_0', parentBId: 'preset_15', customName: '' }],
+      index: 0,
+    };
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FUSION_STACK_STORAGE_KEY, JSON.stringify(fusionStack));
+    } catch {
+      // Ignore storage quota
+    }
+  }, [fusionStack]);
+
+  const currentFusionState = fusionStack.history[fusionStack.index] ?? {
+    parentAId: 'preset_0',
+    parentBId: 'preset_15',
+    customName: '',
+  };
+  const fusionParentAId = currentFusionState.parentAId;
+  const fusionParentBId = currentFusionState.parentBId;
+  const fusionCustomName = currentFusionState.customName;
+
+  const pushFusionState = (patch: Partial<FusionLabStateSnapshot>, triggerAnim = false) => {
+    setFusionStack((prev) => {
+      const cur = prev.history[prev.index] ?? { parentAId: 'preset_0', parentBId: 'preset_15', customName: '' };
+      const next: FusionLabStateSnapshot = { ...cur, ...patch };
+      if (
+        next.parentAId === cur.parentAId &&
+        next.parentBId === cur.parentBId &&
+        next.customName === cur.customName &&
+        next.overrideArmor === cur.overrideArmor &&
+        next.overrideDrive === cur.overrideDrive
+      ) {
+        return prev;
+      }
+      const sliced = prev.history.slice(0, prev.index + 1);
+      const updated = [...sliced, next].slice(-25);
+      return { history: updated, index: updated.length - 1 };
+    });
+    if (triggerAnim) {
+      setFusionAnimSignal((s) => s + 1);
+    }
+  };
+
+  const canUndoFusion = fusionStack.index > 0;
+  const canRedoFusion = fusionStack.index < fusionStack.history.length - 1;
+
+  const handleUndoFusion = () => {
+    if (!canUndoFusion) return;
+    setFusionStack((prev) => ({ ...prev, index: Math.max(0, prev.index - 1) }));
+  };
+
+  const handleRedoFusion = () => {
+    if (!canRedoFusion) return;
+    setFusionStack((prev) => ({ ...prev, index: Math.min(prev.history.length - 1, prev.index + 1) }));
+  };
+
   const [fusionAnimSignal, setFusionAnimSignal] = useState<number>(0);
-  const [pendingFuseAction, setPendingFuseAction] = useState<'equip' | 'save' | null>(null);
+  const [pendingFuseAction, setPendingFuseAction] = useState<'equip' | 'save' | 'test_range' | null>(null);
   const [bannerNotice, setBannerNotice] = useState<string | null>(null);
 
   const allEntries = useMemo<UnifiedGarageEntry[]>(() => {
@@ -187,8 +276,15 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
 
   const fusedPreviewConfig = useMemo(() => {
     if (!parentAEntry || !parentBEntry) return currentBotConfig;
-    return fuseTwoBotConfigs(parentAEntry.config, parentBEntry.config, fusionCustomName);
-  }, [parentAEntry, parentBEntry, fusionCustomName, currentBotConfig]);
+    const base = fuseTwoBotConfigs(parentAEntry.config, parentBEntry.config, fusionCustomName);
+    if (currentFusionState.overrideArmor && ARMOR_CATALOG[currentFusionState.overrideArmor as keyof typeof ARMOR_CATALOG]) {
+      base.armor = currentFusionState.overrideArmor as BotConfig['armor'];
+    }
+    if (currentFusionState.overrideDrive && DRIVE_CATALOG[currentFusionState.overrideDrive as keyof typeof DRIVE_CATALOG]) {
+      base.drive = currentFusionState.overrideDrive as BotConfig['drive'];
+    }
+    return base;
+  }, [parentAEntry, parentBEntry, fusionCustomName, currentFusionState.overrideArmor, currentFusionState.overrideDrive, currentBotConfig]);
 
   const fusedPreviewStats = useMemo(
     () => computeBotStats(fusedPreviewConfig, skills, profile?.partUpgrades),
@@ -240,37 +336,48 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
     setActiveTab('roster');
   };
 
-  const executeFuseCommit = (saveToRoster: boolean) => {
+  const executeFuseCommit = (mode: 'equip' | 'save' | 'test_range') => {
     const fused = JSON.parse(JSON.stringify(fusedPreviewConfig)) as BotConfig;
-    if (saveToRoster) {
+    if (mode === 'save') {
       onSaveCustomBotToRoster(fused);
     }
     onSelectBotToPlay(fused);
+    setPendingFuseAction(null);
+    if (mode === 'test_range') {
+      onClose();
+      onLaunchTestRange?.(fused);
+      return;
+    }
     showToast(
-      saveToRoster
+      mode === 'save'
         ? `Fused "${fused.name}" (${fused.fusionParents?.join(' × ')}) & saved to Garage Roster!`
         : `Equipped Fusion Bot "${fused.name}"!`,
     );
-    setPendingFuseAction(null);
-    if (!saveToRoster) {
+    if (mode === 'equip') {
       onClose();
     } else {
       setActiveTab('roster');
     }
   };
 
-  const handleFuseAndEquip = (saveToRoster: boolean) => {
+  const handleFuseAndEquip = (mode: 'equip' | 'save' | 'test_range') => {
     const fused = JSON.parse(JSON.stringify(fusedPreviewConfig)) as BotConfig;
-    const missing = lockedPartsForConfig(fused);
-    if (missing.length > 0) {
-      const labels = missing.slice(0, 3).map((k) => describePartKey(k)).join(', ');
-      showToast(
-        `Cannot deploy fused bot yet — locked parts: ${labels}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ''}. Choose donor bots with unlocked parts or unlock them in Workshop.`,
-      );
+    if (mode !== 'test_range') {
+      const missing = lockedPartsForConfig(fused);
+      if (missing.length > 0) {
+        const labels = missing.slice(0, 3).map((k) => describePartKey(k)).join(', ');
+        showToast(
+          `Cannot deploy fused bot yet — locked parts: ${labels}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ''}. Choose donor bots with unlocked parts or unlock them in Workshop.`,
+        );
+        return;
+      }
+    }
+    if (mode === 'test_range') {
+      executeFuseCommit('test_range');
       return;
     }
     // Play the 3D merging animation first, then commit the fused bot!
-    setPendingFuseAction(saveToRoster ? 'save' : 'equip');
+    setPendingFuseAction(mode);
     setFusionAnimSignal((s) => s + 1);
   };
 
@@ -541,7 +648,7 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          setFusionParentAId(entry.id);
+                          pushFusionState({ parentAId: entry.id }, true);
                           setActiveTab('fusion');
                         }}
                         title="Send this bot to the 2-Bot Fusion Lab"
@@ -570,7 +677,46 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
 
         {/* TAB 2: 2-BOT FUSION LAB */}
         {activeTab === 'fusion' && (
-          <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
+          <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
+            {/* Persistent Undo / Redo Toolbar & Fusion Stage Controls */}
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-[#0D1014] px-3.5 py-2">
+              <div className="flex items-center gap-2 text-xs text-slate-300">
+                <Sparkles className="h-4 w-4 text-fuchsia-400" />
+                <span className="font-bold text-white">Fusion Lab History Stack</span>
+                <span className="font-mono-tabular text-[11px] text-slate-400">
+                  Step {fusionStack.index + 1} / {fusionStack.history.length}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!canUndoFusion}
+                  onClick={handleUndoFusion}
+                  className={`flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-bold transition ${
+                    canUndoFusion
+                      ? 'border-slate-700 bg-[#181F29] text-slate-200 hover:border-amber-400 hover:text-white cursor-pointer'
+                      : 'border-slate-800/60 bg-[#11151B] text-slate-600 cursor-not-allowed'
+                  }`}
+                >
+                  <Undo2 className="h-3.5 w-3.5" />
+                  <span>Undo Selection</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!canRedoFusion}
+                  onClick={handleRedoFusion}
+                  className={`flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-bold transition ${
+                    canRedoFusion
+                      ? 'border-slate-700 bg-[#181F29] text-slate-200 hover:border-amber-400 hover:text-white cursor-pointer'
+                      : 'border-slate-800/60 bg-[#11151B] text-slate-600 cursor-not-allowed'
+                  }`}
+                >
+                  <Redo2 className="h-3.5 w-3.5" />
+                  <span>Redo</span>
+                </button>
+              </div>
+            </div>
+
             {/* Live 3D Side-by-Side Donor Bots + Animated 3D Merging Stage */}
             {parentAEntry && parentBEntry && (
               <BotFusion3DStage
@@ -579,10 +725,8 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                 fusedBot={fusedPreviewConfig}
                 fusionTriggerSignal={fusionAnimSignal}
                 onFusionAnimationComplete={() => {
-                  if (pendingFuseAction === 'save') {
-                    executeFuseCommit(true);
-                  } else if (pendingFuseAction === 'equip') {
-                    executeFuseCommit(false);
+                  if (pendingFuseAction) {
+                    executeFuseCommit(pendingFuseAction);
                   }
                 }}
               />
@@ -597,8 +741,7 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                 <select
                   value={fusionParentAId}
                   onChange={(e) => {
-                    setFusionParentAId(e.target.value);
-                    setFusionAnimSignal((s) => s + 1);
+                    pushFusionState({ parentAId: e.target.value, overrideArmor: undefined, overrideDrive: undefined }, true);
                   }}
                   className="mt-2 w-full rounded-xl border border-slate-700 bg-[#0D1014] px-3 py-2.5 text-sm font-bold text-white focus:border-amber-400 focus:outline-none"
                 >
@@ -641,8 +784,7 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                 <select
                   value={fusionParentBId}
                   onChange={(e) => {
-                    setFusionParentBId(e.target.value);
-                    setFusionAnimSignal((s) => s + 1);
+                    pushFusionState({ parentBId: e.target.value, overrideArmor: undefined, overrideDrive: undefined }, true);
                   }}
                   className="mt-2 w-full rounded-xl border border-slate-700 bg-[#0D1014] px-3 py-2.5 text-sm font-bold text-white focus:border-sky-400 focus:outline-none"
                 >
@@ -703,13 +845,17 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                       type="text"
                       maxLength={18}
                       value={fusionCustomName}
-                      onChange={(e) => setFusionCustomName(e.target.value)}
+                      onChange={(e) => pushFusionState({ customName: e.target.value })}
                       placeholder={fusedPreviewConfig.name}
                       className="flex-1 rounded-xl border border-fuchsia-400/50 bg-[#0D1014] px-3 py-2 text-xs font-bold text-white focus:border-amber-400 focus:outline-none"
                     />
                     <button
                       type="button"
-                      onClick={() => setFusionCustomName(generateRandomBotName(fusionCustomName || fusedPreviewConfig.name))}
+                      onClick={() =>
+                        pushFusionState({
+                          customName: generateRandomBotName(fusionCustomName || fusedPreviewConfig.name),
+                        })
+                      }
                       title="Generate a random fusion bot name"
                       className="flex items-center gap-1 rounded-xl border border-fuchsia-400/60 bg-fuchsia-500/20 px-2.5 py-2 text-xs font-extrabold text-fuchsia-200 hover:bg-fuchsia-500/30 transition shrink-0"
                     >
@@ -718,6 +864,38 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                     </button>
                   </div>
                 </div>
+              </div>
+
+              {/* Quick Component Override Selectors (Tracked in Undo/Redo Stack) */}
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <label className="flex items-center justify-between gap-2 rounded-xl border border-slate-800 bg-[#0D1014]/90 px-3 py-2 text-xs">
+                  <span className="font-bold text-slate-400">Hybrid Armor Plating:</span>
+                  <select
+                    value={fusedPreviewConfig.armor}
+                    onChange={(e) => pushFusionState({ overrideArmor: e.target.value })}
+                    className="rounded-lg border border-slate-700 bg-[#151A23] px-2.5 py-1 text-xs font-bold text-emerald-300 focus:border-fuchsia-400 focus:outline-none"
+                  >
+                    {Object.values(ARMOR_CATALOG).map((ar) => (
+                      <option key={ar.id} value={ar.id}>
+                        {ar.label} (+{ar.hpBonus} HP)
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center justify-between gap-2 rounded-xl border border-slate-800 bg-[#0D1014]/90 px-3 py-2 text-xs">
+                  <span className="font-bold text-slate-400">Hybrid Drivetrain:</span>
+                  <select
+                    value={fusedPreviewConfig.drive}
+                    onChange={(e) => pushFusionState({ overrideDrive: e.target.value })}
+                    className="rounded-lg border border-slate-700 bg-[#151A23] px-2.5 py-1 text-xs font-bold text-sky-300 focus:border-fuchsia-400 focus:outline-none"
+                  >
+                    {Object.values(DRIVE_CATALOG).map((dr) => (
+                      <option key={dr.id} value={dr.id}>
+                        {dr.label} ({dr.maxSpeed} m/s)
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
 
               <div className="mt-4 grid grid-cols-2 sm:grid-cols-6 gap-2.5 rounded-xl border border-slate-800 bg-[#0D1014]/90 p-3 text-center font-mono-tabular">
@@ -779,17 +957,28 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
               </div>
 
               <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
+                {onLaunchTestRange && (
+                  <button
+                    type="button"
+                    onClick={() => handleFuseAndEquip('test_range')}
+                    title="Instantly spawn this hybrid warbot in a frictionless sandbox environment to test weapon recoil patterns"
+                    className="flex items-center gap-1.5 rounded-xl border border-cyan-400/70 bg-cyan-500/20 px-4 py-2.5 text-xs font-extrabold text-cyan-200 hover:bg-cyan-500/30 transition cursor-pointer"
+                  >
+                    <Flame className="h-4 w-4 text-cyan-300" />
+                    <span>🧪 Test Range (Frictionless Recoil Sandbox)</span>
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => handleFuseAndEquip(false)}
-                  className="rounded-xl border border-fuchsia-400 bg-fuchsia-500/20 px-4 py-2.5 text-xs font-extrabold text-fuchsia-200 hover:bg-fuchsia-500/30 transition"
+                  onClick={() => handleFuseAndEquip('equip')}
+                  className="rounded-xl border border-fuchsia-400 bg-fuchsia-500/20 px-4 py-2.5 text-xs font-extrabold text-fuchsia-200 hover:bg-fuchsia-500/30 transition cursor-pointer"
                 >
                   ⚡ Fuse & Equip in Workshop
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleFuseAndEquip(true)}
-                  className="rounded-xl bg-amber-500 px-5 py-2.5 text-xs font-extrabold text-slate-950 shadow-lg hover:bg-amber-400 transition"
+                  onClick={() => handleFuseAndEquip('save')}
+                  className="rounded-xl bg-amber-500 px-5 py-2.5 text-xs font-extrabold text-slate-950 shadow-lg hover:bg-amber-400 transition cursor-pointer"
                 >
                   ★ Fuse, Save to Garage Roster & Play
                 </button>

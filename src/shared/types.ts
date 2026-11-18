@@ -137,6 +137,8 @@ export type MatchModifierId =
   | 'double_damage'
   | 'armor_off'
   | 'no_hazards'
+  | 'high_chaos'
+  | 'frictionless_sandbox'
   | 'chaos_events'
   | 'giants'
   | 'turbo'
@@ -151,7 +153,17 @@ export const MATCH_MODIFIERS: Record<MatchModifierId, { id: MatchModifierId; lab
   low_gravity: { id: 'low_gravity', label: 'Low Gravity', note: 'Flips send bots sky-high' },
   double_damage: { id: 'double_damage', label: 'Double Damage', note: 'Every hit counts twice' },
   armor_off: { id: 'armor_off', label: 'Naked Chassis', note: 'All armor zones start stripped' },
-  no_hazards: { id: 'no_hazards', label: 'Clean Floor', note: 'Arena hazards disabled' },
+  no_hazards: { id: 'no_hazards', label: 'Clean Floor', note: 'Arena hazards disabled (Static Layout)' },
+  high_chaos: {
+    id: 'high_chaos',
+    label: 'High-Chaos Variants',
+    note: '2× hazard frequency, stronger magnets & sudden-death scramble',
+  },
+  frictionless_sandbox: {
+    id: 'frictionless_sandbox',
+    label: 'Frictionless Sandbox',
+    note: 'Zero floor traction drag to inspect pure weapon recoil vectors',
+  },
   chaos_events: { id: 'chaos_events', label: 'Chaos Mode', note: 'Arena events fire 3x as often' },
   giants: { id: 'giants', label: 'Giant Bots', note: 'Every bot scaled up 25%' },
   turbo: { id: 'turbo', label: 'Turbo Motors', note: '+30% speed for everyone' },
@@ -465,6 +477,16 @@ export interface BotPhysicsState {
   hitsDealt: number;
   damageDealt: number;
   kos: number;
+  /** Count of environmental hazard hits sustained during the match. */
+  hazardHitsTaken?: number;
+  /** Count of telegraphed environmental traps successfully avoided during the match. */
+  hazardsAvoided?: number;
+  /** 8x8 arena sector occupancy grid (seconds spent in each cell) for post-match heat map. */
+  heatmapGrid?: number[];
+  /** Periodic telemetry samples for CSV export. */
+  pathLog?: Array<{ t: number; x: number; z: number; vx: number; vz: number; hp: number; hazardHits: number }>;
+  /** Internal tracker of hazard IDs whose 3-second warning zone this bot entered. */
+  warnedHazardIds?: string[];
   isBot: boolean;
   team: number;
   pinnedTimer?: number;
@@ -614,6 +636,8 @@ export interface HazardState {
   radius: number;
   active: boolean;
   warning?: boolean;
+  /** Exact seconds remaining before hazard activates (3.0s down to 0.0s). */
+  warningTimeLeft?: number;
   phase: number;
   tickCooldown?: number;
   unlockAt?: number;
@@ -695,6 +719,8 @@ export interface CombatEvent {
   sourceId?: string;
   callout?: string;
   label?: string;
+  /** Raw damage dealt by this hit event (for floating damage & force overlay). */
+  damageAmount?: number;
 }
 
 export interface PlayerInputState {
@@ -823,6 +849,7 @@ export interface FavoriteBuildEntry {
   label: string;
   config: BotConfig;
   savedAt: string;
+  tags?: string[];
 }
 
 export interface FavoritesList {
@@ -834,6 +861,8 @@ export interface FavoritesList {
 
 export type ControlSchemeId = 'wasd_drive' | 'arrows_drive' | 'mouse_drive';
 export type DeviceLayoutMode = 'auto' | 'desktop' | 'tablet' | 'mobile';
+export type ColorBlindMode = 'none' | 'blue_orange' | 'cyan_yellow';
+export type HazardLayoutPreset = 'static' | 'standard' | 'high_chaos';
 
 export interface PilotDirectoryEntry {
   uid: string;
@@ -927,6 +956,13 @@ export interface PlayerProfile {
   controlScheme?: ControlSchemeId;
   deviceLayoutMode?: DeviceLayoutMode;
   cameraSensitivity?: number;
+  hapticFeedback?: boolean;
+  colorBlindMode?: ColorBlindMode;
+  autoSaveIntervalSec?: number;
+  showDamageNumbers?: boolean;
+  ssaoEnabled?: boolean;
+  momentumTrajectory?: boolean;
+  hazardLayoutPreset?: HazardLayoutPreset;
   ownedParts?: string[];
   unlockedArenas?: ArenaId[];
   partUpgrades?: Record<string, number>;
@@ -2656,5 +2692,229 @@ export function generateRandomBotName(currentName?: string): string {
   }
   return `Aether Striker ${Math.floor(10 + Math.random() * 89)}`;
 }
+
+// ---- Part Weight & Compatibility Tags, Mass/CoG Inspector & Weapon Synergies ----
+
+export type PartWeightFilter = 'all' | 'light' | 'balanced' | 'heavy';
+export type PartCompatibilityTag = 'all' | 'kinetic' | 'thermal' | 'energy' | 'control';
+
+export function getPartWeightCategory(cat: PartCategory, id: string): 'light' | 'balanced' | 'heavy' {
+  if (cat === 'weapon') {
+    const w = WEAPON_CATALOG[id as WeaponId];
+    if (!w) return 'balanced';
+    return w.damage >= 24 || w.impulse >= 11 ? 'heavy' : w.cooldown <= 0.7 ? 'light' : 'balanced';
+  }
+  if (cat === 'armor') {
+    const a = ARMOR_CATALOG[id as ArmorId];
+    if (!a) return 'balanced';
+    return a.mass >= 1.25 ? 'heavy' : a.mass <= 1.0 ? 'light' : 'balanced';
+  }
+  if (cat === 'chassis') {
+    const c = CHASSIS_CATALOG[id as ChassisId];
+    if (!c) return 'balanced';
+    return c.massBonus >= 0.2 ? 'heavy' : c.massBonus <= 0 ? 'light' : 'balanced';
+  }
+  if (cat === 'drive') {
+    const d = DRIVE_CATALOG[id as DriveId];
+    if (!d) return 'balanced';
+    return d.maxSpeed >= 8.2 ? 'light' : d.knockbackResist >= 1.2 ? 'heavy' : 'balanced';
+  }
+  return 'balanced';
+}
+
+export function getPartCompatibilityTag(cat: PartCategory, id: string): 'kinetic' | 'thermal' | 'energy' | 'control' {
+  if (cat === 'weapon') {
+    if (id === 'flame' || id === 'cryo_jet' || id === 'mortar' || id === 'bomb_drop') return 'thermal';
+    if (id === 'tesla' || id === 'laser' || id === 'railgun' || id === 'lightning_strike') return 'energy';
+    if (id === 'flipper' || id === 'magnet' || id === 'crush_jaw') return 'control';
+    return 'kinetic';
+  }
+  if (cat === 'armor') {
+    if (id === 'ceramic') return 'thermal';
+    if (id === 'aetherium' || id === 'nanoweave') return 'energy';
+    if (id === 'kevlar') return 'control';
+    return 'kinetic';
+  }
+  if (cat === 'chassis') {
+    if (id === 'wedge' || id === 'spider' || id === 'claw') return 'control';
+    if (id === 'ufo' || id === 'hover_disc') return 'energy';
+    if (id === 'behemoth' || id === 'juggernaut') return 'thermal';
+    return 'kinetic';
+  }
+  if (cat === 'drive') {
+    if (id === 'hover' || id === 'maglev' || id === 'crawler_nuclear') return 'energy';
+    if (id === 'omni' || id === 'mecanum') return 'control';
+    if (id === 'turbo') return 'thermal';
+    return 'kinetic';
+  }
+  return 'kinetic';
+}
+
+export interface WeaponSynergySpec {
+  id: string;
+  title: string;
+  pair: [WeaponId, WeaponId];
+  bonusLabel: string;
+  description: string;
+  dmgBonusPct: number;
+}
+
+export const WEAPON_SYNERGY_CATALOG: WeaponSynergySpec[] = [
+  {
+    id: 'cryo_shatter',
+    title: 'Thermal Brittle Shatter',
+    pair: ['cryo_jet', 'hammer'],
+    bonusLabel: '+25% Impact Shatter DMG',
+    description: 'Sub-zero Cryo Jet embrittles enemy armor plates so Hammer strikes deal +25% shatter damage.',
+    dmgBonusPct: 25,
+  },
+  {
+    id: 'cryo_spinner',
+    title: 'Frozen Kinetic Cleave',
+    pair: ['cryo_jet', 'vspinner'],
+    bonusLabel: '+20% Rotor Bite & Uppercut',
+    description: 'Chilled targets lose traction, letting Vertical Spinner uppercuts bite deeper for +20% lift & damage.',
+    dmgBonusPct: 20,
+  },
+  {
+    id: 'thermal_shock_combo',
+    title: 'Fire & Ice Thermal Shock',
+    pair: ['flame', 'cryo_jet'],
+    bonusLabel: '+65% Mutual Elemental Burst',
+    description: 'Alternating Plasma Torch and Cryo Jet triggers instant +65% Thermal Shock / Cryo-Quench detonations.',
+    dmgBonusPct: 65,
+  },
+  {
+    id: 'magnet_shred',
+    title: 'Magnetic Pin & Shred',
+    pair: ['magnet', 'sawblade'],
+    bonusLabel: '+22% Continuous Armor Rip',
+    description: 'Mag-Grapple yanks enemies directly into the Diamond Sawblade contact arc for sustained armor shredding.',
+    dmgBonusPct: 22,
+  },
+  {
+    id: 'magnet_drum',
+    title: 'Tractor Vortex Uppercut',
+    pair: ['magnet', 'drum'],
+    bonusLabel: '+24% Knock-Up Impulse',
+    description: 'Pulling rivals off-balance with Mag-Grapple feeds them directly into the 12,000 RPM Drum Spinner.',
+    dmgBonusPct: 24,
+  },
+  {
+    id: 'emp_rail_breach',
+    title: 'EMP Overloaded Rail Breach',
+    pair: ['tesla', 'railgun'],
+    bonusLabel: '+28% Shield & Hull Penetration',
+    description: 'Tesla Arc drains enemy shields and stuns gyros, guaranteeing a point-blank Gauss Railgun slug.',
+    dmgBonusPct: 28,
+  },
+  {
+    id: 'jaw_flame_roast',
+    title: 'Hydraulic Clamp Incineration',
+    pair: ['crush_jaw', 'flame'],
+    bonusLabel: '+30% Pinned Melt Rate',
+    description: 'Hydraulic Jaws lock the opponent in place inside the 2,400°C Plasma Torch cone.',
+    dmgBonusPct: 30,
+  },
+  {
+    id: 'flipper_mortar',
+    title: 'Airborne Artillery Trap',
+    pair: ['flipper', 'mortar'],
+    bonusLabel: '+22% Landing Blast Force',
+    description: 'Pneumatic Flipper inverted toss sets up a guaranteed Plasma Mortar shell on landing.',
+    dmgBonusPct: 22,
+  },
+  {
+    id: 'orbital_storm',
+    title: 'Apex Storm Bombardment',
+    pair: ['lightning_strike', 'bomb_drop'],
+    bonusLabel: '+25% Area Denial Shockwave',
+    description: 'EMP Lightning immobilizes the target’s drivetrain right as the Aerial Bomb Drop impacts.',
+    dmgBonusPct: 25,
+  },
+];
+
+export function getActiveWeaponSynergies(weapons: WeaponId[], hoveredWeapon?: WeaponId): WeaponSynergySpec[] {
+  const pool = hoveredWeapon && !weapons.includes(hoveredWeapon) ? [...weapons, hoveredWeapon] : weapons;
+  return WEAPON_SYNERGY_CATALOG.filter((syn) => {
+    const [a, b] = syn.pair;
+    if (!pool.includes(a) || !pool.includes(b)) return false;
+    if (hoveredWeapon) {
+      return a === hoveredWeapon || b === hoveredWeapon || (weapons.includes(a) && weapons.includes(b));
+    }
+    return true;
+  });
+}
+
+export interface MassAndCogProfile {
+  totalMassKg: number;
+  massIndex: number;
+  cogForwardMm: number; // +forward (nose-heavy), -rear
+  cogVerticalMm: number; // height off arena deck in mm
+  cogLateralMm: number; // +right, -left
+  stabilityScore: number; // 0-100 anti-flip & traction balance
+  recoilTorqueNm: number;
+}
+
+export function computeBotMassAndCog(
+  config: BotConfig,
+  skills: SkillTree,
+  partUpgrades?: Record<string, number>,
+): MassAndCogProfile {
+  const stats = computeBotStats(config, skills, partUpgrades);
+  const totalMassKg = Math.round(stats.mass * 114); // 1.0 mass index ≈ 114 kg Heavyweight BattleBot standard
+
+  const weapons = getBotWeapons(config);
+  const placements = getBotWeaponPlacements(config);
+  let cogForwardMm = config.chassis === 'wedge' || config.chassis === 'rammer' ? 42 : -10;
+  let cogLateralMm = 0;
+  let cogVerticalMm =
+    config.chassis === 'behemoth' || config.chassis === 'juggernaut' || config.chassis === 'monolith'
+      ? 245
+      : config.chassis === 'spider' || config.chassis === 'micro'
+        ? 135
+        : config.chassis === 'wedge'
+          ? 125
+          : 175;
+
+  let recoilTorqueNm = 0;
+  weapons.forEach((wId, idx) => {
+    const wSpec = WEAPON_CATALOG[wId] || WEAPON_CATALOG.vspinner;
+    const zone = placements[idx]?.zone || (idx === 0 ? 'front' : idx === 1 ? 'top_front' : 'top_rear');
+    const wepWeightFactor = wSpec.damage * 0.65 + wSpec.impulse * 1.4;
+    if (zone === 'front' || zone === 'top_front') cogForwardMm += Math.round(wepWeightFactor * 1.6);
+    if (zone === 'rear' || zone === 'top_rear') cogForwardMm -= Math.round(wepWeightFactor * 1.5);
+    if (zone === 'left') cogLateralMm -= Math.round(wepWeightFactor * 1.3);
+    if (zone === 'right') cogLateralMm += Math.round(wepWeightFactor * 1.3);
+    if (zone === 'top_front' || zone === 'top_rear') cogVerticalMm += Math.round(wepWeightFactor * 1.1);
+    recoilTorqueNm += Math.round(wSpec.impulse * 28 + wSpec.damage * 9);
+  });
+
+  if (config.armor === 'tungsten' || config.armor === 'reactive_era') {
+    cogVerticalMm += 18;
+  } else if (config.armor === 'kevlar') {
+    cogVerticalMm -= 16;
+  }
+
+  if (config.drive === 'tracks' || config.drive === 'crawler_nuclear') {
+    cogVerticalMm -= 24;
+  } else if (config.drive === 'hover') {
+    cogVerticalMm += 28;
+  }
+
+  const offsetPenalty = Math.abs(cogForwardMm) * 0.16 + Math.abs(cogLateralMm) * 0.25 + Math.max(0, cogVerticalMm - 135) * 0.22;
+  const stabilityScore = Math.max(25, Math.min(99, Math.round(96 - offsetPenalty + skills.gyroStabilizer * 3)));
+
+  return {
+    totalMassKg,
+    massIndex: stats.mass,
+    cogForwardMm,
+    cogVerticalMm,
+    cogLateralMm,
+    stabilityScore,
+    recoilTorqueNm,
+  };
+}
+
 
 
