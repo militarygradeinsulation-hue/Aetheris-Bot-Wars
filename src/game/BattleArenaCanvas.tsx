@@ -13,9 +13,13 @@ import {
   type ArenaSnapshot,
   type BatteryMode,
   type BotConfig,
+  type ColorBlindMode,
   type CombatEvent,
+  type DestructibleProp,
+  type HazardState,
   type PlayerInputState,
 } from '../shared/types';
+import { createInitialSnapshot } from '../shared/physicsEngine';
 import { buildArenaEnvironment, type BuiltArenaScene } from './arenaBuilder';
 import { buildBotRig, syncBotRigToState, type BuiltBotRig } from './botBuilder';
 import { createDamageDecalPack } from './damageDecals';
@@ -38,8 +42,10 @@ export interface BattleArenaCanvasProps {
   inputRef: React.MutableRefObject<PlayerInputState>;
   onStepLocalPhysics?: (dt: number) => void;
   onCombatEvents?: (events: CombatEvent[]) => void;
-  cameraPreset?: 'chase' | 'first_person' | 'pilot_booth' | 'tactical' | 'cinematic';
+  cameraPreset?: 'chase' | 'first_person' | 'pilot_booth' | 'tactical' | 'cinematic' | 'spectator';
   cameraSensitivity?: number;
+  colorBlindMode?: ColorBlindMode;
+  ssaoEnabled?: boolean;
   explodedRatio?: number;
   lightingPreset?: StudioLightingPreset;
   turntableSpeed?: number;
@@ -81,6 +87,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   onCombatEvents,
   cameraPreset = 'chase',
   cameraSensitivity = 0.65,
+  colorBlindMode = 'none',
+  ssaoEnabled = true,
   explodedRatio = 0,
   lightingPreset = 'arena',
   turntableSpeed = 1,
@@ -101,6 +109,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   const onEventsRef = useRef(onCombatEvents);
   const camPresetRef = useRef(cameraPreset);
   const camSensitivityRef = useRef(cameraSensitivity);
+  const colorBlindRef = useRef<ColorBlindMode>(colorBlindMode);
+  const ssaoRef = useRef(ssaoEnabled);
   const explodedRatioRef = useRef(explodedRatio);
   const lightingPresetRef = useRef<StudioLightingPreset>(lightingPreset);
   const turntableSpeedRef = useRef(turntableSpeed);
@@ -117,6 +127,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   onEventsRef.current = onCombatEvents;
   camPresetRef.current = cameraPreset;
   camSensitivityRef.current = cameraSensitivity;
+  colorBlindRef.current = colorBlindMode;
+  ssaoRef.current = ssaoEnabled;
   explodedRatioRef.current = explodedRatio;
   lightingPresetRef.current = lightingPreset;
   turntableSpeedRef.current = turntableSpeed;
@@ -128,6 +140,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   const rebuildWorkshopBotRef = useRef<(() => void) | null>(null);
   const rebuildArenaRef = useRef<(() => void) | null>(null);
   const updateBatteryRef = useRef<(() => void) | null>(null);
+  const updateExposureRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     rebuildWorkshopBotRef.current?.();
@@ -142,6 +155,10 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   }, [batteryMode]);
 
   useEffect(() => {
+    updateExposureRef.current?.();
+  }, [ssaoEnabled]);
+
+  useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
@@ -152,7 +169,11 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.12;
+    const applyExposure = () => {
+      renderer.toneMappingExposure = ssaoRef.current ? 1.16 : 1.06;
+    };
+    applyExposure();
+    updateExposureRef.current = applyExposure;
     renderer.shadowMap.enabled = !isSoftwareGl;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -173,8 +194,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     applyBatteryPixelRatio();
     updateBatteryRef.current = applyBatteryPixelRatio;
 
-    const width = container.clientWidth || window.innerWidth;
-    const height = container.clientHeight || window.innerHeight;
+    const width = Math.max(1, container.clientWidth || window.innerWidth);
+    const height = Math.max(1, container.clientHeight || window.innerHeight);
     renderer.setSize(width, height);
     renderer.domElement.style.display = 'block';
     renderer.domElement.style.width = '100%';
@@ -192,8 +213,9 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     renderer.domElement.addEventListener('webglcontextrestored', handleContextRestored);
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(52, width / height, 0.2, 160);
+    const camera = new THREE.PerspectiveCamera(52, width / height, 0.2, 240);
     camera.position.set(0, 10, 15);
+    camera.lookAt(0, 0.5, 0);
 
     // Studio Environment Reflection (mandatory for PBR metals)
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
@@ -243,14 +265,14 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     impactFlashLight.position.set(0, 2, 0);
     scene.add(impactFlashLight);
 
-    // OrbitControls for Workshop showcase
+    // OrbitControls for Workshop & Arena 3D View showcase
     const orbit = new OrbitControls(camera, renderer.domElement);
     orbit.enableDamping = !isSoftwareGl;
     orbit.dampingFactor = 0.06;
-    orbit.minDistance = 2.8;
-    orbit.maxDistance = 8.5;
-    orbit.maxPolarAngle = Math.PI * 0.46;
-    orbit.minPolarAngle = 0.25;
+    orbit.minDistance = 2.4;
+    orbit.maxDistance = 42;
+    orbit.maxPolarAngle = Math.PI * 0.48;
+    orbit.minPolarAngle = 0.18;
     orbit.target.set(0, 0.45, 0);
     orbit.enabled = modeRef.current === 'workshop';
     orbit.addEventListener('start', () => {
@@ -321,42 +343,9 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
 
     let workshopBotRig: BuiltBotRig | null = null;
     const combatBotRigs = new Map<string, { rig: BuiltBotRig; configKey: string }>();
-
-    const rebuildArena = () => {
-      const aSpec = ARENA_CATALOG[arenaIdRef.current];
-      scene.background = new THREE.Color(aSpec.skyHex);
-      scene.fog = new THREE.FogExp2(aSpec.skyHex, 0.014);
-
-      if (arenaBuilt) {
-        scene.remove(arenaBuilt.group);
-        arenaBuilt.dispose();
-        arenaBuilt = null;
-      }
-      textures.dispose();
-      textures = createProceduralTextures(maxAnisotropy, arenaIdRef.current);
-      arenaBuilt = buildArenaEnvironment(arenaIdRef.current, textures, !isSoftwareGl);
-      scene.add(arenaBuilt.group);
-
-      const isWorkshop = modeRef.current === 'workshop';
-      turntableGroup.visible = isWorkshop;
-      orbit.enabled = isWorkshop;
-      if (isWorkshop) {
-        soundEngine.stopLoops();
-        camera.position.set(3.2, 2.1, 3.6);
-        orbit.target.set(0, 0.42, 0);
-        orbit.update();
-      } else {
-        camera.position.set(0, 12, 18);
-      }
-
-      // Clear stale combat rigs when changing mode
-      combatBotRigs.forEach((entry) => {
-        scene.remove(entry.rig.root);
-        entry.rig.dispose();
-      });
-      combatBotRigs.clear();
-      overlay.clearDynamic();
-    };
+    let workshopPreviewProps: DestructibleProp[] = [];
+    let workshopPreviewHazards: HazardState[] = [];
+    let prevMode: 'workshop' | 'combat' = modeRef.current;
 
     interface WorkshopBaseOffsets {
       armorFront: THREE.Vector3;
@@ -401,6 +390,76 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       scene.add(workshopBotRig.root);
     };
 
+    const rebuildArena = () => {
+      const aSpec = ARENA_CATALOG[arenaIdRef.current];
+      scene.background = new THREE.Color(aSpec.skyHex);
+      scene.fog = new THREE.FogExp2(aSpec.skyHex, 0.011);
+
+      if (arenaBuilt) {
+        scene.remove(arenaBuilt.group);
+        arenaBuilt.dispose();
+        arenaBuilt = null;
+      }
+      textures.dispose();
+      textures = createProceduralTextures(maxAnisotropy, arenaIdRef.current);
+      arenaBuilt = buildArenaEnvironment(arenaIdRef.current, textures, !isSoftwareGl);
+      scene.add(arenaBuilt.group);
+
+      // Rebuild workshop bot too so it never holds disposed texture handles
+      if (workshopBotRig) {
+        rebuildWorkshopBot();
+      }
+
+      const isWorkshop = modeRef.current === 'workshop';
+      const switchedMode = prevMode !== modeRef.current;
+      prevMode = modeRef.current;
+      turntableGroup.visible = isWorkshop;
+      orbit.enabled = isWorkshop;
+      if (isWorkshop) {
+        soundEngine.stopLoops();
+        // Populate signature arena hazards & destructible props for 3D Arena Preview in Workshop
+        const previewSnap = createInitialSnapshot('duel_1v1', arenaIdRef.current, [], 180);
+        workshopPreviewProps = previewSnap.props;
+        workshopPreviewHazards = previewSnap.hazards.map((h) => ({
+          ...h,
+          active:
+            h.kind === 'saw' ||
+            h.kind === 'spinner_blade' ||
+            h.kind === 'laser_grid' ||
+            h.kind === 'oil_slick',
+          warning: h.kind === 'crusher' || h.kind === 'emp_ring' || h.kind === 'lava_vent' || h.kind === 'acid_pool',
+        }));
+        arenaBuilt.syncDynamicProps(workshopPreviewProps, 0);
+        arenaBuilt.syncHazards(workshopPreviewHazards, 0.016, colorBlindRef.current);
+
+        if (workshopCameraAngleRef.current === 'arena_3d') {
+          camera.position.set(0, 14.5, 22.0);
+          orbit.target.set(0, 0.6, 0);
+          orbit.update();
+        } else if (switchedMode) {
+          camera.position.set(3.2, 2.1, 3.6);
+          orbit.target.set(0, 0.42, 0);
+          orbit.update();
+        }
+      } else {
+        workshopPreviewProps = [];
+        workshopPreviewHazards = [];
+        _curLook.set(0, 0.5, 0);
+        smoothFollowYaw = null;
+        lastProcessedEventId = 0;
+        camera.position.set(0, 12, 18);
+        camera.lookAt(0, 0.5, 0);
+      }
+
+      // Clear stale combat rigs when changing mode
+      combatBotRigs.forEach((entry) => {
+        scene.remove(entry.rig.root);
+        entry.rig.dispose();
+      });
+      combatBotRigs.clear();
+      overlay.clearDynamic();
+    };
+
     rebuildArenaRef.current = rebuildArena;
     rebuildWorkshopBotRef.current = rebuildWorkshopBot;
 
@@ -415,6 +474,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       if (!container) return;
       const w = container.clientWidth || window.innerWidth;
       const h = container.clientHeight || window.innerHeight;
+      if (w <= 0 || h <= 0) return;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
@@ -422,6 +482,9 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       applyViewShift();
     };
     window.addEventListener('resize', handleResize);
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => handleResize()) : null;
+    resizeObserver?.observe(container);
 
     // Loop & State Tracking
     const clock = new THREE.Clock();
@@ -433,6 +496,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     let workshopWeaponAngle = 0;
     let lastEcoRender = 0;
     let smoothFollowYaw: number | null = null;
+    _curLook.set(0, 0.5, 0);
 
     function applyEventDecal(ev: CombatEvent) {
       if (
@@ -464,13 +528,25 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
 
         if (ev.type === 'hit' || ev.type === 'crit') {
           const isCrit = ev.type === 'crit';
-          effects.spawnSparks(ev.x, ev.y, ev.z, isCrit ? 26 : 14, isCrit ? 0xf97316 : 0xfbbf24, isCrit ? 13 : 9);
+          // Scale procedural spark count and velocity directly with physical impact force & intensity
+          const impactForce = Math.max(1, ev.force ?? ev.intensity * 6);
+          const forceScale = Math.min(2.6, Math.max(0.65, impactForce / 7.5));
+          const sparkCount = Math.round((isCrit ? 24 : 12) * forceScale);
+          const sparkSpeed = (isCrit ? 12 : 8.5) * Math.min(1.8, 0.75 + forceScale * 0.45);
+          effects.spawnSparks(
+            ev.x,
+            ev.y,
+            ev.z,
+            sparkCount,
+            isCrit ? 0xf97316 : 0xfbbf24,
+            sparkSpeed,
+          );
           effects.spawnSmoke(ev.x, ev.y, ev.z, isCrit ? 4 : 2, isCrit ? 1.0 : 0.7, 0.26);
-          if (isCrit) {
-            effects.spawnFlames(ev.x, ev.y, ev.z, 4, 0, 0, 3.5, 0.85);
+          if (isCrit || forceScale > 1.45) {
+            effects.spawnFlames(ev.x, ev.y, ev.z, isCrit ? 4 : 2, 0, 0, 3.5 * forceScale, 0.85);
             impactFlashLight.position.set(ev.x, ev.y + 0.8, ev.z);
             impactFlashLight.color.setHex(0xff9e44);
-            impactFlashLight.intensity = 10;
+            impactFlashLight.intensity = 8 * forceScale;
             crowdExcitement = Math.min(1.0, crowdExcitement + 0.45);
             if (ev.intensity > 1.48) soundEngine.playCrowdCheer(0.75);
           }
@@ -789,12 +865,25 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       if (modeRef.current === 'workshop') {
         soundEngine.stopLoops();
         turntableGroup.visible = true;
+        if (workshopPreviewProps.length > 0) {
+          arenaBuilt?.syncDynamicProps(workshopPreviewProps, elapsed);
+        }
+        if (workshopPreviewHazards.length > 0) {
+          for (const h of workshopPreviewHazards) {
+            if (h.kind === 'laser_grid' || h.kind === 'spinner_blade') {
+              h.sweepAngle = elapsed * 0.9 + h.phase;
+            }
+          }
+          arenaBuilt?.syncHazards(workshopPreviewHazards, dt, colorBlindRef.current);
+        }
         if (--viewShiftProbe <= 0) {
           viewShiftProbe = 20;
           const dock = document.getElementById('workshop-dock');
           const dockRightEl = document.getElementById('workshop-dock-right');
           const w = renderer.domElement.clientWidth || window.innerWidth;
-          if (dock && dockRightEl && w >= 1024) {
+          if (workshopCameraAngleRef.current === 'arena_3d') {
+            viewShiftTarget = 0;
+          } else if (dock && dockRightEl && w >= 1024) {
             // Dual left & right customization panels: keep 3D bot centered in the middle!
             viewShiftTarget = 0;
           } else if (dock && w >= 640) {
@@ -873,7 +962,10 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
         // Damped 3D Camera Angle Presets in Workshop
         const targetAngle = workshopCameraAngleRef.current;
         if (targetAngle !== 'free') {
-          if (targetAngle === 'hero') {
+          if (targetAngle === 'arena_3d') {
+            _camGoal.set(0, 14.5, 22.0);
+            _lookGoal.set(0, 0.6, 0);
+          } else if (targetAngle === 'hero') {
             _camGoal.set(3.2, 2.1, 3.6);
             _lookGoal.set(0, 0.42, 0);
           } else if (targetAngle === 'low_wedge') {
@@ -892,7 +984,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           orbit.target.x = THREE.MathUtils.damp(orbit.target.x, _lookGoal.x, 7.5, dt);
           orbit.target.y = THREE.MathUtils.damp(orbit.target.y, _lookGoal.y, 7.5, dt);
           orbit.target.z = THREE.MathUtils.damp(orbit.target.z, _lookGoal.z, 7.5, dt);
-          if (camera.position.distanceToSquared(_camGoal) < 0.002) {
+          if (camera.position.distanceToSquared(_camGoal) < 0.015 && targetAngle !== 'arena_3d') {
             workshopCameraAngleRef.current = 'free';
             onManualOrbitRef.current?.();
           }
@@ -1046,9 +1138,9 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
 
         const snap = snapshotRef.current;
         if (snap) {
-          // Sync arena props & hazards
+          // Sync arena props & hazards (with Color-Blind Mode palette)
           arenaBuilt?.syncDynamicProps(snap.props, elapsed);
-          arenaBuilt?.syncHazards(snap.hazards, dt);
+          arenaBuilt?.syncHazards(snap.hazards, dt, colorBlindRef.current);
 
           // Sync bots
           const seenIds = new Set<string>();
@@ -1249,6 +1341,48 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
             } else if (preset === 'tactical') {
               _camGoal.set(playerBot.x * 0.55, 22, playerBot.z * 0.55 + 15);
               _lookGoal.set(playerBot.x * 0.5, 0.2, playerBot.z * 0.5);
+            } else if (preset === 'spectator') {
+              // Dedicated Spectator Camera Mode: cycles between 4 fixed ringside broadcast positions
+              // and a top-down tactical view every 5.5s, focusing on active arena events or combat centroid
+              const aliveBots = snap.bots.filter((b) => !b.isDead);
+              let focusX = playerBot.x;
+              let focusZ = playerBot.z;
+              if (snap.arenaEvent && snap.arenaEvent.x !== undefined && snap.arenaEvent.z !== undefined) {
+                focusX = snap.arenaEvent.x;
+                focusZ = snap.arenaEvent.z;
+              } else {
+                const activeHazard = snap.hazards.find((h) => h.active || h.warning);
+                if (activeHazard && activeHazard.kind !== 'saw') {
+                  focusX = activeHazard.x * 0.55 + playerBot.x * 0.45;
+                  focusZ = activeHazard.z * 0.55 + playerBot.z * 0.45;
+                } else if (aliveBots.length > 0) {
+                  focusX = aliveBots.reduce((acc, b) => acc + b.x, 0) / aliveBots.length;
+                  focusZ = aliveBots.reduce((acc, b) => acc + b.z, 0) / aliveBots.length;
+                }
+              }
+              const stageIdx = Math.floor(elapsed / 5.5) % 5;
+              const ringDist = arenaHalf + 0.8;
+              if (stageIdx === 0) {
+                // Top-Down Tactical Broadcast View
+                _camGoal.set(focusX * 0.25, 25.5, focusZ * 0.25 + 6.5);
+                _lookGoal.set(focusX * 0.5, 0.2, focusZ * 0.5);
+              } else if (stageIdx === 1) {
+                // South Ringside Corner Cam
+                _camGoal.set(-ringDist * 0.72, 4.2, ringDist * 0.85);
+                _lookGoal.set(focusX, 0.55, focusZ);
+              } else if (stageIdx === 2) {
+                // East Judge Box Cam
+                _camGoal.set(ringDist * 0.88, 4.8, 0);
+                _lookGoal.set(focusX, 0.5, focusZ);
+              } else if (stageIdx === 3) {
+                // North Gantry High Cam
+                _camGoal.set(ringDist * 0.65, 6.4, -ringDist * 0.82);
+                _lookGoal.set(focusX, 0.45, focusZ);
+              } else {
+                // West Low Ringside Action Cam
+                _camGoal.set(-ringDist * 0.88, 3.2, -ringDist * 0.35);
+                _lookGoal.set(focusX, 0.55, focusZ);
+              }
             } else if (preset === 'cinematic') {
               const orbitA = elapsed * 0.28 * sens;
               _camGoal.set(
@@ -1331,6 +1465,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       soundEngine.stopLoops();
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
+      resizeObserver?.disconnect();
       window.removeEventListener('resize', handleResize);
       renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
       renderer.domElement.removeEventListener('webglcontextrestored', handleContextRestored);
@@ -1369,5 +1504,19 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     );
   }
 
-  return <div ref={mountRef} className="w-full h-full select-none" />;
+  return (
+    <div className="relative w-full h-full select-none">
+      <div ref={mountRef} className="w-full h-full" />
+      {ssaoEnabled && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(circle at 50% 52%, rgba(0,0,0,0) 60%, rgba(2,6,14,0.28) 100%)',
+          }}
+        />
+      )}
+    </div>
+  );
 };

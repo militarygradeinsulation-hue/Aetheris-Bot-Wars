@@ -91,6 +91,7 @@ interface WorkshopDockProps {
   onStartFight: () => void;
   selectedArena?: ArenaId;
   onSelectArena?: (arenaId: ArenaId) => void;
+  onPreviewArena3D?: (arenaId: ArenaId) => void;
   profile: Pick<
     PlayerProfile,
     'ownedParts' | 'unlockedArenas' | 'partUpgrades' | 'level' | 'coins' | 'scrap' | 'favorites'
@@ -130,6 +131,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
   onStartFight,
   selectedArena = 'foundry',
   onSelectArena,
+  onPreviewArena3D,
   profile,
   onBuyPart,
   onUpgradePart,
@@ -152,8 +154,8 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
   const [showInspector, setShowInspector] = useState(false);
   // Searchable Part Library & Weight / Compatibility Tag Filters
   const [partSearch, setPartSearch] = useState('');
-  const [weightFilter, setWeightFilter] = useState<PartWeightFilter>('all');
-  const [compatFilter, setCompatFilter] = useState<PartCompatibilityTag>('all');
+  const [weightFilter, setWeightFilter] = useState<PartWeightFilter>('All');
+  const [compatFilter, setCompatFilter] = useState<PartCompatibilityTag>('All');
   // Dynamic Weapon Synergy Hover State
   const [hoveredWeaponId, setHoveredWeaponId] = useState<WeaponId | null>(null);
   // Drag-and-Drop Weapon Assembly State
@@ -315,7 +317,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
           const wl: WheelLayoutId = WHEEL_LAYOUT_CATALOG[rawCfg.wheelLayout as WheelLayoutId]
             ? (rawCfg.wheelLayout as WheelLayoutId)
             : '4wd_wide';
-          const weps = Array.isArray(rawCfg.weapons)
+          const weps: WeaponId[] = Array.isArray(rawCfg.weapons)
             ? rawCfg.weapons.filter((w): w is WeaponId => Boolean(WEAPON_CATALOG[w as WeaponId])).slice(0, 3)
             : WEAPON_CATALOG[rawCfg.weapon as WeaponId]
               ? [rawCfg.weapon as WeaponId]
@@ -1077,7 +1079,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                 {activeSynergies.map((syn) => {
                   const isPreview =
                     hoveredWeaponId &&
-                    syn.weapons.includes(hoveredWeaponId) &&
+                    syn.pair.includes(hoveredWeaponId) &&
                     !activeWeapons.includes(hoveredWeaponId);
                   return (
                     <div
@@ -1096,7 +1098,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                         <span className="ml-1.5 text-[10px] opacity-90">{syn.description}</span>
                       </div>
                       <span className="shrink-0 rounded bg-slate-950/70 px-1.5 py-0.5 font-mono-tabular text-[10px] font-extrabold text-amber-300">
-                        {syn.bonusTag}
+                        {syn.bonusLabel}
                       </span>
                     </div>
                   );
@@ -1779,7 +1781,10 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                     <div
                       key={aId}
                       onClick={() => {
-                        if (ensureOwned('arena', aId, ar.name)) onSelectArena?.(aId);
+                        if (ensureOwned('arena', aId, ar.name)) {
+                          onSelectArena?.(aId);
+                          onPreviewArena3D?.(aId);
+                        }
                       }}
                       role="button"
                       tabIndex={0}
@@ -1818,7 +1823,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                                   : 'bg-slate-900 text-sky-300'
                             }`}
                           >
-                            {!arenaUnlocked ? 'LOCKED' : active ? 'SELECTED' : 'Preview 3D'}
+                            {!arenaUnlocked ? 'LOCKED' : active ? 'VIEWING 3D' : 'Preview 3D'}
                           </span>
                         </div>
                       </div>

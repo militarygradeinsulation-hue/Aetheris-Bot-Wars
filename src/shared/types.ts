@@ -2695,59 +2695,59 @@ export function generateRandomBotName(currentName?: string): string {
 
 // ---- Part Weight & Compatibility Tags, Mass/CoG Inspector & Weapon Synergies ----
 
-export type PartWeightFilter = 'all' | 'light' | 'balanced' | 'heavy';
-export type PartCompatibilityTag = 'all' | 'kinetic' | 'thermal' | 'energy' | 'control';
+export type PartWeightFilter = 'All' | 'Light' | 'Balanced' | 'Heavy';
+export type PartCompatibilityTag = 'All' | 'Kinetic' | 'Thermal' | 'Energy' | 'Control';
 
-export function getPartWeightCategory(cat: PartCategory, id: string): 'light' | 'balanced' | 'heavy' {
+export function getPartWeightCategory(cat: PartCategory, id: string): 'Light' | 'Balanced' | 'Heavy' {
   if (cat === 'weapon') {
     const w = WEAPON_CATALOG[id as WeaponId];
-    if (!w) return 'balanced';
-    return w.damage >= 24 || w.impulse >= 11 ? 'heavy' : w.cooldown <= 0.7 ? 'light' : 'balanced';
+    if (!w) return 'Balanced';
+    return w.damage >= 24 || w.impulse >= 11 ? 'Heavy' : w.cooldown <= 0.7 ? 'Light' : 'Balanced';
   }
   if (cat === 'armor') {
     const a = ARMOR_CATALOG[id as ArmorId];
-    if (!a) return 'balanced';
-    return a.mass >= 1.25 ? 'heavy' : a.mass <= 1.0 ? 'light' : 'balanced';
+    if (!a) return 'Balanced';
+    return a.massBonus >= 0.25 ? 'Heavy' : a.massBonus <= 0 ? 'Light' : 'Balanced';
   }
   if (cat === 'chassis') {
     const c = CHASSIS_CATALOG[id as ChassisId];
-    if (!c) return 'balanced';
-    return c.massBonus >= 0.2 ? 'heavy' : c.massBonus <= 0 ? 'light' : 'balanced';
+    if (!c) return 'Balanced';
+    return c.baseMass >= 1.25 ? 'Heavy' : c.baseMass <= 0.9 ? 'Light' : 'Balanced';
   }
   if (cat === 'drive') {
     const d = DRIVE_CATALOG[id as DriveId];
-    if (!d) return 'balanced';
-    return d.maxSpeed >= 8.2 ? 'light' : d.knockbackResist >= 1.2 ? 'heavy' : 'balanced';
+    if (!d) return 'Balanced';
+    return d.maxSpeed >= 8.2 ? 'Light' : d.knockbackResist >= 1.2 ? 'Heavy' : 'Balanced';
   }
-  return 'balanced';
+  return 'Balanced';
 }
 
-export function getPartCompatibilityTag(cat: PartCategory, id: string): 'kinetic' | 'thermal' | 'energy' | 'control' {
+export function getPartCompatibilityTag(cat: PartCategory, id: string): 'Kinetic' | 'Thermal' | 'Energy' | 'Control' {
   if (cat === 'weapon') {
-    if (id === 'flame' || id === 'cryo_jet' || id === 'mortar' || id === 'bomb_drop') return 'thermal';
-    if (id === 'tesla' || id === 'laser' || id === 'railgun' || id === 'lightning_strike') return 'energy';
-    if (id === 'flipper' || id === 'magnet' || id === 'crush_jaw') return 'control';
-    return 'kinetic';
+    if (id === 'flame' || id === 'cryo_jet' || id === 'mortar' || id === 'bomb_drop') return 'Thermal';
+    if (id === 'tesla' || id === 'laser' || id === 'railgun' || id === 'lightning_strike') return 'Energy';
+    if (id === 'flipper' || id === 'magnet' || id === 'crush_jaw') return 'Control';
+    return 'Kinetic';
   }
   if (cat === 'armor') {
-    if (id === 'ceramic') return 'thermal';
-    if (id === 'aetherium' || id === 'nanoweave') return 'energy';
-    if (id === 'kevlar') return 'control';
-    return 'kinetic';
+    if (id === 'ceramic') return 'Thermal';
+    if (id === 'aetherium' || id === 'nanoweave') return 'Energy';
+    if (id === 'kevlar') return 'Control';
+    return 'Kinetic';
   }
   if (cat === 'chassis') {
-    if (id === 'wedge' || id === 'spider' || id === 'claw') return 'control';
-    if (id === 'ufo' || id === 'hover_disc') return 'energy';
-    if (id === 'behemoth' || id === 'juggernaut') return 'thermal';
-    return 'kinetic';
+    if (id === 'wedge' || id === 'spider' || id === 'claw') return 'Control';
+    if (id === 'ufo' || id === 'hover_disc') return 'Energy';
+    if (id === 'behemoth' || id === 'juggernaut') return 'Thermal';
+    return 'Kinetic';
   }
   if (cat === 'drive') {
-    if (id === 'hover' || id === 'maglev' || id === 'crawler_nuclear') return 'energy';
-    if (id === 'omni' || id === 'mecanum') return 'control';
-    if (id === 'turbo') return 'thermal';
-    return 'kinetic';
+    if (id === 'hover' || id === 'maglev' || id === 'crawler_nuclear') return 'Energy';
+    if (id === 'omni' || id === 'mecanum') return 'Control';
+    if (id === 'turbo') return 'Thermal';
+    return 'Kinetic';
   }
-  return 'kinetic';
+  return 'Kinetic';
 }
 
 export interface WeaponSynergySpec {
@@ -2848,6 +2848,10 @@ export function getActiveWeaponSynergies(weapons: WeaponId[], hoveredWeapon?: We
 
 export interface MassAndCogProfile {
   totalMassKg: number;
+  chassisMassKg: number;
+  armorMassKg: number;
+  weaponsMassKg: number;
+  driveMassKg: number;
   massIndex: number;
   cogForwardMm: number; // +forward (nose-heavy), -rear
   cogVerticalMm: number; // height off arena deck in mm
@@ -2862,10 +2866,17 @@ export function computeBotMassAndCog(
   partUpgrades?: Record<string, number>,
 ): MassAndCogProfile {
   const stats = computeBotStats(config, skills, partUpgrades);
-  const totalMassKg = Math.round(stats.mass * 114); // 1.0 mass index ≈ 114 kg Heavyweight BattleBot standard
+  const chassisSpec = CHASSIS_CATALOG[config.chassis] || CHASSIS_CATALOG.wedge;
+  const armorSpec = ARMOR_CATALOG[config.armor] || ARMOR_CATALOG.titanium;
+  const driveSpec = DRIVE_CATALOG[config.drive] || DRIVE_CATALOG.omni;
+
+  const chassisMassKg = Math.round(chassisSpec.baseMass * 58);
+  const armorMassKg = Math.round((1 + armorSpec.massBonus) * 28);
+  const driveMassKg = Math.round(driveSpec.knockbackResist * 16);
 
   const weapons = getBotWeapons(config);
   const placements = getBotWeaponPlacements(config);
+  let weaponsMassKg = 0;
   let cogForwardMm = config.chassis === 'wedge' || config.chassis === 'rammer' ? 42 : -10;
   let cogLateralMm = 0;
   let cogVerticalMm =
@@ -2882,6 +2893,7 @@ export function computeBotMassAndCog(
     const wSpec = WEAPON_CATALOG[wId] || WEAPON_CATALOG.vspinner;
     const zone = placements[idx]?.zone || (idx === 0 ? 'front' : idx === 1 ? 'top_front' : 'top_rear');
     const wepWeightFactor = wSpec.damage * 0.65 + wSpec.impulse * 1.4;
+    weaponsMassKg += Math.round(8 + wepWeightFactor * 0.48);
     if (zone === 'front' || zone === 'top_front') cogForwardMm += Math.round(wepWeightFactor * 1.6);
     if (zone === 'rear' || zone === 'top_rear') cogForwardMm -= Math.round(wepWeightFactor * 1.5);
     if (zone === 'left') cogLateralMm -= Math.round(wepWeightFactor * 1.3);
@@ -2902,11 +2914,16 @@ export function computeBotMassAndCog(
     cogVerticalMm += 28;
   }
 
+  const totalMassKg = Math.max(60, chassisMassKg + armorMassKg + driveMassKg + weaponsMassKg);
   const offsetPenalty = Math.abs(cogForwardMm) * 0.16 + Math.abs(cogLateralMm) * 0.25 + Math.max(0, cogVerticalMm - 135) * 0.22;
   const stabilityScore = Math.max(25, Math.min(99, Math.round(96 - offsetPenalty + skills.gyroStabilizer * 3)));
 
   return {
     totalMassKg,
+    chassisMassKg,
+    armorMassKg,
+    weaponsMassKg,
+    driveMassKg,
     massIndex: stats.mass,
     cogForwardMm,
     cogVerticalMm,

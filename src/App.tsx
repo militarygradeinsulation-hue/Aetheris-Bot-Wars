@@ -549,6 +549,7 @@ export default function App() {
       sfx: profile.sfxVolume ?? 0.85,
       crowd: profile.crowdVolume ?? 0.7,
     });
+    soundEngine.setHapticFeedback(profile.hapticFeedback ?? true);
     voiceCommentator.setVolume(
       (profile.masterVolume ?? 0.85) * (profile.commentaryVolume ?? 0.9),
     );
@@ -558,7 +559,30 @@ export default function App() {
     profile.sfxVolume,
     profile.crowdVolume,
     profile.commentaryVolume,
+    profile.hapticFeedback,
   ]);
+
+  // Configurable Auto-Save Frequency Timer for prolonged Workshop & Fusion Lab sessions
+  useEffect(() => {
+    const intervalSec = Math.max(5, Math.min(120, profile.autoSaveIntervalSec ?? 15));
+    const timer = window.setInterval(() => {
+      const uid = accountLoadedUidRef.current;
+      savePlayerProfile(profileRef.current, uid ?? undefined);
+      try {
+        localStorage.setItem(
+          'aetheris_workshop_autosave_backup_v1',
+          JSON.stringify({
+            savedAt: new Date().toISOString(),
+            botConfig: profileRef.current.botConfig,
+            customGarageBots: profileRef.current.customGarageBots ?? [],
+          }),
+        );
+      } catch {
+        // Ignore storage quota warnings
+      }
+    }, intervalSec * 1000);
+    return () => window.clearInterval(timer);
+  }, [profile.autoSaveIntervalSec]);
 
   useEffect(() => {
     if (sceneMode === 'workshop') {
@@ -1129,8 +1153,10 @@ export default function App() {
               : c === 'pilot_booth'
                 ? 'tactical'
                 : c === 'tactical'
-                  ? 'cinematic'
-                  : 'chase',
+                  ? 'spectator'
+                  : c === 'spectator'
+                    ? 'cinematic'
+                    : 'chase',
         );
         return;
       }
@@ -1395,7 +1421,12 @@ export default function App() {
 
   // Start Offline / Local Arena Match
   const startLocalMatch = useCallback(
-    (mode: LocalLaunchMode, clanWar = false) => {
+    (
+      mode: LocalLaunchMode,
+      clanWar = false,
+      overrideBotConfig?: BotConfig,
+      extraModifiers?: MatchModifierId[],
+    ) => {
       soundEngine.unlock();
       matchRewardAppliedRef.current = false;
       lastCountdownCeilRef.current = 3;
@@ -1406,7 +1437,12 @@ export default function App() {
       activeCampaignIdRef.current = null;
       setMatchResult(null);
 
-      const isTrad = Boolean(profile.traditionalMode) || selectedModifiers.includes('traditional_rules');
+      const botCfgToUse = overrideBotConfig ?? profile.botConfig;
+      const mergedMods = extraModifiers
+        ? [...new Set([...selectedModifiers, ...extraModifiers])]
+        : selectedModifiers;
+
+      const isTrad = Boolean(profile.traditionalMode) || mergedMods.includes('traditional_rules');
       const rawArenaToUse: ArenaId =
         mode === 'gauntlet'
           ? GAUNTLET_ARENA_ORDER[(profile.gauntletStage - 1) % GAUNTLET_ARENA_ORDER.length]
@@ -1420,7 +1456,7 @@ export default function App() {
           id: profile.id,
           name: profile.callsign,
           clanTag: profile.clanTag,
-          config: profile.botConfig,
+          config: botCfgToUse,
           skills: profile.skills,
           partUpgrades: profile.partUpgrades,
           isBot: false,
@@ -1572,12 +1608,13 @@ export default function App() {
 
       const effectiveModifiers: MatchModifierId[] =
         mode === 'practice'
-          ? isTrad
-            ? ['traditional_rules']
-            : []
-          : isTrad && !selectedModifiers.includes('traditional_rules')
-            ? [...selectedModifiers, 'traditional_rules']
-            : selectedModifiers;
+          ? [
+              ...(isTrad ? (['traditional_rules'] as MatchModifierId[]) : []),
+              ...(extraModifiers ?? []),
+            ]
+          : isTrad && !mergedMods.includes('traditional_rules')
+            ? [...mergedMods, 'traditional_rules']
+            : mergedMods;
       const snap = createInitialSnapshot(mode as GameMode, arenaToUse, roster, selectedDuration, {
         modifiers: effectiveModifiers,
       });
@@ -1591,9 +1628,9 @@ export default function App() {
       const firstRival = roster.find((r) => r.team !== 0);
       voiceCommentator.announceMatchStart(
         arenaToUse,
-        profile.botConfig.name,
+        botCfgToUse.name,
         firstRival?.config.name,
-        profile.botConfig,
+        botCfgToUse,
         firstRival?.config,
       );
     },
@@ -2164,6 +2201,8 @@ export default function App() {
         onStepLocalPhysics={sceneMode === 'combat' && !isMultiplayerMatch ? stepLocalPhysics : undefined}
         cameraPreset={cameraPreset}
         cameraSensitivity={profile.cameraSensitivity ?? 0.65}
+        colorBlindMode={profile.colorBlindMode ?? 'none'}
+        ssaoEnabled={profile.ssaoEnabled ?? true}
         explodedRatio={explodedRatio}
         lightingPreset={lightingPreset}
         turntableSpeed={turntableSpeed}
@@ -2517,7 +2556,7 @@ export default function App() {
 
       {/* Campaign Pit-Stop Garage Banner when returning from a Campaign fight for repairs/upgrades */}
       {sceneMode === 'workshop' && resumeCampaignLevelId && (
-        <div className="fixed top-[104px] sm:top-[108px] left-1/2 -translate-x-1/2 z-30 w-[94vw] max-w-xl rounded-2xl border border-emerald-500/60 bg-[#111820]/95 px-4 py-2.5 shadow-2xl backdrop-blur-md flex flex-wrap items-center justify-between gap-2">
+        <div className="fixed top-[104px] sm:top-[108px] left-1/2 -translate-x-1/2 z-30 w-[94vw] max-w-xl rounded-2xl border border-emerald-500/60 bg-[#111820]/96 px-4 py-2.5 shadow-2xl flex flex-wrap items-center justify-between gap-2">
           <div className="text-xs text-slate-200">
             <span className="font-bold text-emerald-300">Garage Pit-Stop · Hull 100% Repaired</span>
             <span className="hidden sm:inline text-slate-400"> — Upgrade weapons, armor &amp; skills below</span>
@@ -2560,6 +2599,10 @@ export default function App() {
           onChange={handleBotConfigChange}
           selectedArena={selectedArena}
           onSelectArena={setSelectedArena}
+          onPreviewArena3D={(arena) => {
+            setSelectedArena(arena);
+            setWorkshopCameraAngle('arena_3d');
+          }}
           profile={profile}
           onBuyPart={handleBuyPart}
           onUpgradePart={handleUpgradePart}
@@ -2614,6 +2657,11 @@ export default function App() {
         onSelectBotToPlay={handleBotConfigChange}
         onSaveCustomBotToRoster={handleSaveCustomBotToRoster}
         onDeleteCustomBotFromRoster={handleDeleteCustomBotFromRoster}
+        onLaunchTestRange={(hybridConfig) => {
+          handleBotConfigChange(hybridConfig);
+          setGarageOpen(false);
+          startLocalMatch('practice', false, hybridConfig, ['frictionless_sandbox', 'no_hazards']);
+        }}
         onClose={() => setGarageOpen(false)}
       />
 
@@ -2719,6 +2767,12 @@ export default function App() {
           adminSeat={adminSeat}
           cameraPreset={cameraPreset}
           cameraSensitivity={profile.cameraSensitivity ?? 0.65}
+          colorBlindMode={profile.colorBlindMode ?? 'none'}
+          showDamageNumbers={profile.showDamageNumbers ?? true}
+          momentumTrajectory={profile.momentumTrajectory ?? true}
+          onToggleDamageNumbers={() =>
+            updateProfile({ showDamageNumbers: !(profile.showDamageNumbers ?? true) })
+          }
           muted={profile.muted}
           commentaryMuted={Boolean(profile.commentaryMuted)}
           controlScheme={activeScheme}
@@ -2735,8 +2789,10 @@ export default function App() {
                   : c === 'pilot_booth'
                     ? 'tactical'
                     : c === 'tactical'
-                      ? 'cinematic'
-                      : 'chase',
+                      ? 'spectator'
+                      : c === 'spectator'
+                        ? 'cinematic'
+                        : 'chase',
             )
           }
           onSelectCamera={setCameraPreset}

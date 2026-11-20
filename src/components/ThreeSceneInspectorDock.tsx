@@ -15,7 +15,13 @@ import {
 } from 'lucide-react';
 import type { StudioLightingPreset } from './LiveVoiceCopilot';
 
-export type WorkshopCameraAngle = 'free' | 'hero' | 'low_wedge' | 'top_blueprint' | 'weapon_macro';
+export type WorkshopCameraAngle =
+  | 'free'
+  | 'hero'
+  | 'low_wedge'
+  | 'top_blueprint'
+  | 'weapon_macro'
+  | 'arena_3d';
 
 export interface ThreeSceneInspectorDockProps {
   explodedRatio: number;
@@ -160,6 +166,7 @@ export const ThreeSceneInspectorDock: React.FC<ThreeSceneInspectorDockProps> = (
                 { id: 'low_wedge', label: 'Low Deck' },
                 { id: 'weapon_macro', label: 'Weapon' },
                 { id: 'top_blueprint', label: 'Top' },
+                { id: 'arena_3d', label: 'Arena 3D' },
               ] as const
             ).map((cam) => (
               <button

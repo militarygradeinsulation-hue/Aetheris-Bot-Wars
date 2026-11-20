@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   ARENA_CATALOG,
   type ArenaId,
+  type ColorBlindMode,
   type DestructibleProp,
   type HazardState,
 } from '../shared/types';
@@ -20,7 +21,7 @@ export interface BuiltArenaScene {
   propMeshes: Map<string, THREE.Group>;
   hazardMeshes: Map<string, HazardMeshEntry>;
   syncDynamicProps: (props: DestructibleProp[], time: number) => void;
-  syncHazards: (hazards: HazardState[], dt: number) => void;
+  syncHazards: (hazards: HazardState[], dt: number, colorBlindMode?: ColorBlindMode) => void;
   syncCrowd: (time: number, excitement: number) => void;
   dispose: () => void;
 }
@@ -1761,25 +1762,50 @@ export function buildArenaEnvironment(
         }
       }
     },
-    syncHazards: (hazards: HazardState[], dt: number) => {
+    syncHazards: (hazards: HazardState[], dt: number, colorBlindMode: ColorBlindMode = 'none') => {
       const nowSec = performance.now() * 0.001;
+      const warnColorHex =
+        colorBlindMode === 'blue_orange'
+          ? 0xf97316
+          : colorBlindMode === 'cyan_yellow'
+            ? 0xfacc15
+            : 0xf59e0b;
+      const activeDangerHex =
+        colorBlindMode === 'blue_orange'
+          ? 0x38bdf8
+          : colorBlindMode === 'cyan_yellow'
+            ? 0x06b6d4
+            : 0xef4444;
+
       for (const h of hazards) {
         const entry = ensureHazardMesh(h);
+        // Accelerating 3-second floor plate strobe frequency as activation approaches
+        const rem = h.warningTimeLeft ?? 1.5;
+        const urgencyFreq = rem <= 1.0 ? 22 : rem <= 2.0 ? 15 : 10;
+        const flashPulse = Math.abs(Math.sin(nowSec * urgencyFreq));
+
         if (h.kind === 'saw') {
           entry.movingPart.rotation.y += dt * (h.active ? 16 : h.warning ? 7 : 2);
           entry.movingPart.position.y = h.active ? 0.16 : h.warning ? 0.03 : -0.05;
         } else if (h.kind === 'flipper_pad') {
-          entry.movingPart.position.y = h.active ? 0.36 : h.warning ? 0.12 : 0.07;
+          entry.movingPart.position.y = h.active ? 0.36 : h.warning ? 0.09 + flashPulse * 0.05 : 0.07;
         } else if ((h.kind === 'emp_ring' || h.kind === 'lava_vent' || h.kind === 'acid_pool') && entry.ringMat) {
-          const baseColor = h.kind === 'lava_vent' ? 0xf97316 : h.kind === 'acid_pool' ? 0x10b981 : 0xa855f7;
+          const baseColor =
+            colorBlindMode !== 'none'
+              ? activeDangerHex
+              : h.kind === 'lava_vent'
+                ? 0xf97316
+                : h.kind === 'acid_pool'
+                  ? 0x10b981
+                  : 0xa855f7;
           if (h.active) {
             entry.ringMat.color.setHex(baseColor);
             entry.ringMat.opacity = 0.88;
             entry.movingPart.scale.setScalar(1.06);
           } else if (h.warning) {
-            entry.ringMat.color.setHex(0xf59e0b);
-            entry.ringMat.opacity = 0.45 + Math.abs(Math.sin(nowSec * 10)) * 0.35;
-            entry.movingPart.scale.setScalar(1.0);
+            entry.ringMat.color.setHex(warnColorHex);
+            entry.ringMat.opacity = 0.35 + flashPulse * 0.58;
+            entry.movingPart.scale.setScalar(0.98 + flashPulse * 0.06);
           } else {
             entry.ringMat.color.setHex(baseColor);
             entry.ringMat.opacity = 0.22;
@@ -1791,23 +1817,25 @@ export function buildArenaEnvironment(
           entry.movingPart.position.set(vib, 0.04 + cy * 3.85, vib);
           if (entry.ringMat) {
             if (h.active) {
-              entry.ringMat.color.setHex(0xef4444);
+              entry.ringMat.color.setHex(activeDangerHex);
               entry.ringMat.opacity = 0.92;
             } else if (h.warning) {
-              entry.ringMat.color.setHex(0xf97316);
-              entry.ringMat.opacity = 0.42 + Math.abs(Math.sin(nowSec * 12)) * 0.45;
+              entry.ringMat.color.setHex(warnColorHex);
+              entry.ringMat.opacity = 0.38 + flashPulse * 0.55;
             } else {
-              entry.ringMat.color.setHex(0xf59e0b);
+              entry.ringMat.color.setHex(warnColorHex);
               entry.ringMat.opacity = 0.14;
             }
           }
           if (entry.emissiveMat) {
-            entry.emissiveMat.emissive.setHex(h.active ? 0xef4444 : h.warning ? 0xf97316 : 0xf59e0b);
-            entry.emissiveMat.emissiveIntensity = h.active ? 2.1 : h.warning ? 1.5 : 0.35;
+            entry.emissiveMat.emissive.setHex(
+              h.active ? activeDangerHex : h.warning ? warnColorHex : 0xf59e0b,
+            );
+            entry.emissiveMat.emissiveIntensity = h.active ? 2.1 : h.warning ? 1.2 + flashPulse * 0.8 : 0.35;
           }
         } else if (h.kind === 'pit') {
           // Trap doors slide apart when the pit opens
-          const open = h.active ? 1 : h.warning ? 0.15 + Math.abs(Math.sin(nowSec * 10)) * 0.1 : 0;
+          const open = h.active ? 1 : h.warning ? 0.15 + flashPulse * 0.12 : 0;
           const doors = entry.movingPart;
           const cur = doors.userData.open ?? 0;
           const next = cur + (open - cur) * Math.min(1, dt * 7);
@@ -1815,8 +1843,8 @@ export function buildArenaEnvironment(
           doors.children[0].position.z = -next * h.radius * 1.05;
           doors.children[1].position.z = next * h.radius * 1.05;
           if (entry.ringMat) {
-            entry.ringMat.color.setHex(h.active ? 0xef4444 : h.warning ? 0xf59e0b : 0x22d3ee);
-            entry.ringMat.opacity = h.warning ? 0.45 + Math.abs(Math.sin(nowSec * 12)) * 0.45 : h.active ? 0.85 : 0.35;
+            entry.ringMat.color.setHex(h.active ? activeDangerHex : h.warning ? warnColorHex : 0x22d3ee);
+            entry.ringMat.opacity = h.warning ? 0.4 + flashPulse * 0.52 : h.active ? 0.85 : 0.35;
           }
         } else if (h.kind === 'lightning') {
           entry.root.position.set(h.x, 0, h.z);
@@ -1829,8 +1857,8 @@ export function buildArenaEnvironment(
             boltMat.opacity *= Math.exp(-dt * 14);
           }
           if (entry.ringMat) {
-            entry.ringMat.color.setHex(h.active ? 0xffffff : 0x60a5fa);
-            entry.ringMat.opacity = h.active ? 0.95 : h.warning ? 0.35 + Math.abs(Math.sin(nowSec * 14)) * 0.55 : 0;
+            entry.ringMat.color.setHex(h.active ? 0xffffff : h.warning ? warnColorHex : 0x60a5fa);
+            entry.ringMat.opacity = h.active ? 0.95 : h.warning ? 0.35 + flashPulse * 0.58 : 0;
           }
         } else if (h.kind === 'bomb_drop') {
           entry.root.position.set(h.x, 0, h.z);
@@ -1839,8 +1867,8 @@ export function buildArenaEnvironment(
           entry.movingPart.position.y = 0.6 + by * 13.5;
           entry.movingPart.rotation.y += dt * 6;
           if (entry.ringMat) {
-            entry.ringMat.color.setHex(h.active ? 0xef4444 : 0xf97316);
-            entry.ringMat.opacity = h.active ? 0.95 : h.warning ? 0.4 + Math.abs(Math.sin(nowSec * 16)) * 0.55 : 0;
+            entry.ringMat.color.setHex(h.active ? activeDangerHex : warnColorHex);
+            entry.ringMat.opacity = h.active ? 0.95 : h.warning ? 0.38 + flashPulse * 0.58 : 0;
           }
         } else if (h.kind === 'oil_slick') {
           const ignited = Boolean(h.ignited);
@@ -1849,7 +1877,7 @@ export function buildArenaEnvironment(
             entry.movingPart.rotation.y += dt * 2.5;
           }
           if (entry.emissiveMat) {
-            entry.emissiveMat.emissive.setHex(ignited ? 0xf97316 : 0x1e1b4b);
+            entry.emissiveMat.emissive.setHex(ignited ? warnColorHex : 0x1e1b4b);
             entry.emissiveMat.emissiveIntensity = ignited ? 1.8 : 0.25;
           }
         } else if (h.kind === 'laser_grid') {
@@ -1861,11 +1889,11 @@ export function buildArenaEnvironment(
             beamMesh.scale.z = h.active ? 1.0 : 0.35;
           }
           if (entry.ringMat) {
-            entry.ringMat.color.setHex(h.active ? 0xf43f5e : h.warning ? 0xf59e0b : 0x64748b);
-            entry.ringMat.opacity = h.active ? 0.65 : h.warning ? 0.35 + Math.abs(Math.sin(nowSec * 12)) * 0.4 : 0.14;
+            entry.ringMat.color.setHex(h.active ? activeDangerHex : h.warning ? warnColorHex : 0x64748b);
+            entry.ringMat.opacity = h.active ? 0.65 : h.warning ? 0.35 + flashPulse * 0.52 : 0.14;
           }
           if (entry.emissiveMat) {
-            entry.emissiveMat.emissiveIntensity = h.active ? 2.8 : h.warning ? 1.2 : 0.25;
+            entry.emissiveMat.emissiveIntensity = h.active ? 2.8 : h.warning ? 1.2 + flashPulse * 0.8 : 0.25;
           }
         } else if (h.kind === 'spinner_blade') {
           const targetY = h.active ? 0.14 : h.warning ? -0.14 : -0.44;
@@ -1873,19 +1901,19 @@ export function buildArenaEnvironment(
           entry.movingPart.rotation.y = h.sweepAngle ?? 0;
           if (entry.ringMat) {
             if (h.active) {
-              entry.ringMat.color.setHex(0xef4444);
+              entry.ringMat.color.setHex(activeDangerHex);
               entry.ringMat.opacity = 0.65;
             } else if (h.warning) {
-              entry.ringMat.color.setHex(0xf59e0b);
-              entry.ringMat.opacity = 0.35 + Math.abs(Math.sin(nowSec * 12)) * 0.45;
+              entry.ringMat.color.setHex(warnColorHex);
+              entry.ringMat.opacity = 0.35 + flashPulse * 0.52;
             } else {
               entry.ringMat.color.setHex(0x64748b);
               entry.ringMat.opacity = 0.12;
             }
           }
           if (entry.emissiveMat) {
-            entry.emissiveMat.emissive.setHex(h.active ? 0xef4444 : h.warning ? 0xf59e0b : 0x475569);
-            entry.emissiveMat.emissiveIntensity = h.active ? 1.6 : h.warning ? 1.1 : 0.2;
+            entry.emissiveMat.emissive.setHex(h.active ? activeDangerHex : h.warning ? warnColorHex : 0x475569);
+            entry.emissiveMat.emissiveIntensity = h.active ? 1.6 : h.warning ? 1.1 + flashPulse * 0.6 : 0.2;
           }
         }
       }

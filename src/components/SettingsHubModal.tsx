@@ -472,6 +472,125 @@ export const SettingsHubModal: React.FC<SettingsHubModalProps> = ({
             </div>
           </section>
 
+          {/* 3.5 Accessibility, Telemetry Overlays, Haptics & Auto-Save */}
+          <section className="rounded-2xl border border-slate-800 bg-[#161D28] p-4 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-amber-300">
+              <Sparkles className="h-4 w-4" />
+              <span>Accessibility, Visual Filters & Telemetry</span>
+            </div>
+
+            <div>
+              <div className="text-[11px] font-semibold text-slate-400 mb-1.5">
+                Color-Blind Hazard Warning Mode
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(
+                  [
+                    { id: 'none', label: 'Standard Red' },
+                    { id: 'blue_orange', label: 'Blue / Orange' },
+                    { id: 'cyan_yellow', label: 'Cyan / Yellow' },
+                  ] as const
+                ).map((cb) => (
+                  <button
+                    key={cb.id}
+                    type="button"
+                    onClick={() => onUpdateProfile({ colorBlindMode: cb.id })}
+                    className={`rounded-xl border min-h-[42px] px-2 text-xs font-bold transition cursor-pointer ${
+                      (profile.colorBlindMode ?? 'none') === cb.id
+                        ? 'border-sky-400 bg-sky-500/20 text-sky-200'
+                        : 'border-slate-800 bg-[#0D1118] text-slate-300'
+                    }`}
+                  >
+                    {cb.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateProfile({ hapticFeedback: !(profile.hapticFeedback ?? true) })
+                }
+                className={`flex items-center justify-between rounded-xl border px-3 min-h-[42px] text-xs font-bold transition cursor-pointer ${
+                  (profile.hapticFeedback ?? true)
+                    ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200'
+                    : 'border-slate-800 bg-[#0D1118] text-slate-400'
+                }`}
+              >
+                <span>Haptic Vibration</span>
+                <span>{(profile.hapticFeedback ?? true) ? 'ON' : 'OFF'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateProfile({ ssaoEnabled: !(profile.ssaoEnabled ?? true) })
+                }
+                className={`flex items-center justify-between rounded-xl border px-3 min-h-[42px] text-xs font-bold transition cursor-pointer ${
+                  (profile.ssaoEnabled ?? true)
+                    ? 'border-sky-500/50 bg-sky-500/15 text-sky-200'
+                    : 'border-slate-800 bg-[#0D1118] text-slate-400'
+                }`}
+              >
+                <span>SSAO Contrast</span>
+                <span>{(profile.ssaoEnabled ?? true) ? 'ON' : 'OFF'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateProfile({ showDamageNumbers: !(profile.showDamageNumbers ?? true) })
+                }
+                className={`flex items-center justify-between rounded-xl border px-3 min-h-[42px] text-xs font-bold transition cursor-pointer ${
+                  (profile.showDamageNumbers ?? true)
+                    ? 'border-amber-500/50 bg-amber-500/15 text-amber-200'
+                    : 'border-slate-800 bg-[#0D1118] text-slate-400'
+                }`}
+              >
+                <span>Hit Damage Numbers</span>
+                <span>{(profile.showDamageNumbers ?? true) ? 'ON' : 'OFF'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateProfile({ momentumTrajectory: !(profile.momentumTrajectory ?? true) })
+                }
+                className={`flex items-center justify-between rounded-xl border px-3 min-h-[42px] text-xs font-bold transition cursor-pointer ${
+                  (profile.momentumTrajectory ?? true)
+                    ? 'border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-200'
+                    : 'border-slate-800 bg-[#0D1118] text-slate-400'
+                }`}
+              >
+                <span>Momentum Line</span>
+                <span>{(profile.momentumTrajectory ?? true) ? 'ON' : 'OFF'}</span>
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-[#0D1118] p-3 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-slate-300">
+                <span>Workshop & Fusion Auto-Save Frequency</span>
+                <span className="font-mono-tabular font-extrabold text-amber-400">
+                  Every {profile.autoSaveIntervalSec ?? 15}s
+                </span>
+              </div>
+              <input
+                type="range"
+                min={5}
+                max={120}
+                step={5}
+                value={profile.autoSaveIntervalSec ?? 15}
+                onChange={(e) =>
+                  onUpdateProfile({ autoSaveIntervalSec: parseInt(e.target.value, 10) })
+                }
+                aria-label="Auto-Save Frequency Seconds"
+                className="w-full accent-amber-500 cursor-pointer"
+              />
+            </div>
+          </section>
+
           {/* 4. iOS Download & Sign Out */}
           <section className="rounded-2xl border border-slate-800 bg-[#161D28] p-4 flex flex-wrap items-center justify-between gap-3">
             <PWAInstallButton alwaysShowIOSOption />

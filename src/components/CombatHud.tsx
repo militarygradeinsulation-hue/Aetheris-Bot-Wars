@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Activity,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -8,6 +9,7 @@ import {
   ChevronDown,
   ChevronUp,
   Crown,
+  Download,
   Eye,
   Flame,
   LogOut,
@@ -37,6 +39,7 @@ import {
   WEAPON_CATALOG,
   type ArenaSnapshot,
   type BotPhysicsState,
+  type ColorBlindMode,
   type ControlSchemeId,
   type DeviceLayoutMode,
   type PvpMatchResult,
@@ -58,7 +61,13 @@ export interface MatchResultSummary {
   pvp?: PvpMatchResult;
 }
 
-export type CameraViewPreset = 'chase' | 'first_person' | 'pilot_booth' | 'tactical' | 'cinematic';
+export type CameraViewPreset =
+  | 'chase'
+  | 'first_person'
+  | 'pilot_booth'
+  | 'tactical'
+  | 'cinematic'
+  | 'spectator';
 
 interface CombatHudProps {
   matchResult?: MatchResultSummary | null;
@@ -68,6 +77,10 @@ interface CombatHudProps {
   adminSeat?: 1 | 2 | null;
   cameraPreset: CameraViewPreset;
   cameraSensitivity?: number;
+  colorBlindMode?: ColorBlindMode;
+  showDamageNumbers?: boolean;
+  momentumTrajectory?: boolean;
+  onToggleDamageNumbers?: () => void;
   muted: boolean;
   commentaryMuted?: boolean;
   controlScheme?: ControlSchemeId;
@@ -126,11 +139,15 @@ function ArmorMiniIndicator({ bot }: { bot: BotPhysicsState }) {
 function ArenaMiniRadar({
   snapshot,
   playerId,
+  colorBlindMode = 'none',
+  momentumTrajectory = true,
   minimized,
   onToggleMinimize,
 }: {
   snapshot: ArenaSnapshot;
   playerId: string;
+  colorBlindMode?: ColorBlindMode;
+  momentumTrajectory?: boolean;
   minimized?: boolean;
   onToggleMinimize?: () => void;
 }) {
@@ -152,8 +169,35 @@ function ArenaMiniRadar({
     );
   }
 
+  // Color-blind accessible hazard zone classes
+  const activeZoneClass =
+    colorBlindMode === 'blue_orange'
+      ? 'border-sky-400 bg-sky-500/45 shadow-[0_0_8px_rgba(56,189,248,0.8)]'
+      : colorBlindMode === 'cyan_yellow'
+        ? 'border-cyan-400 bg-cyan-500/45 shadow-[0_0_8px_rgba(6,182,212,0.8)]'
+        : 'border-red-400 bg-red-500/50 shadow-[0_0_8px_rgba(239,68,68,0.8)]';
+
+  const twoSecAlertClass =
+    colorBlindMode === 'blue_orange'
+      ? 'border-orange-400 bg-orange-500/45 animate-ping'
+      : colorBlindMode === 'cyan_yellow'
+        ? 'border-yellow-300 bg-yellow-400/45 animate-ping'
+        : 'border-red-500 bg-red-500/45 animate-ping';
+
+  const earlyWarnClass =
+    colorBlindMode === 'blue_orange'
+      ? 'bg-orange-400/75'
+      : colorBlindMode === 'cyan_yellow'
+        ? 'bg-yellow-300/75'
+        : 'bg-amber-400/75';
+
+  // Physics-based predicted trajectory endpoint (0.85s lookahead)
+  const playerSpeed = player ? Math.hypot(player.vx, player.vz) : 0;
+  const predX = player ? player.x + player.vx * 0.85 : 0;
+  const predZ = player ? player.z + player.vz * 0.85 : 0;
+
   return (
-    <div className="pointer-events-auto hidden md:block fixed bottom-4 left-4 z-20 h-28 w-28 rounded-xl border border-slate-700/80 bg-[#0D1014]/88 p-1.5 shadow-xl group">
+    <div className="pointer-events-auto hidden md:block fixed bottom-4 left-4 z-20 h-32 w-32 rounded-xl border border-slate-700/80 bg-[#0D1014]/92 p-1.5 shadow-xl group">
       {onToggleMinimize && (
         <button
           type="button"
@@ -168,20 +212,73 @@ function ArenaMiniRadar({
         <div className="absolute inset-x-0 top-1/2 h-px bg-slate-800/80" />
         <div className="absolute inset-y-0 left-1/2 w-px bg-slate-800/80" />
 
-        {/* Hazards */}
-        {snapshot.hazards.map((h) => (
-          <span
-            key={h.id}
-            style={{ left: `${toPct(h.x)}%`, top: `${toPct(h.z)}%` }}
-            className={`-translate-x-1/2 -translate-y-1/2 absolute h-2 w-2 rounded-full ${
-              h.active
-                ? 'bg-red-500/80'
-                : h.warning
-                  ? 'bg-amber-400/75'
-                  : 'bg-slate-600/40'
-            }`}
-          />
-        ))}
+        {/* Physics-Based Momentum Predicted Trajectory Vector SVG */}
+        {momentumTrajectory && player && !player.isDead && playerSpeed > 2.2 && (
+          <svg
+            className="pointer-events-none absolute inset-0 h-full w-full z-10"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+          >
+            <line
+              x1={toPct(player.x)}
+              y1={toPct(player.z)}
+              x2={toPct(predX)}
+              y2={toPct(predZ)}
+              stroke={player.isDrifting ? '#e879f9' : '#38bdf8'}
+              strokeWidth="2.2"
+              strokeDasharray="3 2"
+            />
+            <circle
+              cx={toPct(predX)}
+              cy={toPct(predZ)}
+              r="2.2"
+              fill={player.isDrifting ? '#e879f9' : '#38bdf8'}
+            />
+          </svg>
+        )}
+
+        {/* Hazards with 2-Second Red / High-Contrast Accessibility Zone Highlight */}
+        {snapshot.hazards.map((h) => {
+          const isTwoSecAlert = Boolean(h.warning) && (h.warningTimeLeft ?? 3) <= 2.0;
+          const zoneSizePct = Math.max(12, Math.min(34, ((h.radius || 2.5) / half) * 100));
+          return (
+            <React.Fragment key={h.id}>
+              {(h.active || isTwoSecAlert) && (
+                <span
+                  style={{
+                    left: `${toPct(h.x)}%`,
+                    top: `${toPct(h.z)}%`,
+                    width: `${zoneSizePct}%`,
+                    height: `${zoneSizePct}%`,
+                  }}
+                  className={`-translate-x-1/2 -translate-y-1/2 absolute rounded-full border ${
+                    h.active ? activeZoneClass : twoSecAlertClass
+                  }`}
+                />
+              )}
+              <span
+                style={{ left: `${toPct(h.x)}%`, top: `${toPct(h.z)}%` }}
+                className={`-translate-x-1/2 -translate-y-1/2 absolute h-2 w-2 rounded-full ${
+                  h.active
+                    ? colorBlindMode === 'blue_orange'
+                      ? 'bg-sky-400'
+                      : colorBlindMode === 'cyan_yellow'
+                        ? 'bg-cyan-300'
+                        : 'bg-red-500'
+                    : isTwoSecAlert
+                      ? colorBlindMode === 'blue_orange'
+                        ? 'bg-orange-400'
+                        : colorBlindMode === 'cyan_yellow'
+                          ? 'bg-yellow-300'
+                          : 'bg-red-400'
+                      : h.warning
+                        ? earlyWarnClass
+                        : 'bg-slate-600/40'
+                }`}
+              />
+            </React.Fragment>
+          );
+        })}
 
         {/* Active Pickups */}
         {snapshot.props
@@ -212,7 +309,7 @@ function ArenaMiniRadar({
               style={{ left: `${toPct(b.x)}%`, top: `${toPct(b.z)}%` }}
               className={`-translate-x-1/2 -translate-y-1/2 absolute rounded-full border border-slate-950 ${
                 isSelf
-                  ? 'h-3 w-3 bg-amber-400 z-10'
+                  ? 'h-3 w-3 bg-amber-400 z-20'
                   : isAlly
                     ? 'h-2.5 w-2.5 bg-emerald-400'
                     : 'h-2.5 w-2.5 bg-red-500'
@@ -233,6 +330,10 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   campaignLevelId,
   cameraPreset,
   cameraSensitivity = 0.65,
+  colorBlindMode = 'none',
+  showDamageNumbers = true,
+  momentumTrajectory = true,
+  onToggleDamageNumbers,
   muted,
   commentaryMuted,
   controlScheme = 'wasd_drive',
@@ -264,6 +365,14 @@ export const CombatHud: React.FC<CombatHudProps> = ({
   const [minRadarTile, setMinRadarTile] = useState(false);
   const [autoNextEnabled, setAutoNextEnabled] = useState(true);
   const [autoNextCountdown, setAutoNextCountdown] = useState<number | null>(null);
+  const [damagePopups, setDamagePopups] = useState<
+    Array<{
+      id: number;
+      damage: number;
+      isCrit: boolean;
+    }>
+  >([]);
+  const lastSeenDamageEventRef = useRef(0);
 
   const toggleCleanViewAll = () => {
     setCleanViewAll((prev) => {
@@ -304,6 +413,51 @@ export const CombatHud: React.FC<CombatHudProps> = ({
       return () => clearTimeout(t);
     }
   }, [snapshot.events]);
+
+  // Compact Damage Number Feed (Numbers Only, Out of Camera Sightline)
+  useEffect(() => {
+    if (!showDamageNumbers) {
+      setDamagePopups([]);
+      if (snapshot.events && snapshot.events.length > 0) {
+        const maxId = snapshot.events[snapshot.events.length - 1].id;
+        if (maxId > lastSeenDamageEventRef.current) {
+          lastSeenDamageEventRef.current = maxId;
+        }
+      }
+      return;
+    }
+    if (!snapshot.events || snapshot.events.length === 0) return;
+    const newEntries: Array<{ id: number; damage: number; isCrit: boolean }> = [];
+    for (const ev of snapshot.events) {
+      if (ev.id <= lastSeenDamageEventRef.current) continue;
+      lastSeenDamageEventRef.current = ev.id;
+      if (
+        ev.type === 'hit' ||
+        ev.type === 'crit' ||
+        ev.type === 'crusher_slam' ||
+        ev.type === 'bomb_blast' ||
+        ev.type === 'mortar_blast' ||
+        ev.type === 'rail_shot' ||
+        ev.type === 'tesla_arc'
+      ) {
+        const dmgVal = Math.round(ev.damageAmount ?? ev.intensity * 18);
+        if (dmgVal <= 0) continue;
+        newEntries.push({
+          id: ev.id,
+          damage: dmgVal,
+          isCrit: ev.type === 'crit' || ev.intensity > 1.35,
+        });
+      }
+    }
+    if (newEntries.length > 0) {
+      setDamagePopups((prev) => [...prev.slice(-3), ...newEntries]);
+      const timer = window.setTimeout(() => {
+        const ids = new Set(newEntries.map((n) => n.id));
+        setDamagePopups((prev) => prev.filter((p) => !ids.has(p.id)));
+      }, 950);
+      return () => window.clearTimeout(timer);
+    }
+  }, [snapshot.events, showDamageNumbers]);
 
   const player = snapshot.bots.find((b) => b.id === playerId) || snapshot.bots[0];
   const allies = snapshot.bots.filter((b) => b.id !== player?.id && b.team === player?.team);
@@ -695,12 +849,31 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                       ? 'Follow Cam'
                       : cameraPreset === 'tactical'
                         ? 'Tactical'
-                        : 'Orbit'}
+                        : cameraPreset === 'spectator'
+                          ? 'Spectator'
+                          : 'Orbit'}
               </span>
               <span className="font-mono-tabular rounded bg-slate-900/80 px-1 py-0.5 text-[9px] text-slate-300">
                 V
               </span>
             </button>
+            {onToggleDamageNumbers && (
+              <button
+                type="button"
+                onClick={onToggleDamageNumbers}
+                title={showDamageNumbers ? 'Turn Hit Damage Numbers OFF' : 'Turn Hit Damage Numbers ON'}
+                className={`flex h-10 items-center gap-1 rounded-lg px-2.5 text-xs font-bold transition cursor-pointer ${
+                  showDamageNumbers
+                    ? 'border border-amber-400/60 bg-amber-500/20 text-amber-200'
+                    : 'border border-slate-700 bg-[#1A2029] text-slate-400 hover:text-white'
+                }`}
+              >
+                <Activity className="h-3.5 w-3.5 shrink-0" />
+                <span className="hidden sm:inline whitespace-nowrap">
+                  {showDamageNumbers ? 'Hit Dmg: ON' : 'Hit Dmg: OFF'}
+                </span>
+              </button>
+            )}
             {onToggleCommentary && (
               <button
                 type="button"
@@ -954,11 +1127,34 @@ export const CombatHud: React.FC<CombatHudProps> = ({
         </div>
       )}
 
+      {/* Peripheral Clean Hit Damage Numbers (Out of Camera Center View) */}
+      {showDamageNumbers && snapshot.phase === 'active' && damagePopups.length > 0 && (
+        <div
+          className={`pointer-events-none fixed right-4 sm:right-6 z-20 flex flex-col items-end gap-1 ${
+            showKeyboardHint ? 'bottom-5' : 'bottom-40'
+          }`}
+          aria-hidden="true"
+        >
+          {damagePopups.map((pop) => (
+            <div
+              key={pop.id}
+              className={`font-mono-tabular font-black leading-none tracking-tight drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] ${
+                pop.isCrit ? 'text-2xl text-amber-400' : 'text-lg text-slate-100/95'
+              }`}
+            >
+              {pop.damage}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Tactical Arena Mini-Radar */}
       {snapshot.phase === 'active' && (
         <ArenaMiniRadar
           snapshot={snapshot}
           playerId={playerId}
+          colorBlindMode={colorBlindMode}
+          momentumTrajectory={momentumTrajectory}
           minimized={minRadarTile}
           onToggleMinimize={() => setMinRadarTile((v) => !v)}
         />
@@ -1522,7 +1718,7 @@ export const CombatHud: React.FC<CombatHudProps> = ({
             </div>
           )}
 
-          <div className="hidden md:flex flex-col gap-1 rounded-2xl border border-slate-800/90 bg-[#12161C]/90 p-2.5 text-[11px] text-slate-300 shadow-lg backdrop-blur-sm">
+          <div className="hidden md:flex flex-col gap-1 rounded-2xl border border-slate-800/90 bg-[#12161C]/94 p-2.5 text-[11px] text-slate-300 shadow-lg">
             <div className="flex items-center justify-between">
               <span className="text-slate-400">Drive</span>
               <span className="font-mono-tabular font-semibold text-white">
@@ -1739,6 +1935,135 @@ export const CombatHud: React.FC<CombatHudProps> = ({
                 );
               })}
             </div>
+
+            {/* Post-Match Environmental Hazard Avoidance vs Hits Summary */}
+            <div className="mt-3 rounded-xl border border-amber-500/35 bg-[#0D1014] p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-amber-300 px-1">
+                <span>Arena Hazard Telemetry Summary</span>
+                <span className="text-slate-400 font-mono-tabular">Avoided vs Hits Taken</span>
+              </div>
+              {sortedStandings.map((b) => {
+                const avoided = b.hazardsAvoided ?? 0;
+                const hitsTaken = b.hazardHitsTaken ?? 0;
+                return (
+                  <div
+                    key={`haz_${b.id}`}
+                    className="flex items-center justify-between gap-2 rounded-lg bg-[#141922] px-2.5 py-1 text-xs"
+                  >
+                    <span className="truncate font-semibold text-slate-200">
+                      [{b.clanTag}] {b.config.name}
+                    </span>
+                    <div className="flex items-center gap-2 font-mono-tabular text-[11px] shrink-0">
+                      <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-emerald-300 font-bold">
+                        ✓ {avoided} Avoided
+                      </span>
+                      <span className="rounded bg-rose-500/15 px-1.5 py-0.5 text-rose-300 font-bold">
+                        ⚠ {hitsTaken} Hits
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Visual Movement Heat Map & Telemetry CSV Export */}
+            {player && (
+              <div className="mt-3 rounded-xl border border-sky-500/35 bg-[#0D1014] p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] font-extrabold uppercase tracking-wider text-sky-300">
+                      Post-Match Arena Movement Heat Map (8×8 Sector Grid)
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      Highlights idling & danger-zone occupancy across the BattleBox
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rows: string[] = [
+                        'time_sec,bot_name,x,z,vx,vz,speed_ms,hp,damage_dealt,hazard_hits_taken,hazards_avoided',
+                      ];
+                      for (const b of snapshot.bots) {
+                        const samples = b.pathLog && b.pathLog.length > 0
+                          ? b.pathLog
+                          : [{ t: 0, x: b.x, z: b.z, vx: b.vx, vz: b.vz, hp: b.hp, hazardHits: b.hazardHitsTaken ?? 0 }];
+                        for (const s of samples) {
+                          const spd = Math.hypot(s.vx, s.vz).toFixed(2);
+                          rows.push(
+                            `${s.t},"${b.config.name.replace(/"/g, '""')}",${s.x},${s.z},${s.vx},${s.vz},${spd},${s.hp},${Math.round(b.damageDealt)},${s.hazardHits},${b.hazardsAvoided ?? 0}`,
+                          );
+                        }
+                      }
+                      const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `battlebox-telemetry-${snapshot.arenaId}-${Date.now()}.csv`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="flex items-center gap-1 rounded-lg border border-sky-400/50 bg-sky-500/15 px-2.5 py-1 text-[10px] font-extrabold text-sky-200 hover:bg-sky-500/25 transition shrink-0 cursor-pointer"
+                    title="Export movement paths, velocities, HP timeline, and hazard intake as CSV"
+                  >
+                    <Download className="h-3 w-3" />
+                    <span>Export Telemetry CSV</span>
+                  </button>
+                </div>
+
+                {(() => {
+                  const grid = player.heatmapGrid && player.heatmapGrid.length === 64
+                    ? player.heatmapGrid
+                    : new Array(64).fill(0);
+                  const maxVal = Math.max(0.01, ...grid);
+                  return (
+                    <div className="mt-2 flex items-center gap-3">
+                      <div className="grid grid-cols-8 gap-0.5 h-24 w-24 shrink-0 rounded-lg border border-slate-800 bg-[#080B10] p-1">
+                        {grid.map((cellSec, idx) => {
+                          const ratio = Math.min(1, cellSec / maxVal);
+                          const bgClass =
+                            ratio > 0.72
+                              ? 'bg-rose-500'
+                              : ratio > 0.42
+                                ? 'bg-amber-400'
+                                : ratio > 0.15
+                                  ? 'bg-sky-400/75'
+                                  : ratio > 0.02
+                                    ? 'bg-sky-900/60'
+                                    : 'bg-slate-900/60';
+                          return (
+                            <div
+                              key={idx}
+                              title={`Sector (${idx % 8}, ${Math.floor(idx / 8)}): ${cellSec.toFixed(1)}s`}
+                              className={`rounded-[2px] ${bgClass}`}
+                            />
+                          );
+                        })}
+                      </div>
+                      <div className="text-[10px] text-slate-300 space-y-1 font-mono-tabular">
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500" />
+                          <span>High Dwell / Idle Zone</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400" />
+                          <span>Moderate Transit Sector</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-sky-400/75" />
+                          <span>Fast Maneuver Path</span>
+                        </div>
+                        <div className="text-slate-400 pt-0.5">
+                          Logged Samples: {player.pathLog?.length ?? 0} frames
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
 
             {/* Campaign Auto-Advance & Post-Match Actions */}
             {campaignLevel && (matchResult?.won ?? playerWon) && nextCampaignLevel && onNextCampaignLevel && (

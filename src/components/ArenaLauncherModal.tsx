@@ -401,6 +401,70 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
               </button>
             </div>
 
+            {/* Pre-Match Arena Hazard Layout Toggle (Static / Standard Dynamic / High-Chaos) */}
+            <div className="mt-3 rounded-xl border border-amber-500/40 bg-[#181512] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs font-extrabold uppercase tracking-wider text-amber-300">
+                    Arena Hazard Layout Variant (Ranked, Solo & Practice)
+                  </div>
+                  <p className="text-[11px] text-slate-300 mt-0.5">
+                    Choose between static layouts (pure bot-vs-bot duel), standard 3s telegraphed hazards, or dynamic high-chaos sudden-death overdrive.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(
+                    [
+                      {
+                        id: 'static',
+                        label: 'Static (No Hazards)',
+                        active: selectedModifiers.includes('no_hazards'),
+                        onClick: () => {
+                          if (!selectedModifiers.includes('no_hazards')) onToggleModifier('no_hazards');
+                          if (selectedModifiers.includes('high_chaos')) onToggleModifier('high_chaos');
+                        },
+                      },
+                      {
+                        id: 'standard',
+                        label: 'Dynamic Standard',
+                        active:
+                          !selectedModifiers.includes('no_hazards') &&
+                          !selectedModifiers.includes('high_chaos'),
+                        onClick: () => {
+                          if (selectedModifiers.includes('no_hazards')) onToggleModifier('no_hazards');
+                          if (selectedModifiers.includes('high_chaos')) onToggleModifier('high_chaos');
+                        },
+                      },
+                      {
+                        id: 'high_chaos',
+                        label: 'High-Chaos Overdrive',
+                        active: selectedModifiers.includes('high_chaos'),
+                        onClick: () => {
+                          if (selectedModifiers.includes('no_hazards')) onToggleModifier('no_hazards');
+                          if (!selectedModifiers.includes('high_chaos')) onToggleModifier('high_chaos');
+                        },
+                      },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={opt.onClick}
+                      className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-extrabold transition cursor-pointer ${
+                        opt.active
+                          ? opt.id === 'high_chaos'
+                            ? 'border-rose-400 bg-rose-500 text-slate-950 shadow'
+                            : 'border-amber-400 bg-amber-500 text-slate-950 shadow'
+                          : 'border-slate-700 bg-[#0D1014] text-slate-300 hover:border-slate-500 hover:text-white'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             {/* Arena Stage Picker */}
             <div className="mt-4">
               <div className="flex items-center justify-between gap-2 mb-2">
