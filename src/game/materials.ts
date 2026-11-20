@@ -80,7 +80,8 @@ export function createProceduralTextures(
   arenaId: ArenaId,
 ): ProceduralTexturePack {
   const spec = ARENA_CATALOG[arenaId] || ARENA_CATALOG.foundry;
-  const [floorCanvas, fCtx] = makeCanvas(512);
+  const [floorCanvas, fCtx] = makeCanvas(1024);
+  fCtx.scale(2, 2);
   const bg = spec.floorHex;
   const accent = spec.accentHex;
   const line =
@@ -160,7 +161,8 @@ export function createProceduralTextures(
   arenaFloor.anisotropy = maxAnisotropy;
 
   // 2. Armor Plate / Carbon Weave Texture
-  const [armorCanvas, aCtx] = makeCanvas(256);
+  const [armorCanvas, aCtx] = makeCanvas(512);
+  aCtx.scale(2, 2);
   aCtx.fillStyle = '#dde2ea';
   aCtx.fillRect(0, 0, 256, 256);
   for (let y = 0; y < 256; y += 16) {
@@ -180,7 +182,8 @@ export function createProceduralTextures(
   armorWeave.anisotropy = maxAnisotropy;
 
   // 3. Linear Brushed Metal Bump / Micro-machining Texture
-  const [bumpCanvas, bCtx] = makeCanvas(256);
+  const [bumpCanvas, bCtx] = makeCanvas(512);
+  bCtx.scale(2, 2);
   bCtx.fillStyle = '#808080';
   bCtx.fillRect(0, 0, 256, 256);
   for (let y = 0; y < 256; y += 2) {

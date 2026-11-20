@@ -344,12 +344,13 @@ export function buildArenaEnvironment(
   });
   const glassMat = new THREE.MeshPhysicalMaterial({
     color: arenaId === 'cryo' ? 0xbae6fd : 0xe2e8f0,
-    roughness: 0.08,
-    metalness: 0.1,
+    roughness: 0.04,
+    metalness: 0.0,
     transparent: true,
-    opacity: 0.18,
-    reflectivity: 0.9,
-    clearcoat: 1.0,
+    opacity: 0.07,
+    reflectivity: 0.35,
+    clearcoat: 0.4,
+    envMapIntensity: 0.4,
     depthWrite: false,
   });
   materials.push(wallMat, bumperMat, railGlowMat, glassMat);

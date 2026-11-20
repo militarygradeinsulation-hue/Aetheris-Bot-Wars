@@ -118,7 +118,7 @@ export const ArenaBuilder3D: React.FC<Props> = ({ spec, tool, selectedId, onPlac
       scene.environment = env;
       (scene as unknown as { environmentIntensity: number }).environmentIntensity = 0.65;
       scene.background = new THREE.Color(aSpec.skyHex);
-      scene.fog = new THREE.FogExp2(aSpec.skyHex, 0.008);
+      scene.fog = new THREE.FogExp2(aSpec.skyHex, 0.0035);
       liveIds = new Set();
       sync();
     };

@@ -20,7 +20,7 @@ function finish(c: HTMLCanvasElement, srgb = true, repeat = 1) {
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(repeat, repeat);
-  t.anisotropy = 8;
+  t.anisotropy = 16;
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;
   t.needsUpdate = true;
   return t;
@@ -39,7 +39,8 @@ function cached(key: string, make: () => THREE.Texture) {
 /** Weathered plank crate face with grain, nail heads and scuffs. */
 export function woodCrateTexture() {
   return cached('wood', () => {
-    const [c, g] = makeCanvas(256, 256);
+    const [c, g] = makeCanvas(512, 512);
+    g.scale(2, 2);
     const r = rng(11);
     g.fillStyle = '#8a5a2e';
     g.fillRect(0, 0, 256, 256);
@@ -114,11 +115,11 @@ export function woodCrateTexture() {
 /** Cast concrete with aggregate, pores and water stains. */
 export function concreteTexture(base = '#8b8f94') {
   return cached(`concrete_${base}`, () => {
-    const [c, g] = makeCanvas(256, 256);
+    const [c, g] = makeCanvas(512, 512);
     const r = rng(23);
     g.fillStyle = base;
-    g.fillRect(0, 0, 256, 256);
-    const img = g.getImageData(0, 0, 256, 256);
+    g.fillRect(0, 0, 512, 512);
+    const img = g.getImageData(0, 0, 512, 512);
     for (let i = 0; i < img.data.length; i += 4) {
       const n = (r() - 0.5) * 34;
       img.data[i] += n;
@@ -126,6 +127,7 @@ export function concreteTexture(base = '#8b8f94') {
       img.data[i + 2] += n;
     }
     g.putImageData(img, 0, 0);
+    g.scale(2, 2);
     for (let k = 0; k < 260; k++) {
       g.fillStyle = r() < 0.5 ? `rgba(40,40,44,${r() * 0.35})` : `rgba(220,220,225,${r() * 0.2})`;
       g.beginPath();
@@ -173,7 +175,8 @@ export function hazardStripeTexture() {
 /** Grayscale roughness variation (smudges, wear) to break up perfect specular. */
 export function grimeRoughnessTexture() {
   return cached('grime', () => {
-    const [c, g] = makeCanvas(256, 256);
+    const [c, g] = makeCanvas(512, 512);
+    g.scale(2, 2);
     const r = rng(77);
     g.fillStyle = '#8a8a8a';
     g.fillRect(0, 0, 256, 256);
@@ -201,7 +204,8 @@ export function grimeRoughnessTexture() {
 /** Brushed steel with fine directional streaks. */
 export function brushedMetalTexture(tint = '#9aa3ad') {
   return cached(`brushed_${tint}`, () => {
-    const [c, g] = makeCanvas(256, 256);
+    const [c, g] = makeCanvas(512, 512);
+    g.scale(2, 2);
     const r = rng(41);
     g.fillStyle = tint;
     g.fillRect(0, 0, 256, 256);
@@ -222,7 +226,8 @@ export function brushedMetalTexture(tint = '#9aa3ad') {
 /** Tire tread pattern for wrapping around a wheel. */
 export function tireTreadTexture() {
   return cached('tread', () => {
-    const [c, g] = makeCanvas(256, 64);
+    const [c, g] = makeCanvas(512, 128);
+    g.scale(2, 2);
     g.fillStyle = '#16181b';
     g.fillRect(0, 0, 256, 64);
     g.fillStyle = '#0a0b0c';
@@ -246,7 +251,8 @@ export function tireTreadTexture() {
 /** Transparent overlay of a used arena floor: tire skids, scorch rings, gouges and oil stains. */
 export function arenaWearTexture(seed = 3) {
   return cached(`wear_${seed}`, () => {
-    const [c, g] = makeCanvas(1024, 1024);
+    const [c, g] = makeCanvas(2048, 2048);
+    g.scale(2, 2);
     const r = rng(seed * 977 + 13);
     g.clearRect(0, 0, 1024, 1024);
     // Tire skid arcs
@@ -391,7 +397,8 @@ function bolt(g: CanvasRenderingContext2D, x: number, y: number, r: number) {
 export function steelDeckNormalTexture() {
   return cached('deck_n', () => {
     const S = 512;
-    const [c, g] = makeCanvas(S, S);
+    const [c, g] = makeCanvas(S * 2, S * 2);
+    g.scale(2, 2);
     const r = rng(91);
     g.fillStyle = '#808080';
     g.fillRect(0, 0, S, S);
@@ -456,7 +463,7 @@ export function steelDeckNormalTexture() {
       g.fillStyle = grad;
       g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
     }
-    return heightToNormal(c, 3.2);
+    return heightToNormal(c, 5.5);
   });
 }
 
@@ -464,7 +471,8 @@ export function steelDeckNormalTexture() {
 export function armorPanelNormalTexture() {
   return cached('armor_n', () => {
     const S = 512;
-    const [c, g] = makeCanvas(S, S);
+    const [c, g] = makeCanvas(S * 2, S * 2);
+    g.scale(2, 2);
     const r = rng(57);
     g.fillStyle = '#808080';
     g.fillRect(0, 0, S, S);
@@ -511,7 +519,7 @@ export function armorPanelNormalTexture() {
       g.fillStyle = grad;
       g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
     }
-    return heightToNormal(c, 2.6);
+    return heightToNormal(c, 4.5);
   });
 }
 
@@ -519,11 +527,11 @@ export function armorPanelNormalTexture() {
 export function concreteNormalTexture() {
   return cached('concrete_n', () => {
     const S = 256;
-    const [c, g] = makeCanvas(S, S);
+    const [c, g] = makeCanvas(S * 2, S * 2);
     const r = rng(29);
     g.fillStyle = '#808080';
-    g.fillRect(0, 0, S, S);
-    const img = g.getImageData(0, 0, S, S);
+    g.fillRect(0, 0, S * 2, S * 2);
+    const img = g.getImageData(0, 0, S * 2, S * 2);
     for (let i = 0; i < img.data.length; i += 4) {
       const n = (r() - 0.5) * 40;
       img.data[i] += n;
@@ -531,13 +539,14 @@ export function concreteNormalTexture() {
       img.data[i + 2] += n;
     }
     g.putImageData(img, 0, 0);
+    g.scale(2, 2);
     for (let k = 0; k < 220; k++) {
       g.fillStyle = `rgba(30,30,30,${0.4 + r() * 0.5})`;
       g.beginPath();
       g.arc(r() * S, r() * S, 0.8 + r() * 2.2, 0, Math.PI * 2);
       g.fill();
     }
-    return heightToNormal(c, 2.2);
+    return heightToNormal(c, 3.6);
   });
 }
 
@@ -545,7 +554,8 @@ export function concreteNormalTexture() {
 export function woodNormalTexture() {
   return cached('wood_n', () => {
     const S = 256;
-    const [c, g] = makeCanvas(S, S);
+    const [c, g] = makeCanvas(S * 2, S * 2);
+    g.scale(2, 2);
     const r = rng(11);
     g.fillStyle = '#808080';
     g.fillRect(0, 0, S, S);
@@ -572,14 +582,15 @@ export function woodNormalTexture() {
     g.strokeStyle = '#b8b8b8';
     g.lineWidth = 18;
     g.strokeRect(9, 9, 238, 238);
-    return heightToNormal(c, 2.4);
+    return heightToNormal(c, 4.2);
   });
 }
 
 /** Tire tread blocks as a normal map (pairs with tireTreadTexture). */
 export function treadNormalTexture() {
   return cached('tread_n', () => {
-    const [c, g] = makeCanvas(256, 64);
+    const [c, g] = makeCanvas(512, 128);
+    g.scale(2, 2);
     g.fillStyle = '#c8c8c8';
     g.fillRect(0, 0, 256, 64);
     g.fillStyle = '#202020';
@@ -594,6 +605,6 @@ export function treadNormalTexture() {
       g.closePath();
       g.fill();
     }
-    return heightToNormal(c, 3);
+    return heightToNormal(c, 5);
   });
 }
