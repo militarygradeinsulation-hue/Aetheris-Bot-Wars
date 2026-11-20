@@ -208,7 +208,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       if (batteryRef.current === 'eco') {
         renderer.setPixelRatio(1);
       } else if (batteryRef.current === 'balanced') {
-        renderer.setPixelRatio(Math.min(dpr, 1.35));
+        renderer.setPixelRatio(Math.min(dpr, 1.75));
       } else {
         renderer.setPixelRatio(Math.min(dpr, 2));
       }
@@ -268,8 +268,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     const keyLight = new THREE.DirectionalLight(0xfff3db, 2.6);
     keyLight.position.set(16, 26, 14);
     keyLight.castShadow = !isSoftwareGl;
-    keyLight.shadow.mapSize.width = isSoftwareGl ? 512 : 2048;
-    keyLight.shadow.mapSize.height = isSoftwareGl ? 512 : 2048;
+    keyLight.shadow.mapSize.width = isSoftwareGl ? 512 : 4096;
+    keyLight.shadow.mapSize.height = isSoftwareGl ? 512 : 4096;
     keyLight.shadow.camera.near = 2;
     keyLight.shadow.camera.far = 75;
     const d = 22;
@@ -433,7 +433,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     const rebuildArena = () => {
       const aSpec = ARENA_CATALOG[arenaIdRef.current];
       scene.background = new THREE.Color(aSpec.skyHex);
-      scene.fog = new THREE.FogExp2(aSpec.skyHex, 0.011);
+      // Light haze only: rivals on the far side of the arena stay crisp
+      scene.fog = new THREE.FogExp2(aSpec.skyHex, 0.0035);
       // Arena-shaped HDR lighting: floodlight banks and LED bands show up in every reflection
       try {
         const nextEnv = buildArenaEnvMap(renderer, aSpec.accentHex, aSpec.skyHex);

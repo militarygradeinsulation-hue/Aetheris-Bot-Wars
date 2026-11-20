@@ -3,7 +3,6 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
-import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
@@ -17,8 +16,8 @@ const LensFinishShader = {
     tDiffuse: { value: null as THREE.Texture | null },
     uTime: { value: 0 },
     uVignette: { value: 0.24 },
-    uGrain: { value: 0.025 },
-    uFringe: { value: 0.0007 },
+    uGrain: { value: 0.012 },
+    uFringe: { value: 0.0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -81,10 +80,7 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
   composer.addPass(gtao);
 
-  // Broadcast-lens depth of field: the bot you follow is sharp, stands and far walls go soft
-  const bokeh = new BokehPass(scene, camera, { focus: 8, aperture: 0.00055, maxblur: 0.0065 });
-  composer.addPass(bokeh);
-  let focusWanted = true;
+  // Depth of field removed: every bot, wall and the far side of the glass stays sharp
 
   // Bloom only picks up genuinely bright pixels: emissives, sparks, lights
   // Bloom stays off: no glow halos around lights or bright metal
@@ -106,7 +102,6 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   const apply = (ao: boolean) => {
     const on = quality !== 'off';
     gtao.enabled = on && quality === 'high' && ao;
-    bokeh.enabled = on && quality === 'high' && focusWanted;
     lens.enabled = on;
     smaa.enabled = on;
   };
@@ -135,21 +130,12 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     setBloomBoost: (extra: number) => {
       bloom.strength = baseBloom + extra;
     },
-    setFocus: (distance: number | null) => {
-      const want = distance !== null;
-      if (want !== focusWanted) {
-        focusWanted = want;
-        bokeh.enabled = quality === 'high' && want;
-      }
-      if (distance !== null) {
-        const u = bokeh.uniforms as unknown as Record<string, { value: number }>;
-        u.focus.value += (distance - u.focus.value) * 0.25;
-      }
+    setFocus: () => {
+      // no-op: depth of field is disabled for clarity
     },
     dispose: () => {
       composer.dispose();
       gtao.dispose();
-      bokeh.dispose();
       bloom.dispose();
       baseBloom = 0;
     },
