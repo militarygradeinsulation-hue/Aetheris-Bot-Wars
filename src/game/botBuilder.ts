@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries as mergeBotGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { grimeRoughnessTexture, tireTreadTexture } from './proceduralTextures';
+import { armorPanelNormalTexture, grimeRoughnessTexture, tireTreadTexture, treadNormalTexture } from './proceduralTextures';
 
 /** Box with real rounded edges so every part catches a highlight instead of reading as a cube. */
 function rbox(w: number, h: number, d: number, ..._segments: number[]): THREE.BufferGeometry {
@@ -784,8 +784,10 @@ export function buildBotRig(
     bumpScale: 0.01,
     roughness: 0.36,
     roughnessMap: grimeRoughnessTexture(),
+    normalMap: armorPanelNormalTexture(),
+    normalScale: new THREE.Vector2(0.45, 0.45),
     metalness: 0.72,
-    envMapIntensity: 1.35,
+    envMapIntensity: 1.0,
     clearcoat: 0.45,
     clearcoatRoughness: 0.22,
   });
@@ -793,9 +795,9 @@ export function buildBotRig(
     color: 0xe2e8f0,
     bumpMap: metalBrushBump,
     bumpScale: 0.008,
-    roughness: 0.14,
-    metalness: 0.96,
-    envMapIntensity: 1.75,
+    roughness: 0.24,
+    metalness: 0.94,
+    envMapIntensity: 1.0,
     clearcoat: 0.5,
     clearcoatRoughness: 0.1,
     anisotropy: 0.85,
@@ -804,8 +806,8 @@ export function buildBotRig(
   const rubberMat = new THREE.MeshStandardMaterial({
     color: 0x2a2d32,
     map: treadTex,
-    bumpMap: treadTex,
-    bumpScale: 0.6,
+    normalMap: treadNormalTexture(),
+    normalScale: new THREE.Vector2(1.2, 1.2),
     roughness: 0.92,
     metalness: 0.0,
   });
@@ -822,7 +824,7 @@ export function buildBotRig(
     bumpScale: 0.01,
     roughness: 0.16,
     metalness: 0.92,
-    envMapIntensity: 1.7,
+    envMapIntensity: 1.0,
     clearcoat: 0.65,
     clearcoatRoughness: 0.12,
     anisotropy: 0.8,
@@ -951,6 +953,36 @@ export function buildBotRig(
 
   bodyPivot.add(frontPlate, leftPlate, rightPlate, rearPlate);
   damageableMeshes.push(frontPlate, leftPlate, rightPlate, rearPlate);
+
+  // Hex bolt rows along the outer face of each plate (one instanced draw per plate)
+  const boltGeo = new THREE.CylinderGeometry(0.022, 0.024, 0.022, 6);
+  geometriesToDispose.push(boltGeo);
+  const boltDummy = new THREE.Object3D();
+  const addBolts = (plate: THREE.Mesh, axis: 'x' | 'z', face: number, length: number, height: number) => {
+    const per = Math.max(3, Math.round(length / 0.26));
+    const im = new THREE.InstancedMesh(boltGeo, bareSteelMat, per * 2);
+    let k = 0;
+    for (const yy of [height / 2 - 0.045, -height / 2 + 0.045]) {
+      for (let i = 0; i < per; i++) {
+        const t = (i + 0.5) / per - 0.5;
+        if (axis === 'z') {
+          boltDummy.position.set(t * length * 0.92, yy, face);
+          boltDummy.rotation.set(Math.PI / 2, 0, 0);
+        } else {
+          boltDummy.position.set(face, yy, t * length * 0.92);
+          boltDummy.rotation.set(0, 0, Math.PI / 2);
+        }
+        boltDummy.updateMatrix();
+        im.setMatrixAt(k++, boltDummy.matrix);
+      }
+    }
+    im.castShadow = false;
+    plate.add(im);
+  };
+  addBolts(frontPlate, 'z', 0.095, 1.32, 0.22);
+  addBolts(rearPlate, 'z', -0.085, 1.36, 0.32);
+  addBolts(leftPlate, 'x', -0.085, 1.38, 0.28);
+  addBolts(rightPlate, 'x', 0.085, 1.38, 0.28);
 
   const armorPlates: Record<keyof ArmorZones, THREE.Mesh> = {
     front: frontPlate,

@@ -24,7 +24,10 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
-import { AI_RIVAL_PRESETS } from '../shared/physicsEngine';
+import { AI_RIVAL_PRESETS, getRivalPreset } from '../shared/physicsEngine';
+import { BotThumb } from './BotThumb';
+import { ArenaMiniMap } from './ArenaMiniMap';
+import { ArenaThumb } from './ArenaThumb';
 import {
   CAMPAIGN_CHAPTERS,
   CAMPAIGN_LEVELS,
@@ -347,6 +350,7 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
                               : 'border-slate-800 bg-[#192029] hover:border-slate-600'
                         }`}
                       >
+                        <ArenaThumb arenaId={aId} className={`mb-1.5 h-20 w-full ${unlocked ? '' : 'grayscale'}`} />
                         <div className="flex items-center justify-between gap-1.5">
                           <span className="text-xs font-bold text-white truncate">
                             {!unlocked && <Lock className="inline h-3 w-3 mr-1 text-amber-400" />}
@@ -582,6 +586,22 @@ export const ArenaLauncherModal: React.FC<ArenaLauncherModalProps> = ({
                               <span className="capitalize">{lvl.mode.replace(/_/g, ' ')}</span>
                             </div>
                           </button>
+                          {unlocked && (
+                            <div className="mt-2 flex gap-1.5" aria-label="Opponents">
+                              {lvl.enemies.slice(0, 4).map((key, i) => {
+                                const preset = getRivalPreset(key);
+                                return (
+                                  <div
+                                    key={`${key}_${i}`}
+                                    title={preset.config.name}
+                                    className="h-12 w-16 overflow-hidden rounded-lg border border-slate-700/70 bg-gradient-to-b from-[#1d2532] to-[#0a0e14]"
+                                  >
+                                    <BotThumb config={preset.config} className="h-full w-full" fallbackSize="sm" />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                           {expanded && unlocked && (
                             <div className="mt-2 border-t border-slate-800 pt-2">
                               <p className="text-xs text-slate-300 leading-snug">{lvl.brief}</p>

@@ -3,7 +3,10 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import {
   arenaWearTexture,
+  concreteNormalTexture,
   lightShaftTexture,
+  steelDeckNormalTexture,
+  woodNormalTexture,
   softDotTexture,
   brushedMetalTexture,
   concreteTexture,
@@ -185,15 +188,21 @@ export function buildArenaEnvironment(
   const floorRough = grimeRoughnessTexture().clone();
   floorRough.repeat.set(5, 5);
   floorRough.needsUpdate = true;
+  // 4m steel plates with seams, bolts, weld beads and gouges
+  const floorNormal = steelDeckNormalTexture().clone();
+  floorNormal.repeat.set(half / 2, half / 2);
+  floorNormal.needsUpdate = true;
   const floorMat = new THREE.MeshPhysicalMaterial({
     map: textures.arenaFloor,
     bumpMap: textures.metalBrushBump,
     bumpScale: 0.012,
-    roughness: arenaId === 'cryo' ? 0.18 : 0.52,
+    roughness: arenaId === 'cryo' ? 0.3 : 0.66,
     roughnessMap: arenaId === 'cryo' ? null : floorRough,
-    metalness: arenaId === 'cryo' ? 0.35 : 0.7,
-    envMapIntensity: 1.0,
-    clearcoat: arenaId === 'cryo' ? 0.9 : 0.18,
+    normalMap: floorNormal,
+    normalScale: new THREE.Vector2(0.35, 0.35),
+    metalness: arenaId === 'cryo' ? 0.3 : 0.55,
+    envMapIntensity: 0.6,
+    clearcoat: arenaId === 'cryo' ? 0.5 : 0.05,
     clearcoatRoughness: 0.35,
   });
   geometries.push(floorGeo);
@@ -318,7 +327,7 @@ export function buildArenaEnvironment(
     bumpScale: 0.01,
     roughness: 0.34,
     metalness: 0.85,
-    envMapIntensity: 1.4,
+    envMapIntensity: 1.0,
     clearcoat: 0.4,
   });
   const bumperMat = new THREE.MeshStandardMaterial({
@@ -1158,12 +1167,15 @@ export function buildArenaEnvironment(
   const crateMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     map: woodCrateTexture(),
+    normalMap: woodNormalTexture(),
+    normalScale: new THREE.Vector2(0.8, 0.8),
     roughness: 0.82,
     metalness: 0.02,
   });
   const barrierMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     map: concreteTexture('#9a9da1'),
+    normalMap: concreteNormalTexture(),
     roughness: 0.92,
     metalness: 0.0,
   });
@@ -1178,7 +1190,7 @@ export function buildArenaEnvironment(
     color: 0x475569,
     roughness: 0.25,
     metalness: 0.9,
-    envMapIntensity: 1.4,
+    envMapIntensity: 1.0,
   });
   const barrelMat = new THREE.MeshPhysicalMaterial({
     color: 0xb91c1c,
@@ -1192,6 +1204,7 @@ export function buildArenaEnvironment(
   const pillarMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     map: concreteTexture('#6b7280'),
+    normalMap: concreteNormalTexture(),
     roughness: 0.9,
     metalness: 0.05,
   });
@@ -1297,7 +1310,7 @@ export function buildArenaEnvironment(
     color: 0xf1f5f9,
     roughness: 0.14,
     metalness: 0.96,
-    envMapIntensity: 1.7,
+    envMapIntensity: 1.0,
     clearcoat: 0.6,
   });
   const sawSlotMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.8, metalness: 0.3 });
@@ -1311,14 +1324,14 @@ export function buildArenaEnvironment(
     color: 0xe2e8f0,
     roughness: 0.1,
     metalness: 0.98,
-    envMapIntensity: 1.8,
+    envMapIntensity: 1.0,
   });
   const hazardBladeMat = new THREE.MeshPhysicalMaterial({
     color: 0xf8fafc,
     roughness: 0.14,
     metalness: 0.96,
     clearcoat: 0.7,
-    envMapIntensity: 1.75,
+    envMapIntensity: 1.0,
   });
   const hazardTipMat = new THREE.MeshStandardMaterial({
     color: 0xef4444,
@@ -1855,7 +1868,7 @@ export function buildArenaEnvironment(
     color: new THREE.Color(spec.accentHex).lerp(new THREE.Color(0xffffff), 0.7),
     map: lightShaftTexture(),
     transparent: true,
-    opacity: 0.075,
+    opacity: 0.03,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
@@ -1918,7 +1931,7 @@ export function buildArenaEnvironment(
     } else {
       flashMat.opacity *= 0.82;
     }
-    shaftMat.opacity = 0.06 + Math.sin(time * 0.7) * 0.012 + excitement * 0.02;
+    shaftMat.opacity = 0.025 + Math.sin(time * 0.7) * 0.006 + excitement * 0.01;
   };
 
   return {
@@ -2111,6 +2124,7 @@ export function buildArenaEnvironment(
     dispose: () => {
       disposeCrowdTextures();
       floorRough.dispose();
+      floorNormal.dispose();
       geometries.forEach((g) => g.dispose());
       materials.forEach((m) => m.dispose());
     },

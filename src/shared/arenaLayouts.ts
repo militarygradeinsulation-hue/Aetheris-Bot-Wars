@@ -301,12 +301,12 @@ export function buildCustomArena(spec: CustomArenaSpec, t: HazardTiming): { prop
         const yaw = it.yaw ?? 0;
         const dx = Math.sin(yaw) * 1.5;
         const dz = Math.cos(yaw) * 1.5;
-        props.push(...wall(`cw${i}`, x - dx, z - dz, x + dx, z + dz));
+        props.push(...wall(`cw_${it.id || i}`, x - dx, z - dz, x + dx, z + dz));
       } else {
-        props.push(prop(`c${i}_${it.kind}`, it.kind as DestructibleProp['kind'], x, z, { yaw: it.yaw ?? 0 }));
+        props.push(prop(`c_${it.id || i}_${it.kind}`, it.kind as DestructibleProp['kind'], x, z, { yaw: it.yaw ?? 0 }));
       }
     } else {
-      const h = makeHazard(it.kind, `ch${i}_${it.kind}`, x, z, (i * 1.7) % 6, t);
+      const h = makeHazard(it.kind, `ch_${it.id || i}_${it.kind}`, x, z, (i * 1.7) % 6, t);
       if (h) hazards.push(h);
     }
   });

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Eraser, FlipHorizontal2, Play, RotateCw, Save, Trash2, X } from 'lucide-react';
+import { Box, Copy, Eraser, FlipHorizontal2, Map as MapIcon, Play, RotateCw, Save, Trash2, X } from 'lucide-react';
+import { ArenaBuilder3D } from './ArenaBuilder3D';
 import { ARENA_CATALOG, type ArenaId } from '../shared/types';
 import {
   CUSTOM_ITEM_INFO,
@@ -68,6 +69,7 @@ export const ArenaBuilderModal: React.FC<Props> = ({ open, arenas, editingId, de
   const [symmetry, setSymmetry] = useState<Symmetry>('mirror');
   const [toolYaw, setToolYaw] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  const [view, setView] = useState<'3d' | 'plan'>('3d');
   const dragRef = useRef<{ id: string; moved: boolean } | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
@@ -327,7 +329,23 @@ export const ArenaBuilderModal: React.FC<Props> = ({ open, arenas, editingId, de
 
           {/* Canvas */}
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center p-3">
-            <div className="mb-2 flex w-full max-w-[640px] flex-wrap items-center gap-1.5">
+            <div className={`mb-2 flex w-full flex-wrap items-center gap-1.5 ${view === '3d' ? '' : 'max-w-[640px]'}`}>
+              <div className="flex overflow-hidden rounded-md border border-amber-500/60 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setView('3d')}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 font-bold ${view === '3d' ? 'bg-amber-500 text-slate-950' : 'text-slate-300'}`}
+                >
+                  <Box className="h-3.5 w-3.5" /> 3D
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView('plan')}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 font-bold ${view === 'plan' ? 'bg-amber-500 text-slate-950' : 'text-slate-300'}`}
+                >
+                  <MapIcon className="h-3.5 w-3.5" /> Top plan
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={() => setTool('select')}
@@ -381,11 +399,29 @@ export const ArenaBuilderModal: React.FC<Props> = ({ open, arenas, editingId, de
               </span>
             </div>
 
+            {view === '3d' && (
+              <div className="relative min-h-[320px] w-full flex-1 overflow-hidden rounded-xl border border-slate-800">
+                <ArenaBuilder3D
+                  spec={spec}
+                  tool={tool}
+                  selectedId={selected}
+                  onPlace={placeAt}
+                  onSelect={setSelected}
+                  onMove={(id, x, z) =>
+                    setSpec((prev) => ({ ...prev, items: prev.items.map((it) => (it.id === id ? { ...it, x, z } : it)) }))
+                  }
+                />
+                <div className="pointer-events-none absolute bottom-2 left-2 rounded-md bg-black/55 px-2 py-1 text-[11px] text-slate-200">
+                  Click floor to place · drag a piece to move · drag empty space to orbit · scroll to zoom
+                </div>
+              </div>
+            )}
             <svg
               ref={svgRef}
+
               viewBox={`${-HALF} ${-HALF} ${HALF * 2} ${HALF * 2}`}
               className="aspect-square w-full max-w-[640px] touch-none select-none rounded-xl"
-              style={{ cursor: tool === 'select' ? 'default' : 'crosshair' }}
+              style={{ cursor: tool === 'select' ? 'default' : 'crosshair', display: view === 'plan' ? undefined : 'none' }}
               onPointerDown={onSvgPointerDown}
               onPointerMove={onSvgPointerMove}
               onPointerUp={onSvgPointerUp}
@@ -472,7 +508,7 @@ export const ArenaBuilderModal: React.FC<Props> = ({ open, arenas, editingId, de
                 );
               })}
             </svg>
-            <div className="mt-2 flex w-full max-w-[640px] flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+            <div className={`mt-2 flex w-full flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 ${view === '3d' ? '' : 'max-w-[640px]'}`}>
               <span>
                 Click to place {tool === 'select' ? '' : CUSTOM_ITEM_INFO[tool].label}. Drag to move. R rotates, Delete removes.
               </span>

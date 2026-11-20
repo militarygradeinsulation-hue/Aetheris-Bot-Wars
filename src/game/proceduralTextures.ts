@@ -334,3 +334,266 @@ export function softDotTexture() {
     return finish(c, false);
   });
 }
+
+/**
+ * Turn a grayscale height canvas into a tangent-space normal map (Sobel filter).
+ * Height: white = raised. Returned texture is linear (no sRGB).
+ */
+function heightToNormal(src: HTMLCanvasElement, strength = 2.5): THREE.CanvasTexture {
+  const w = src.width;
+  const h = src.height;
+  const sctx = src.getContext('2d')!;
+  const hd = sctx.getImageData(0, 0, w, h).data;
+  const [c, g] = makeCanvas(w, h);
+  const out = g.createImageData(w, h);
+  const H = (x: number, y: number) => hd[(((y + h) % h) * w + ((x + w) % w)) * 4] / 255;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx =
+        (H(x + 1, y - 1) + 2 * H(x + 1, y) + H(x + 1, y + 1) - H(x - 1, y - 1) - 2 * H(x - 1, y) - H(x - 1, y + 1)) * strength;
+      const dy =
+        (H(x - 1, y + 1) + 2 * H(x, y + 1) + H(x + 1, y + 1) - H(x - 1, y - 1) - 2 * H(x, y - 1) - H(x + 1, y - 1)) * strength;
+      let nx = -dx;
+      let ny = dy;
+      let nz = 1;
+      const len = Math.hypot(nx, ny, nz);
+      nx /= len;
+      ny /= len;
+      nz /= len;
+      const i = (y * w + x) * 4;
+      out.data[i] = Math.round((nx * 0.5 + 0.5) * 255);
+      out.data[i + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+      out.data[i + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+      out.data[i + 3] = 255;
+    }
+  }
+  g.putImageData(out, 0, 0);
+  return finish(c, false);
+}
+
+function bolt(g: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  const grad = g.createRadialGradient(x - r * 0.3, y - r * 0.3, 0, x, y, r);
+  grad.addColorStop(0, '#ffffff');
+  grad.addColorStop(0.7, '#c8c8c8');
+  grad.addColorStop(1, '#808080');
+  g.fillStyle = grad;
+  g.beginPath();
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    if (k === 0) g.moveTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+    else g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+  }
+  g.closePath();
+  g.fill();
+}
+
+/** Steel deck: 2x2 plates per tile with seams, weld beads, countersunk bolts, dents and scratches. */
+export function steelDeckNormalTexture() {
+  return cached('deck_n', () => {
+    const S = 512;
+    const [c, g] = makeCanvas(S, S);
+    const r = rng(91);
+    g.fillStyle = '#808080';
+    g.fillRect(0, 0, S, S);
+    // Low-frequency warping of plates
+    for (let k = 0; k < 40; k++) {
+      const x = r() * S;
+      const y = r() * S;
+      const rad = 30 + r() * 90;
+      const grad = g.createRadialGradient(x, y, 0, x, y, rad);
+      const v = r() < 0.5 ? 70 : 150;
+      grad.addColorStop(0, `rgba(${v},${v},${v},0.25)`);
+      grad.addColorStop(1, 'rgba(128,128,128,0)');
+      g.fillStyle = grad;
+      g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    }
+    // Seams
+    g.fillStyle = '#303030';
+    for (const p of [0, S / 2]) {
+      g.fillRect(p - 3, 0, 6, S);
+      g.fillRect(0, p - 3, S, 6);
+    }
+    // Weld beads beside one seam set
+    for (let y = 0; y < S; y += 6) {
+      bolt(g, S / 2 + 7, y + 3, 3.2);
+    }
+    // Bolts near plate corners
+    for (const px of [0, S / 2]) {
+      for (const py of [0, S / 2]) {
+        for (const [ox, oy] of [
+          [18, 18],
+          [S / 2 - 18, 18],
+          [18, S / 2 - 18],
+          [S / 2 - 18, S / 2 - 18],
+          [S / 4, 18],
+          [S / 4, S / 2 - 18],
+        ]) {
+          bolt(g, px + ox, py + oy, 7);
+        }
+      }
+    }
+    // Scratches (grooves)
+    for (let k = 0; k < 70; k++) {
+      const x = r() * S;
+      const y = r() * S;
+      const a = r() * Math.PI;
+      const l = 8 + r() * 70;
+      g.strokeStyle = `rgba(80,80,80,${0.2 + r() * 0.25})`;
+      g.lineWidth = 0.8 + r() * 1.5;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+      g.stroke();
+    }
+    // Weapon dents
+    for (let k = 0; k < 14; k++) {
+      const x = r() * S;
+      const y = r() * S;
+      const rad = 6 + r() * 16;
+      const grad = g.createRadialGradient(x, y, 0, x, y, rad);
+      grad.addColorStop(0, 'rgba(30,30,30,0.7)');
+      grad.addColorStop(1, 'rgba(128,128,128,0)');
+      g.fillStyle = grad;
+      g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    }
+    return heightToNormal(c, 3.2);
+  });
+}
+
+/** Armor panel detail: panel seams, rivet rows, hatch, scratches and small dents. */
+export function armorPanelNormalTexture() {
+  return cached('armor_n', () => {
+    const S = 512;
+    const [c, g] = makeCanvas(S, S);
+    const r = rng(57);
+    g.fillStyle = '#808080';
+    g.fillRect(0, 0, S, S);
+    // Panel seams on an uneven grid
+    const cols = [0, 150, 330, 512];
+    const rows = [0, 200, 380, 512];
+    g.fillStyle = '#3a3a3a';
+    cols.forEach((x) => g.fillRect(x - 2, 0, 4, S));
+    rows.forEach((y) => g.fillRect(0, y - 2, S, 4));
+    // Rivets along seams
+    cols.forEach((x) => {
+      for (let y = 12; y < S; y += 26) bolt(g, (x + 10) % S, y, 4.2);
+    });
+    rows.forEach((y) => {
+      for (let x = 12; x < S; x += 26) bolt(g, x, (y + 10) % S, 4.2);
+    });
+    // Access hatch with raised lip
+    g.strokeStyle = '#b0b0b0';
+    g.lineWidth = 6;
+    g.strokeRect(190, 250, 110, 80);
+    g.strokeStyle = '#404040';
+    g.lineWidth = 2;
+    g.strokeRect(198, 258, 94, 64);
+    // Scratches and dents
+    for (let k = 0; k < 120; k++) {
+      const x = r() * S;
+      const y = r() * S;
+      const a = r() * Math.PI;
+      const l = 6 + r() * 40;
+      g.strokeStyle = `rgba(50,50,50,${0.2 + r() * 0.35})`;
+      g.lineWidth = 0.6 + r();
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+      g.stroke();
+    }
+    for (let k = 0; k < 10; k++) {
+      const x = r() * S;
+      const y = r() * S;
+      const rad = 5 + r() * 12;
+      const grad = g.createRadialGradient(x, y, 0, x, y, rad);
+      grad.addColorStop(0, 'rgba(40,40,40,0.6)');
+      grad.addColorStop(1, 'rgba(128,128,128,0)');
+      g.fillStyle = grad;
+      g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    }
+    return heightToNormal(c, 2.6);
+  });
+}
+
+/** Concrete pores and pitting. */
+export function concreteNormalTexture() {
+  return cached('concrete_n', () => {
+    const S = 256;
+    const [c, g] = makeCanvas(S, S);
+    const r = rng(29);
+    g.fillStyle = '#808080';
+    g.fillRect(0, 0, S, S);
+    const img = g.getImageData(0, 0, S, S);
+    for (let i = 0; i < img.data.length; i += 4) {
+      const n = (r() - 0.5) * 40;
+      img.data[i] += n;
+      img.data[i + 1] += n;
+      img.data[i + 2] += n;
+    }
+    g.putImageData(img, 0, 0);
+    for (let k = 0; k < 220; k++) {
+      g.fillStyle = `rgba(30,30,30,${0.4 + r() * 0.5})`;
+      g.beginPath();
+      g.arc(r() * S, r() * S, 0.8 + r() * 2.2, 0, Math.PI * 2);
+      g.fill();
+    }
+    return heightToNormal(c, 2.2);
+  });
+}
+
+/** Wood grain and plank seams for crates. */
+export function woodNormalTexture() {
+  return cached('wood_n', () => {
+    const S = 256;
+    const [c, g] = makeCanvas(S, S);
+    const r = rng(11);
+    g.fillStyle = '#808080';
+    g.fillRect(0, 0, S, S);
+    for (let p = 0; p < 5; p++) {
+      const y = (p * S) / 5;
+      for (let k = 0; k < 30; k++) {
+        g.strokeStyle = `rgba(${r() < 0.5 ? 60 : 180},${r() < 0.5 ? 60 : 180},${r() < 0.5 ? 60 : 180},0.3)`;
+        g.lineWidth = 0.6 + r();
+        g.beginPath();
+        const gy = y + 4 + r() * (S / 5 - 8);
+        g.moveTo(0, gy);
+        g.bezierCurveTo(80, gy + (r() - 0.5) * 6, 170, gy + (r() - 0.5) * 6, 256, gy + (r() - 0.5) * 4);
+        g.stroke();
+      }
+      g.fillStyle = '#202020';
+      g.fillRect(0, y, S, 3);
+    }
+    g.save();
+    g.translate(128, 128);
+    g.rotate(Math.PI / 4);
+    g.fillStyle = '#b8b8b8';
+    g.fillRect(-180, -14, 360, 28);
+    g.restore();
+    g.strokeStyle = '#b8b8b8';
+    g.lineWidth = 18;
+    g.strokeRect(9, 9, 238, 238);
+    return heightToNormal(c, 2.4);
+  });
+}
+
+/** Tire tread blocks as a normal map (pairs with tireTreadTexture). */
+export function treadNormalTexture() {
+  return cached('tread_n', () => {
+    const [c, g] = makeCanvas(256, 64);
+    g.fillStyle = '#c8c8c8';
+    g.fillRect(0, 0, 256, 64);
+    g.fillStyle = '#202020';
+    for (let x = 0; x < 256; x += 16) {
+      g.beginPath();
+      g.moveTo(x, 0);
+      g.lineTo(x + 7, 0);
+      g.lineTo(x + 12, 32);
+      g.lineTo(x + 7, 64);
+      g.lineTo(x, 64);
+      g.lineTo(x + 5, 32);
+      g.closePath();
+      g.fill();
+    }
+    return heightToNormal(c, 3);
+  });
+}
