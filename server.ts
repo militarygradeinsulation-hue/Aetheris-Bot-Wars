@@ -1,4 +1,11 @@
 import {
+  ARENA_LAYOUTS,
+  sanitizeCustomArena,
+  type ArenaLayoutId,
+  type ArenaRules,
+  type CustomArenaSpec,
+} from './src/shared/arenaLayouts.ts';
+import {
   type FunctionDeclaration,
   GoogleGenAI,
   type LiveServerMessage,
@@ -521,6 +528,9 @@ interface ArenaRoom {
   id: string;
   mode: 'duel_1v1' | 'brawl_4bot';
   arenaId: ArenaId;
+  layout?: ArenaLayoutId;
+  rules?: ArenaRules;
+  customArena?: CustomArenaSpec | null;
   durationSeconds: number;
   maxHumans: number;
   players: Map<string, RoomPlayer>;
@@ -599,7 +609,11 @@ function startRoomMatch(room: ArenaRoom) {
     aiIdx++;
   }
 
-  room.snapshot = createInitialSnapshot('multiplayer', room.arenaId, roster, room.durationSeconds);
+  room.snapshot = createInitialSnapshot('multiplayer', room.arenaId, roster, room.durationSeconds, {
+    layout: room.layout,
+    rules: room.rules,
+    customArena: room.customArena ?? null,
+  });
   room.participants = Array.from(room.players.values()).map((p) => ({
     id: p.id,
     name: p.name,
@@ -2630,6 +2644,9 @@ async function startServer() {
         const msg = JSON.parse(raw.toString()) as {
           type: string;
           roomId?: string;
+          layout?: string;
+          rules?: { bombs?: boolean; lightning?: boolean };
+          customArena?: unknown;
           playerId?: string;
           name?: string;
           clanTag?: string;
@@ -2829,10 +2846,17 @@ async function startServer() {
                 );
           if (!room) {
             const roomId = `arena_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+            const customArena = sanitizeCustomArena(msg.customArena, Object.keys(ARENA_CATALOG));
             room = {
               id: roomId,
               mode,
-              arenaId,
+              arenaId: customArena ? customArena.theme : arenaId,
+              layout: msg.layout && msg.layout in ARENA_LAYOUTS ? (msg.layout as ArenaLayoutId) : 'classic',
+              rules: {
+                bombs: msg.rules?.bombs !== false,
+                lightning: msg.rules?.lightning !== false,
+              },
+              customArena,
               durationSeconds,
               maxHumans,
               players: new Map(),

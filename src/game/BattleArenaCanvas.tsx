@@ -26,6 +26,7 @@ import { createDamageDecalPack } from './damageDecals';
 import { createProceduralTextures, type ProceduralTexturePack } from './materials';
 import { EffectsManager } from './particlesAndDebris';
 import { CombatOverlay } from './combatOverlay';
+import { createPostFx, type PostFx } from './postFx';
 import { soundEngine } from './soundEngine';
 import { voiceCommentator } from './voiceCommentator';
 
@@ -169,8 +170,14 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    let postFx: PostFx | null = null;
     const applyExposure = () => {
       renderer.toneMappingExposure = ssaoRef.current ? 1.16 : 1.06;
+      const smallTouch = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0 && window.innerWidth < 900;
+      postFx?.setQuality(
+        batteryRef.current === 'eco' ? 'off' : batteryRef.current === 'ultra' || (ssaoRef.current && !smallTouch) ? 'high' : 'low',
+        ssaoRef.current,
+      );
     };
     applyExposure();
     updateExposureRef.current = applyExposure;
@@ -192,7 +199,12 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       }
     };
     applyBatteryPixelRatio();
-    updateBatteryRef.current = applyBatteryPixelRatio;
+    updateBatteryRef.current = () => {
+      applyBatteryPixelRatio();
+      applyExposure();
+      const sz = renderer.getSize(new THREE.Vector2());
+      postFx?.setSize(sz.x, sz.y);
+    };
 
     const width = Math.max(1, container.clientWidth || window.innerWidth);
     const height = Math.max(1, container.clientHeight || window.innerHeight);
@@ -216,6 +228,16 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     const camera = new THREE.PerspectiveCamera(52, width / height, 0.2, 240);
     camera.position.set(0, 10, 15);
     camera.lookAt(0, 0.5, 0);
+    // Film-style finishing (AO, bloom, lens, SMAA). Software GL renders plain to stay fast.
+    const forceFx = typeof location !== 'undefined' && new URLSearchParams(location.search).has('fx');
+    if (!isSoftwareGl || forceFx) {
+      try {
+        postFx = createPostFx(renderer, scene, camera);
+        applyExposure();
+      } catch {
+        postFx = null;
+      }
+    }
 
     // Studio Environment Reflection (mandatory for PBR metals)
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
@@ -478,6 +500,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      postFx?.setSize(w, h);
       viewShiftProbe = 0;
       applyViewShift();
     };
@@ -496,6 +519,9 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     let workshopWeaponAngle = 0;
     let lastEcoRender = 0;
     let smoothFollowYaw: number | null = null;
+    let camYawVel = 0;
+    let camFrameMix = 0;
+    let camSpeedSmooth = 0;
     _curLook.set(0, 0.5, 0);
 
     function applyEventDecal(ev: CombatEvent) {
@@ -1392,25 +1418,60 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
               );
               _lookGoal.set(playerBot.x, 0.5, playerBot.z);
             } else {
-              // Smooth Follow / Chase camera: gently damp yaw so quick bot turns don't whip the camera around
+              // Chase camera: spring-damped heading that ignores reversing, looks ahead of travel,
+              // and widens to keep the nearest rival in frame during a fight
+              const speed = Math.hypot(playerBot.vx, playerBot.vz);
+              camSpeedSmooth += (speed - camSpeedSmooth) * Math.min(1, dt * 3);
+              const fwdX = Math.sin(playerBot.yaw);
+              const fwdZ = Math.cos(playerBot.yaw);
+              const fwdSpeed = playerBot.vx * fwdX + playerBot.vz * fwdZ;
+              // Heading target: facing direction, but when reversing hard keep the old heading
+              let headingTarget = playerBot.yaw;
+              if (fwdSpeed < -1.2 && smoothFollowYaw !== null) headingTarget = smoothFollowYaw;
               if (smoothFollowYaw === null) {
-                smoothFollowYaw = playerBot.yaw;
+                smoothFollowYaw = headingTarget;
+                camYawVel = 0;
               } else {
-                let angleDiff = playerBot.yaw - smoothFollowYaw;
+                let angleDiff = headingTarget - smoothFollowYaw;
                 while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
                 while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-                const yawAlpha = 1 - Math.exp(-1.75 * sens * dt);
-                smoothFollowYaw += angleDiff * yawAlpha;
+                // Critically damped spring: fast to settle, no overshoot
+                const omega = 3.2 + sens * 2.4;
+                const accel = omega * omega * angleDiff - 2 * omega * camYawVel;
+                camYawVel += accel * dt;
+                smoothFollowYaw += camYawVel * dt;
               }
-              const speed = Math.hypot(playerBot.vx, playerBot.vz);
+              // Frame the nearest live rival when they are close
+              let rival: typeof playerBot | null = null;
+              let rivalDist = Infinity;
+              for (const b of snap.bots) {
+                if (b.id === playerBot.id || b.isDead || b.team === playerBot.team) continue;
+                const d = Math.hypot(b.x - playerBot.x, b.z - playerBot.z);
+                if (d < rivalDist) {
+                  rivalDist = d;
+                  rival = b;
+                }
+              }
+              const wantFrame = rival && rivalDist < 10 && !playerBot.isDead ? 1 : 0;
+              camFrameMix += (wantFrame - camFrameMix) * Math.min(1, dt * 2.2);
               const backX = -Math.sin(smoothFollowYaw);
               const backZ = -Math.cos(smoothFollowYaw);
-              const dist = 10.4 + Math.min(2.2, speed * 0.12);
-              _camGoal.set(playerBot.x + backX * dist, 7.2, playerBot.z + backZ * dist);
+              const sc = Math.max(0.8, playerBot.scale);
+              const dist = (6.8 + Math.min(2.6, camSpeedSmooth * 0.17) + camFrameMix * Math.min(3, rivalDist * 0.22)) * sc;
+              const height = (3.6 + Math.min(1.2, camSpeedSmooth * 0.06) + camFrameMix * 1.1) * sc;
+              _camGoal.set(playerBot.x + backX * dist, playerBot.y * 0.5 + height, playerBot.z + backZ * dist);
+              // Near a wall the boom would end up behind the blast glass: lift it over instead
+              const overshoot = Math.max(Math.abs(_camGoal.x), Math.abs(_camGoal.z)) - (arenaHalf - 1.2);
+              if (overshoot > 0) _camGoal.y += overshoot * 1.1;
+              // Look ahead along velocity, then blend toward the rival midpoint
+              const leadX = playerBot.x + playerBot.vx * 0.3 + Math.sin(smoothFollowYaw) * 1.6;
+              const leadZ = playerBot.z + playerBot.vz * 0.3 + Math.cos(smoothFollowYaw) * 1.6;
+              const midX = rival ? (playerBot.x + rival.x) * 0.5 : leadX;
+              const midZ = rival ? (playerBot.z + rival.z) * 0.5 : leadZ;
               _lookGoal.set(
-                playerBot.x + Math.sin(smoothFollowYaw) * 2.0,
-                0.52,
-                playerBot.z + Math.cos(smoothFollowYaw) * 2.0,
+                leadX + (midX - leadX) * camFrameMix * 0.65,
+                0.55 + playerBot.y * 0.6,
+                leadZ + (midZ - leadZ) * camFrameMix * 0.65,
               );
             }
 
@@ -1419,8 +1480,9 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
             _camGoal.x = THREE.MathUtils.clamp(_camGoal.x, -maxCamBound, maxCamBound);
             _camGoal.z = THREE.MathUtils.clamp(_camGoal.z, -maxCamBound, maxCamBound);
 
-            const posDamp = isFirstPerson ? 14 * sens : isPilotBooth ? 3.8 * sens : 2.6 * sens;
-            const lookDamp = isFirstPerson ? 18 * sens : isPilotBooth ? 5.2 * sens : 3.8 * sens;
+            const isChase = !isFirstPerson && !isPilotBooth && preset !== 'tactical' && preset !== 'spectator' && preset !== 'cinematic';
+            const posDamp = isFirstPerson ? 14 * sens : isPilotBooth ? 3.8 * sens : isChase ? 5.5 + 3 * sens : 2.6 * sens;
+            const lookDamp = isFirstPerson ? 18 * sens : isPilotBooth ? 5.2 * sens : isChase ? 9 + 4 * sens : 3.8 * sens;
 
             camera.position.x = THREE.MathUtils.damp(camera.position.x, _camGoal.x, posDamp, dt);
             camera.position.y = THREE.MathUtils.damp(camera.position.y, _camGoal.y, posDamp, dt);
@@ -1442,7 +1504,8 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       }
 
       effects.update(dt);
-      renderer.render(scene, camera);
+      if (postFx) postFx.render(dt);
+      else renderer.render(scene, camera);
 
       if (isSoftwareGl) {
         afterDraw(tick);
@@ -1486,6 +1549,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       pedMat.dispose();
       pedRingMat.dispose();
       envTexture.dispose();
+      postFx?.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === container) {
         container.removeChild(renderer.domElement);
@@ -1507,16 +1571,6 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
   return (
     <div className="relative w-full h-full select-none">
       <div ref={mountRef} className="w-full h-full" />
-      {ssaoEnabled && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(circle at 50% 52%, rgba(0,0,0,0) 60%, rgba(2,6,14,0.28) 100%)',
-          }}
-        />
-      )}
     </div>
   );
 };
