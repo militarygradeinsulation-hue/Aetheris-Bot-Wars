@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
@@ -43,7 +44,7 @@ const LensFinishShader = {
       col.g = texture2D(tDiffuse, vUv).g;
       col.b = texture2D(tDiffuse, vUv - off).b;
       // Gentle S-curve for punchier midtones without crushing blacks
-      col = mix(col, col * col * (3.0 - 2.0 * col), 0.18);
+      col = mix(col, col * col * (3.0 - 2.0 * col), 0.1);
       float vig = smoothstep(0.85, 0.18, r2 * (1.0 + uVignette * 2.2));
       col *= mix(1.0 - uVignette, 1.0, vig);
       col += (hash(vUv * 1024.0) - 0.5) * uGrain;
@@ -59,6 +60,8 @@ export interface PostFx {
   setSize: (w: number, h: number) => void;
   setQuality: (q: PostFxQuality, ao: boolean) => void;
   setBloomBoost: (extra: number) => void;
+  /** Focus distance in meters for the broadcast-camera depth of field; null turns it off. */
+  setFocus: (distance: number | null) => void;
   dispose: () => void;
 }
 
@@ -78,9 +81,15 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
   composer.addPass(gtao);
 
+  // Broadcast-lens depth of field: the bot you follow is sharp, stands and far walls go soft
+  const bokeh = new BokehPass(scene, camera, { focus: 8, aperture: 0.00055, maxblur: 0.0065 });
+  composer.addPass(bokeh);
+  let focusWanted = true;
+
   // Bloom only picks up genuinely bright pixels: emissives, sparks, lights
-  const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.32, 0.5, 0.93);
-  composer.addPass(bloom);
+  // Bloom stays off: no glow halos around lights or bright metal
+  const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.0, 0.35, 0.98);
+  bloom.enabled = false;
 
   const output = new OutputPass();
   composer.addPass(output);
@@ -92,12 +101,12 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   composer.addPass(smaa);
 
   let quality: PostFxQuality = 'high';
-  let baseBloom = 0.32;
+  let baseBloom = 0.16;
 
   const apply = (ao: boolean) => {
     const on = quality !== 'off';
     gtao.enabled = on && quality === 'high' && ao;
-    bloom.enabled = on;
+    bokeh.enabled = on && quality === 'high' && focusWanted;
     lens.enabled = on;
     smaa.enabled = on;
   };
@@ -126,9 +135,21 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     setBloomBoost: (extra: number) => {
       bloom.strength = baseBloom + extra;
     },
+    setFocus: (distance: number | null) => {
+      const want = distance !== null;
+      if (want !== focusWanted) {
+        focusWanted = want;
+        bokeh.enabled = quality === 'high' && want;
+      }
+      if (distance !== null) {
+        const u = bokeh.uniforms as unknown as Record<string, { value: number }>;
+        u.focus.value += (distance - u.focus.value) * 0.25;
+      }
+    },
     dispose: () => {
       composer.dispose();
       gtao.dispose();
+      bokeh.dispose();
       bloom.dispose();
       baseBloom = 0;
     },

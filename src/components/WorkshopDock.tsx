@@ -1,3 +1,5 @@
+import { PartThumb } from './PartThumb';
+import { ArenaThumb } from './ArenaThumb';
 import React, { useRef, useState } from 'react';
 import {
   Activity,
@@ -733,12 +735,13 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                     type="button"
                     onClick={() => onSelectLoadoutSlot(slotIdx)}
                     title={slotBot?.name || `Bay ${slotIdx + 1}`}
-                    className={`rounded-lg px-2 py-1 text-xs font-bold transition whitespace-nowrap ${
+                    className={`flex items-center gap-1.5 rounded-lg py-1 pl-1 pr-2 text-xs font-bold transition whitespace-nowrap ${
                       isCurrent
                         ? 'bg-amber-500 text-slate-950 shadow'
                         : 'bg-[#19202A] text-slate-300 hover:text-white'
                     }`}
                   >
+                    <PartThumb kind="full" base={isCurrent ? config : slotBot ?? config} className="h-7 w-9 rounded-md border-0" />
                     Bay {slotIdx + 1}
                   </button>
                 );
@@ -1222,6 +1225,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                         : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
                     }`}
                   >
+                    <PartThumb kind="weapon" id={wId} base={config} className="float-right ml-2 mb-1 h-[58px] w-[80px]" />
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <GripVertical className="h-3.5 w-3.5 text-slate-500 shrink-0 cursor-grab" />
@@ -1736,6 +1740,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                         : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
                     }`}
                   >
+                    <PartThumb kind="chassis" id={cId} base={config} className="float-right ml-2 mb-1 h-[58px] w-[80px]" />
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <button
@@ -1796,6 +1801,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                             : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
                       }`}
                     >
+                      <ArenaThumb arenaId={aId} className="float-right ml-3 mb-1 h-[64px] w-[110px]" />
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
                           <button
@@ -1860,6 +1866,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                         : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
                     }`}
                   >
+                    <PartThumb kind="armor" id={aId} base={config} className="float-right ml-2 mb-1 h-[58px] w-[80px]" />
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-extrabold text-white truncate">{item.label}</span>
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -1891,6 +1898,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                         : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
                     }`}
                   >
+                    <PartThumb kind="wheels" id={wlId} base={config} className="float-right ml-2 mb-1 h-[58px] w-[80px]" />
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-extrabold text-white truncate">{item.label}</span>
                       <span className="font-mono-tabular text-xs font-bold text-amber-400 shrink-0">
@@ -1920,6 +1928,7 @@ export const WorkshopDock: React.FC<WorkshopDockProps> = ({
                         : 'border-slate-800 bg-[#161B22] hover:border-slate-600'
                     }`}
                   >
+                    <PartThumb kind="drive" id={dId} base={config} className="float-right ml-2 mb-1 h-[58px] w-[80px]" />
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-extrabold text-white truncate">{item.label}</span>
                       <div className="flex items-center gap-1.5 shrink-0">

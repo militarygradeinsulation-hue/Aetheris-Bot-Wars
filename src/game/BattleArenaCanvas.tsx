@@ -27,6 +27,7 @@ import { createProceduralTextures, type ProceduralTexturePack } from './material
 import { EffectsManager } from './particlesAndDebris';
 import { CombatOverlay } from './combatOverlay';
 import { createPostFx, type PostFx } from './postFx';
+import { buildArenaEnvMap } from './arenaEnvironment';
 import { soundEngine } from './soundEngine';
 import { voiceCommentator } from './voiceCommentator';
 
@@ -74,6 +75,20 @@ function detectSoftwareWebGL(): boolean {
   } catch {
     return false;
   }
+}
+
+/** Halve the brightness of additive glow sprites and halos (underglow, auras, light cones). */
+function dimAdditiveGlow(root: THREE.Object3D) {
+  root.traverse((o) => {
+    const mats = (o as THREE.Mesh).material;
+    if (!mats) return;
+    for (const m of Array.isArray(mats) ? mats : [mats]) {
+      if (m.blending === THREE.AdditiveBlending && !m.userData.glowCut) {
+        m.userData.glowCut = true;
+        m.opacity *= 0.5;
+      }
+    }
+  });
 }
 
 export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
@@ -172,7 +187,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     let postFx: PostFx | null = null;
     const applyExposure = () => {
-      renderer.toneMappingExposure = ssaoRef.current ? 1.16 : 1.06;
+      renderer.toneMappingExposure = ssaoRef.current ? 1.0 : 0.95;
       const smallTouch = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0 && window.innerWidth < 900;
       postFx?.setQuality(
         batteryRef.current === 'eco' ? 'off' : batteryRef.current === 'ultra' || (ssaoRef.current && !smallTouch) ? 'high' : 'low',
@@ -246,10 +261,11 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     pmremGenerator.dispose();
 
     // 3-Point Warm/Cool Studio + Arena Lighting Rig (<= 2 shadow casters)
-    const hemiLight = new THREE.HemisphereLight(0xa5d8ff, 0x1e293b, 0.85);
+    // Fill is kept low: most ambient light now comes from the arena HDR environment
+    const hemiLight = new THREE.HemisphereLight(0xa5d8ff, 0x1e293b, 0.65);
     scene.add(hemiLight);
 
-    const keyLight = new THREE.DirectionalLight(0xfff3db, 2.35);
+    const keyLight = new THREE.DirectionalLight(0xfff3db, 2.6);
     keyLight.position.set(16, 26, 14);
     keyLight.castShadow = !isSoftwareGl;
     keyLight.shadow.mapSize.width = isSoftwareGl ? 512 : 2048;
@@ -273,10 +289,10 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     // Overhead Arena Studio Softbox Light Bars for crisp reflections on shiny metals
     if (!isSoftwareGl) {
       RectAreaLightUniformsLib.init();
-      const softboxA = new THREE.RectAreaLight(0xffffff, 3.8, 18, 2.6);
+      const softboxA = new THREE.RectAreaLight(0xffffff, 1.5, 18, 2.6);
       softboxA.position.set(0, 14, -7);
       softboxA.lookAt(0, 0, 0);
-      const softboxB = new THREE.RectAreaLight(0xffedd5, 3.4, 18, 2.6);
+      const softboxB = new THREE.RectAreaLight(0xffedd5, 1.3, 18, 2.6);
       softboxB.position.set(0, 14, 7);
       softboxB.lookAt(0, 0, 0);
       scene.add(softboxA, softboxB);
@@ -396,6 +412,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
         !isSoftwareGl,
         textures.metalBrushBump,
       );
+      dimAdditiveGlow(workshopBotRig.root);
       const previewScale = computeBotStats(playerConfigRef.current, DEFAULT_SKILLS).bodyScale;
       workshopBotRig.root.scale.setScalar(previewScale);
       workshopBotRig.root.visible = modeRef.current === 'workshop';
@@ -412,10 +429,22 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       scene.add(workshopBotRig.root);
     };
 
+    let arenaEnv: THREE.Texture | null = null;
     const rebuildArena = () => {
       const aSpec = ARENA_CATALOG[arenaIdRef.current];
       scene.background = new THREE.Color(aSpec.skyHex);
       scene.fog = new THREE.FogExp2(aSpec.skyHex, 0.011);
+      // Arena-shaped HDR lighting: floodlight banks and LED bands show up in every reflection
+      try {
+        const nextEnv = buildArenaEnvMap(renderer, aSpec.accentHex, aSpec.skyHex);
+        scene.environment = nextEnv;
+        // Reflections should read as a lit arena, not a mirror ball
+        (scene as unknown as { environmentIntensity: number }).environmentIntensity = 0.65;
+        arenaEnv?.dispose();
+        arenaEnv = nextEnv;
+      } catch {
+        scene.environment = envTexture;
+      }
 
       if (arenaBuilt) {
         scene.remove(arenaBuilt.group);
@@ -425,6 +454,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       textures.dispose();
       textures = createProceduralTextures(maxAnisotropy, arenaIdRef.current);
       arenaBuilt = buildArenaEnvironment(arenaIdRef.current, textures, !isSoftwareGl);
+      dimAdditiveGlow(arenaBuilt.group);
       scene.add(arenaBuilt.group);
 
       // Rebuild workshop bot too so it never holds disposed texture handles
@@ -520,6 +550,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
     let lastEcoRender = 0;
     let smoothFollowYaw: number | null = null;
     let camYawVel = 0;
+    const _tmpFocus = new THREE.Vector3();
     let camFrameMix = 0;
     let camSpeedSmooth = 0;
     _curLook.set(0, 0.5, 0);
@@ -902,6 +933,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
           }
           arenaBuilt?.syncHazards(workshopPreviewHazards, dt, colorBlindRef.current);
         }
+        postFx?.setFocus(camera.position.distanceTo(orbit.target));
         if (--viewShiftProbe <= 0) {
           viewShiftProbe = 20;
           const dock = document.getElementById('workshop-dock');
@@ -1192,6 +1224,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
                 !isSoftwareGl,
                 textures.metalBrushBump,
               );
+              dimAdditiveGlow(newRig.root);
               scene.add(newRig.root);
               entry = { rig: newRig, configKey: cfgKey };
               combatBotRigs.set(b.id, entry);
@@ -1499,6 +1532,9 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
             }
 
             camera.lookAt(_curLook);
+            // Keep the player's bot in focus; widen the in-focus zone for overhead views
+            const focusDist = camera.position.distanceTo(_tmpFocus.set(playerBot.x, playerBot.y + 0.4, playerBot.z));
+            postFx?.setFocus(preset === 'tactical' || preset === 'spectator' ? null : focusDist);
           }
         }
       }
@@ -1549,6 +1585,7 @@ export const BattleArenaCanvas: React.FC<BattleArenaCanvasProps> = ({
       pedMat.dispose();
       pedRingMat.dispose();
       envTexture.dispose();
+      arenaEnv?.dispose();
       postFx?.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === container) {

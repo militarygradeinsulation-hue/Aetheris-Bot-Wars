@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { armorPanelNormalTexture, grimeRoughnessTexture } from './proceduralTextures';
 import type { PatternId } from '../shared/types';
 import type { ArenaId, ArmorId, FinishStyleId } from '../shared/types';
 import { ARMOR_CATALOG, ARENA_CATALOG, FINISH_CATALOG } from '../shared/types';
@@ -432,7 +433,7 @@ export function createArmorMaterial(
     bumpScale: armorId === 'reactive_era' ? 0.022 : 0.014,
     roughness: THREE.MathUtils.clamp(spec.roughness * 0.78 * fin.roughnessMult, 0.08, 0.88),
     metalness: THREE.MathUtils.clamp(spec.metalness + 0.06 + fin.metalnessAdd, 0.1, 0.99),
-    envMapIntensity: finishStyle === 'chrome' || isIridescentArmor ? 1.9 : 1.55,
+    envMapIntensity: finishStyle === 'chrome' || isIridescentArmor ? 1.15 : 0.9,
     clearcoat: armorId === 'kevlar' && finishStyle === 'standard' ? 0.35 : fin.clearcoat,
     clearcoatRoughness: finishStyle === 'matte' ? 0.45 : 0.12,
     iridescence: isIridescentArmor ? 0.95 : fin.iridescence,
@@ -442,6 +443,10 @@ export function createArmorMaterial(
         ? 0.85
         : 0.25,
   });
+  // Panel seams, rivets and wear so plates read as machined steel instead of plastic
+  mat.normalMap = armorPanelNormalTexture();
+  mat.normalScale = new THREE.Vector2(0.5, 0.5);
+  if (finishStyle !== 'chrome') mat.roughnessMap = grimeRoughnessTexture();
   mat.userData.baseColor = baseColor;
   return mat;
 }
