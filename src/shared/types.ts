@@ -419,6 +419,8 @@ export interface ArmorZones {
 }
 
 export interface BotPhysicsState {
+  /** Smoothed steering input, so digital keys ramp in instead of snapping. */
+  steerSmooth?: number;
   id: string;
   name: string;
   clanTag: string;
@@ -600,6 +602,7 @@ export interface DestructibleProp {
     | 'barrel'
     | 'pillar'
     | 'ramp'
+    | 'barrier'
     | 'debris_chunk'
     | 'pickup_repair'
     | 'pickup_energy'
@@ -760,6 +763,11 @@ export interface ArenaSnapshot {
   waveStartedAt?: number;
   gravityMult?: number;
   debris?: DebrisPiece[];
+  /** Bomb / lightning switches chosen for this match. */
+  arenaRules?: { bombs: boolean; lightning: boolean };
+  /** Obstacle layout id or 'custom'. */
+  layout?: string;
+  customArenaName?: string;
 }
 
 export interface LeaderboardEntry {

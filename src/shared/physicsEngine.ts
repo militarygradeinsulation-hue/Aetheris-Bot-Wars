@@ -38,6 +38,14 @@ import {
   trySelfRight,
   tryFlip,
 } from './damageModel.ts';
+import {
+  buildCustomArena,
+  buildLayoutProps,
+  DEFAULT_ARENA_RULES,
+  type ArenaLayoutId,
+  type ArenaRules,
+  type CustomArenaSpec,
+} from './arenaLayouts.ts';
 
 const BASE_BOT_RADIUS = 1.15;
 const BASE_GRAVITY = 28;
@@ -638,7 +646,16 @@ export function presetToRoster(
 
 export interface SnapshotOptions {
   modifiers?: MatchModifierId[];
+  /** Obstacle layout. 'classic' keeps each arena's own set. */
+  layout?: ArenaLayoutId;
+  /** Player-built arena; overrides layout and the theme's hazards. */
+  customArena?: CustomArenaSpec | null;
+  /** Turn off bomb drops and/or lightning strikes (hazards and arena events). */
+  rules?: Partial<ArenaRules>;
 }
+
+// Per-bot AI navigation memory (stuck detection and escape maneuvers)
+const aiNav = new Map<string, { stuck: number; escape: number; escapeSteer: number }>();
 
 let nextProjectileId = 1;
 // Active snapshot context for damage resolution (set per physics step)
@@ -797,7 +814,7 @@ export function createInitialSnapshot(
   const spawns = computeSpawns(roster);
   const bots: BotPhysicsState[] = roster.map((entry, idx) => makeBotState(entry, spawns[idx], modifiers));
 
-  const props: DestructibleProp[] = [
+  let props: DestructibleProp[] = [
     { id: 'pillar_nw', kind: 'pillar', x: -6.2, y: 0, z: -6.2, radius: 1.05, hp: 75, maxHp: 75, destroyed: false },
     { id: 'pillar_ne', kind: 'pillar', x: 6.2, y: 0, z: -6.2, radius: 1.05, hp: 75, maxHp: 75, destroyed: false },
     { id: 'pillar_sw', kind: 'pillar', x: -6.2, y: 0, z: 6.2, radius: 1.05, hp: 75, maxHp: 75, destroyed: false },
@@ -857,7 +874,7 @@ export function createInitialSnapshot(
     id, kind: 'laser_grid', x, z, radius: 1.25, armLength, active: false, warning: false, phase, unlockAt, cyclePeriod: 10.0, warningDuration: 3.0, activeDuration: 4.5, sweepAngle: phase,
   });
 
-  const arenaHazards: HazardState[] =
+  let arenaHazards: HazardState[] =
     arenaId === 'skyforge'
       ? [
           pit('pit_w', -7.4, 0, 0, 0),
@@ -969,6 +986,26 @@ export function createInitialSnapshot(
       pit(`pit_${arenaId}_se`, 8.4, 8.4, 5.4, tier2Unlock),
     );
   }
+  // Layout / custom arena: swap the obstacle set and drop traps that would overlap it
+  const layout: ArenaLayoutId = options.layout ?? 'classic';
+  if (options.customArena) {
+    const built = buildCustomArena(options.customArena, { tier2Unlock, tier3Unlock });
+    props = built.props;
+    arenaHazards = built.hazards;
+  } else if (layout !== 'classic') {
+    const lp = buildLayoutProps(layout, arenaId) ?? [];
+    props = lp;
+    if (layout === 'open_floor') {
+      arenaHazards = [];
+    } else {
+      arenaHazards = arenaHazards.filter((h) =>
+        lp.every((pr) => Math.hypot(pr.x - h.x, pr.z - h.z) > pr.radius + h.radius * 0.8),
+      );
+    }
+  }
+  // Keep spawn points clear so nobody starts wedged into a wall
+  props = props.filter((pr) => spawns.every(([sx, sz]) => Math.hypot(pr.x - sx, pr.z - sz) > pr.radius + 1.6));
+
   const isTraditional = modifiers.includes('traditional_rules');
   const isHighChaos = modifiers.includes('high_chaos');
   // Normalize all cyclic hazards to a full 3.0s telegraph warning window for tactical counter-play
@@ -984,7 +1021,7 @@ export function createInitialSnapshot(
       }
     }
   }
-  if (isHighChaos && !isTraditional) {
+  if (isHighChaos && !isTraditional && layout !== 'open_floor') {
     arenaHazards.push(
       bolt(`chaos_bolt_${arenaId}`, 0, 0, 1.4, 2),
       bomb(`chaos_bomb_${arenaId}`, 3.2, -3.2, 2.8, 3),
@@ -1000,7 +1037,10 @@ export function createInitialSnapshot(
           h.kind === 'pit',
       )
     : arenaHazards;
-  const hazards = modifiers.includes('no_hazards') ? [] : filteredHazards;
+  const rules: ArenaRules = { ...DEFAULT_ARENA_RULES, ...(options.rules ?? {}) };
+  const hazards = (modifiers.includes('no_hazards') ? [] : filteredHazards).filter(
+    (h) => (rules.bombs || h.kind !== 'bomb_drop') && (rules.lightning || h.kind !== 'lightning'),
+  );
 
   const snapshot: ArenaSnapshot = {
     tick: 0,
@@ -1031,6 +1071,9 @@ export function createInitialSnapshot(
     survivalWave: mode === 'survival' ? 0 : undefined,
     survivalKills: mode === 'survival' ? 0 : undefined,
     gravityMult: isTraditional ? 1.0 : ARENA_CATALOG[arenaId]?.gravityMult ?? 1,
+    arenaRules: rules,
+    layout: options.customArena ? 'custom' : layout,
+    customArenaName: options.customArena?.name,
   };
   if (mode === 'survival') {
     if (!snapshot.bots.some((b) => b.team !== 0)) spawnSurvivalWave(snapshot);
@@ -1560,6 +1603,35 @@ export function computeAiInput(
     }
   }
 
+  // Obstacle avoidance: if a solid prop sits on the straight line to the goal, aim past its edge
+  {
+    const gx = targetX - bot.x;
+    const gz = targetZ - bot.z;
+    const gLen = Math.hypot(gx, gz);
+    if (gLen > 0.5) {
+      const ux = gx / gLen;
+      const uz = gz / gLen;
+      const look = Math.min(gLen, 6.5);
+      let best: { along: number; side: number; pr: DestructibleProp } | null = null;
+      for (const pr of snapshot.props) {
+        if (pr.destroyed || pr.kind === 'ramp' || pr.kind.startsWith('pickup') || pr.kind === 'debris_chunk') continue;
+        const rx = pr.x - bot.x;
+        const rz = pr.z - bot.z;
+        const along = rx * ux + rz * uz;
+        if (along < 0.3 || along > look) continue;
+        const side = rx * uz - rz * ux;
+        const clear = pr.radius + BASE_BOT_RADIUS * bot.scale * 0.95;
+        if (Math.abs(side) < clear && (!best || along < best.along)) best = { along, side, pr };
+      }
+      if (best) {
+        // Pass on the side the prop is less in the way; walls are chains so push wider
+        const dir = best.side > 0 ? -1 : 1;
+        const width = best.pr.radius + BASE_BOT_RADIUS * bot.scale + (best.pr.kind === 'barrier' ? 2.2 : 1.1);
+        targetX = best.pr.x + uz * dir * width;
+        targetZ = best.pr.z - ux * dir * width;
+      }
+    }
+  }
   const desiredYaw = Math.atan2(targetX - bot.x, targetZ - bot.z);
   const directAimYaw = Math.atan2(target.x - bot.x, target.z - bot.z);
   const diff = normalizeAngle((style === 'sniper_kiter' && minDist < 5.5 ? directAimYaw : desiredYaw) - bot.yaw);
@@ -1580,6 +1652,29 @@ export function computeAiInput(
     throttle = -0.65;
   }
   throttle *= 0.82 + difficulty * 0.18;
+
+  // Stuck recovery: pushing forward but not moving means we are wedged; back off and swing around
+  let outSteer = steer;
+  {
+    const nav = aiNav.get(bot.id) ?? { stuck: 0, escape: 0, escapeSteer: 1 };
+    const spd = Math.hypot(bot.vx, bot.vz);
+    const dtEst = 1 / 30;
+    if (nav.escape > 0) {
+      nav.escape -= dtEst;
+      throttle = -0.85;
+      outSteer = nav.escapeSteer;
+    } else if (throttle > 0.4 && spd < 0.7 && bot.y < 0.3 && minDist > 2.6) {
+      nav.stuck += dtEst;
+      if (nav.stuck > 1.1) {
+        nav.stuck = 0;
+        nav.escape = 0.75;
+        nav.escapeSteer = Math.random() < 0.5 ? -1 : 1;
+      }
+    } else {
+      nav.stuck = Math.max(0, nav.stuck - dtEst * 2);
+    }
+    aiNav.set(bot.id, nav);
+  }
 
   const aimDiff = Math.abs(normalizeAngle(directAimYaw - bot.yaw));
   const fireWeapons = weapons.map((w, idx) => {
@@ -1611,7 +1706,7 @@ export function computeAiInput(
       : Math.abs(diff) > 0.72 && Math.abs(diff) < 1.8 && Math.hypot(bot.vx, bot.vz) > 4.4;
   const overdrive = bot.hp < bot.maxHp * 0.5 && bot.energy > 65 && bot.overdriveTimer <= 0 && Math.random() < 0.035;
 
-  return { throttle, steer, fireWeapon, fireWeapons, boost, drift, overdrive };
+  return { throttle, steer: outSteer, fireWeapon, fireWeapons, boost, drift, overdrive };
 }
 
 export function stepArenaPhysics(
@@ -2258,7 +2353,15 @@ export function stepArenaPhysics(
 
     const fx = Math.sin(bot.yaw);
     const fz = Math.cos(bot.yaw);
-    const steerFactor = Math.max(-1, Math.min(1, input.steer)) * shockTurnMult * cond.turn * Math.max(0.2, freezeSlowMult);
+    // Steering ramps toward the stick/key value (snappy but not twitchy) and returns to center faster
+    const rawSteer = Math.max(-1, Math.min(1, input.steer));
+    const prevSteer = bot.steerSmooth ?? 0;
+    const steerRate = Math.abs(rawSteer) < Math.abs(prevSteer) || Math.sign(rawSteer) !== Math.sign(prevSteer) ? 14 : 8;
+    bot.steerSmooth = prevSteer + (rawSteer - prevSteer) * Math.min(1, steerRate * clampedDt);
+    // Tank steering: full rate when slow, gentler at top speed so straight-line runs stay stable
+    const speedNow = Math.hypot(bot.vx, bot.vz);
+    const speedTurnMult = 1 - Math.min(0.28, (speedNow / Math.max(4, stats.maxSpeed)) * 0.28);
+    const steerFactor = bot.steerSmooth * speedTurnMult * shockTurnMult * cond.turn * Math.max(0.2, freezeSlowMult);
     const pinned = (bot.pinnedTimer ?? 0) > 0;
     const throttleFactor = Math.max(-1, Math.min(1, input.throttle)) * (pinned ? 0.15 : 1);
 
@@ -2289,7 +2392,8 @@ export function stepArenaPhysics(
       bot.driftCharge = Math.max(0, (bot.driftCharge ?? 0) - clampedDt * 1.6);
     }
 
-    const rotDamp = Math.exp(-(6.5 + bot.skills.gyroStabilizer * 0.9) * clampedDt);
+    // Spin from hits bleeds off quickly on the ground; in the air it carries
+    const rotDamp = Math.exp(-((bot.y <= 0.15 ? 8.5 : 2.5) + bot.skills.gyroStabilizer * 0.9) * clampedDt);
     bot.angularVel *= rotDamp;
     const tractionPull = bot.y <= 0.15 ? throttleFactor * cond.pull : 0;
     const driftTurnMult = bot.isDrifting ? 1.55 : (bot.slipTimer ?? 0) > 0 ? 1.75 : 1.0;
@@ -2324,7 +2428,11 @@ export function stepArenaPhysics(
     }
 
     if (bot.y <= 0.15) {
-      const driveForce = throttleFactor * stats.accel * overdriveMult * classSpeedMult * speedMod * cond.drive;
+      const fwdNow = bot.vx * fx + bot.vz * fz;
+      // Pushing against the direction of travel brakes hard instead of slowly reversing
+      const braking = throttleFactor * fwdNow < -0.3;
+      const brakeMult = braking ? 2.1 : 1;
+      const driveForce = throttleFactor * stats.accel * overdriveMult * classSpeedMult * speedMod * cond.drive * brakeMult;
       bot.vx += fx * driveForce * clampedDt;
       bot.vz += fz * driveForce * clampedDt;
 
@@ -2340,8 +2448,10 @@ export function stepArenaPhysics(
           : bot.isDrifting
             ? 0.22
             : 1.0;
+      // Rubber on steel: sideways slide dies fast unless drifting or on ice/oil
       const lateralGrip =
         arena.friction *
+        1.6 *
         slipGripMult *
         (bot.config.drive === 'tracks' || bot.config.drive === 'crawler_nuclear'
           ? 1.55
@@ -4448,13 +4558,15 @@ function updateArenaEvent(snapshot: ArenaSnapshot, elapsed: number, dt: number, 
   if (elapsed < (snapshot.nextArenaEventAt ?? 20)) return;
 
   const alive = snapshot.bots.filter((b) => !b.isDead);
-  const pool: ArenaEventKind[] = ['supply_drop', 'power_surge', 'low_gravity', 'blackout', 'bomb_barrage'];
+  const rules = snapshot.arenaRules ?? DEFAULT_ARENA_RULES;
+  const pool: ArenaEventKind[] = ['supply_drop', 'power_surge', 'low_gravity', 'blackout'];
+  if (rules.bombs && snapshot.hazards.some((h) => h.kind === 'bomb_drop')) pool.push('bomb_barrage');
   const isStormArena =
     snapshot.arenaId === 'storm' ||
     snapshot.arenaId === 'aether_nexus' ||
     snapshot.arenaId === 'cyber_grid' ||
     snapshot.arenaId === 'reactor';
-  if (isStormArena) pool.push('lightning_storm');
+  if (isStormArena && rules.lightning && snapshot.hazards.some((h) => h.kind === 'lightning')) pool.push('lightning_storm');
   if (snapshot.hazards.length > 0) pool.push('hazard_frenzy');
   if (alive.length >= 3) pool.push('bounty');
   const kind = pool[Math.floor(Math.random() * pool.length)];

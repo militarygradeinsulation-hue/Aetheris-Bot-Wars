@@ -46,6 +46,15 @@ import {
   type WorkshopCameraAngle,
 } from './components/ThreeSceneInspectorDock';
 import { TouchControls } from './components/TouchControls';
+import { ArenaBuilderModal } from './components/ArenaBuilderModal';
+import {
+  DEFAULT_ARENA_RULES,
+  loadCustomArenas,
+  saveCustomArenas,
+  type ArenaLayoutId,
+  type ArenaRules,
+  type CustomArenaSpec,
+} from './shared/arenaLayouts';
 import { WorkshopDock } from './components/WorkshopDock';
 import { IntroSplashOverlay } from './components/IntroSplashOverlay';
 import type { OpenRoomSummary } from './components/OnlinePvpPanel';
@@ -424,6 +433,37 @@ export default function App() {
 
   const [sceneMode, setSceneMode] = useState<'workshop' | 'combat'>('workshop');
   const [selectedArena, setSelectedArena] = useState<ArenaId>('foundry');
+  const [headerMoreOpen, setHeaderMoreOpen] = useState(false);
+  // Arena layout, sky-drop rules and player-built arenas (persisted per device)
+  const arenaSetupInit = (() => {
+    try {
+      const raw = localStorage.getItem('aetheris_arena_setup_v1');
+      if (raw) return JSON.parse(raw) as { layout?: ArenaLayoutId; rules?: ArenaRules; customId?: string | null };
+    } catch {
+      /* ignore */
+    }
+    return {};
+  })();
+  const [arenaLayout, setArenaLayout] = useState<ArenaLayoutId>(arenaSetupInit.layout ?? 'classic');
+  const [arenaRules, setArenaRules] = useState<ArenaRules>({ ...DEFAULT_ARENA_RULES, ...(arenaSetupInit.rules ?? {}) });
+  const [customArenas, setCustomArenas] = useState<CustomArenaSpec[]>(() => loadCustomArenas());
+  const [activeCustomArenaId, setActiveCustomArenaId] = useState<string | null>(arenaSetupInit.customId ?? null);
+  const [arenaBuilder, setArenaBuilder] = useState<{ open: boolean; editId: string | null }>({ open: false, editId: null });
+  const activeCustomArena = customArenas.find((a) => a.id === activeCustomArenaId) ?? null;
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'aetheris_arena_setup_v1',
+        JSON.stringify({ layout: arenaLayout, rules: arenaRules, customId: activeCustomArenaId }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [arenaLayout, arenaRules, activeCustomArenaId]);
+  const selectArenaTheme = useCallback((id: ArenaId) => {
+    setSelectedArena(id);
+    setActiveCustomArenaId(null);
+  }, []);
   const [selectedRivalTier, setSelectedRivalTier] = useState<RivalTier>('mixed');
   const [selectedDuration, setSelectedDuration] = useState<TimedBattleDuration>(180);
   const [launcherOpen, setLauncherOpen] = useState(false);
@@ -1447,8 +1487,12 @@ export default function App() {
         mode === 'gauntlet'
           ? GAUNTLET_ARENA_ORDER[(profile.gauntletStage - 1) % GAUNTLET_ARENA_ORDER.length]
           : selectedArena;
-      const arenaToUse: ArenaId =
-        isTrad && !isTraditionalArena(rawArenaToUse) ? 'colosseum' : rawArenaToUse;
+      const customForMatch = mode === 'gauntlet' ? null : activeCustomArena;
+      const arenaToUse: ArenaId = customForMatch
+        ? customForMatch.theme
+        : isTrad && !isTraditionalArena(rawArenaToUse)
+          ? 'colosseum'
+          : rawArenaToUse;
       setSelectedArena(arenaToUse);
 
       const roster: BotRosterTemplate[] = [
@@ -1617,6 +1661,9 @@ export default function App() {
             : mergedMods;
       const snap = createInitialSnapshot(mode as GameMode, arenaToUse, roster, selectedDuration, {
         modifiers: effectiveModifiers,
+        layout: arenaLayout,
+        customArena: customForMatch,
+        rules: arenaRules,
       });
       lastMatchTimerCeilRef.current = Math.ceil(snap.timeRemaining);
       snapshotRef.current = snap;
@@ -1634,8 +1681,17 @@ export default function App() {
         firstRival?.config,
       );
     },
-    [profile, selectedArena, selectedRivalTier, selectedDuration, selectedModifiers],
+    [profile, selectedArena, selectedRivalTier, selectedDuration, selectedModifiers, arenaLayout, arenaRules, activeCustomArena],
   );
+
+  // "Save & Fight" from the arena builder: start a duel once the new arena is the active selection
+  const pendingCustomPlayRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (pendingCustomPlayRef.current && activeCustomArena?.id === pendingCustomPlayRef.current) {
+      pendingCustomPlayRef.current = null;
+      startLocalMatch('duel_1v1', false);
+    }
+  }, [activeCustomArena, startLocalMatch]);
 
   const startCampaignLevel = useCallback(
     (levelId: string, forceAllow = false) => {
@@ -1682,6 +1738,7 @@ export default function App() {
 
       const snap = createInitialSnapshot(level.mode, level.arenaId, roster, level.duration, {
         modifiers: level.modifiers ?? [],
+        rules: arenaRules,
       });
       lastMatchTimerCeilRef.current = Math.ceil(snap.timeRemaining);
       snapshotRef.current = snap;
@@ -1759,7 +1816,10 @@ export default function App() {
         clanTag: profile.clanTag,
         mode,
         roomId,
-        arenaId: selectedArena,
+        arenaId: activeCustomArena ? activeCustomArena.theme : selectedArena,
+        layout: arenaLayout,
+        rules: arenaRules,
+        customArena: activeCustomArena,
         durationSeconds: selectedDuration,
         config: profile.botConfig,
         skills: profile.skills,
@@ -2346,37 +2406,57 @@ export default function App() {
               >
                 Skills ({profile.skillPoints} SP)
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAiStudioTab('music');
-                  setAiStudioOpen(true);
-                }}
-                className="flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-2.5 py-1.5 font-bold text-amber-200 hover:bg-amber-500/25 transition whitespace-nowrap shrink-0"
-              >
-                <Music className="h-3.5 w-3.5 text-amber-400" />
-                <span>AI Music & Lab</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setLiveVoiceOpen((prev) => !prev)}
-                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-bold transition whitespace-nowrap shrink-0 ${
-                  liveVoiceOpen
-                    ? 'border-emerald-400 bg-emerald-500/25 text-emerald-200 shadow'
-                    : 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25'
-                }`}
-              >
-                <Radio className="h-3.5 w-3.5 text-emerald-400" />
-                <span>Live Voice AI</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setAdminModalOpen(true)}
-                className="flex items-center gap-1 rounded-lg border border-slate-700 bg-[#161C24] px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:border-amber-400/60 hover:text-amber-300 transition whitespace-nowrap shrink-0"
-              >
-                <KeyRound className="h-3.5 w-3.5 text-amber-400" />
-                <span>{adminUnlocked ? '2P Arena' : 'Admin Login'}</span>
-              </button>
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setHeaderMoreOpen((v) => !v)}
+                  aria-expanded={headerMoreOpen}
+                  className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
+                    headerMoreOpen ? 'border-amber-400 text-amber-200' : 'border-slate-700 bg-[#161C24] text-slate-200 hover:border-slate-500'
+                  }`}
+                >
+                  More
+                  <span aria-hidden className={`transition ${headerMoreOpen ? 'rotate-180' : ''}`}>▾</span>
+                </button>
+                {headerMoreOpen && (
+                  <div
+                    className="fixed right-28 top-14 z-50 w-56 rounded-xl border border-slate-700 bg-[#12161C] p-1.5 shadow-2xl"
+                    onMouseLeave={() => setHeaderMoreOpen(false)}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMoreOpen(false);
+                        setAiStudioTab('music');
+                        setAiStudioOpen(true);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
+                    >
+                      <Music className="h-4 w-4 text-amber-400" /> AI Music & Lab
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMoreOpen(false);
+                        setLiveVoiceOpen((prev) => !prev);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
+                    >
+                      <Radio className="h-4 w-4 text-emerald-400" /> {liveVoiceOpen ? 'Close Live Voice AI' : 'Live Voice AI'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMoreOpen(false);
+                        setAdminModalOpen(true);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"
+                    >
+                      <KeyRound className="h-4 w-4 text-amber-400" /> {adminUnlocked ? '2P Arena' : 'Admin Login'}
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => setSettingsOpen(true)}
@@ -2442,73 +2522,24 @@ export default function App() {
             </div>
           ) : (
             <div className="pointer-events-auto flex flex-wrap items-center gap-1.5">
-              {/* Control Scheme Selector: WASD Drive / Arrows Drive (WASD Wpns) / Mouse Drive */}
-              <div
-                className="flex items-center gap-1 rounded-xl border border-slate-700/90 bg-[#12161C]/95 p-1 text-[11px]"
-                title="Choose Driving & Weapon Controls"
+              {/* Controls, layout mode and the iOS app live in Settings; keep only quick audio here */}
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                title="Driving controls, layout mode and app install"
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-700 bg-[#12161C]/90 px-2.5 text-xs font-bold text-slate-200 hover:border-amber-400 transition"
               >
-                <Gamepad2 className="ml-1.5 h-3.5 w-3.5 text-amber-400 shrink-0" />
-                {(
-                  [
-                    { id: 'wasd_drive', label: 'WASD Drive' },
-                    { id: 'arrows_drive', label: 'Arrows Drive (WASD Wpns)' },
-                    { id: 'mouse_drive', label: 'Mouse Drive' },
-                  ] as const
-                ).map((scheme) => (
-                  <button
-                    key={scheme.id}
-                    type="button"
-                    onClick={() => updateProfile({ controlScheme: scheme.id })}
-                    className={`rounded-lg px-2 py-1 font-bold transition whitespace-nowrap ${
-                      activeScheme === scheme.id
-                        ? 'bg-amber-500 text-slate-950 shadow'
-                        : 'text-slate-300 hover:text-white'
-                    }`}
-                  >
-                    {scheme.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Device Mode Selector: Desktop / Tablet / Mobile */}
-              <div
-                className="flex items-center gap-1 rounded-xl border border-slate-700/90 bg-[#12161C]/95 p-1 text-[11px]"
-                title="Switch between Desktop, Tablet, and Mobile Layout Mode"
-              >
-                {(
-                  [
-                    { id: 'desktop', label: 'Desktop', Icon: Monitor },
-                    { id: 'tablet', label: 'Tablet', Icon: Tablet },
-                    { id: 'mobile', label: 'Mobile', Icon: Smartphone },
-                  ] as const
-                ).map(({ id, label, Icon }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() =>
-                      updateProfile({
-                        deviceLayoutMode: activeDeviceMode === id ? 'auto' : id,
-                      })
-                    }
-                    className={`flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition whitespace-nowrap ${
-                      activeDeviceMode === id
-                        ? 'bg-sky-500 text-slate-950 shadow'
-                        : 'text-slate-300 hover:text-white'
-                    }`}
-                  >
-                    <Icon className="h-3 w-3" />
-                    <span className="hidden md:inline">{label}</span>
-                  </button>
-                ))}
-              </div>
-
+                <Gamepad2 className="h-3.5 w-3.5 text-amber-400" />
+                <span>
+                  {activeScheme === 'arrows_drive' ? 'Arrows drive' : activeScheme === 'mouse_drive' ? 'Mouse drive' : 'WASD drive'}
+                </span>
+              </button>
               {!isOnline && (
                 <div className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-[#1B1710]/95 px-2.5 py-1.5 text-xs font-medium text-amber-300">
                   <WifiOff className="h-3.5 w-3.5" />
                   <span>Offline Solo Ready</span>
                 </div>
               )}
-              <PWAInstallButton compact alwaysShowIOSOption />
               <button
                 type="button"
                 onClick={() => setAudioSettingsOpen(true)}
@@ -2869,11 +2900,19 @@ export default function App() {
         onStartCampaign={startCampaignLevel}
         bestSurvivalWave={profile.bestSurvivalWave ?? 0}
         lobbyRoom={lobbyRoom}
-        onSelectArena={setSelectedArena}
+        onSelectArena={selectArenaTheme}
         onSelectRivalTier={setSelectedRivalTier}
         onSelectDuration={setSelectedDuration}
         onSelectWingman={(idx) => updateProfile({ selectedWingmanIndex: idx })}
         onStartOffline={(mode) => startLocalMatch(mode, false)}
+        arenaLayout={arenaLayout}
+        arenaRules={arenaRules}
+        customArenas={customArenas}
+        activeCustomArenaId={activeCustomArenaId}
+        onSelectLayout={setArenaLayout}
+        onChangeRules={setArenaRules}
+        onSelectCustomArena={setActiveCustomArenaId}
+        onOpenArenaBuilder={(editId) => setArenaBuilder({ open: true, editId })}
         onFindOnlineMatch={handleFindOnlineMatch}
         playerId={profile.id}
         presence={presence}
@@ -2896,6 +2935,35 @@ export default function App() {
           if (lobbyRoom) handleCancelLobby();
           setLauncherOpen(false);
         }}
+      />
+
+      <ArenaBuilderModal
+        open={arenaBuilder.open}
+        arenas={customArenas}
+        editingId={arenaBuilder.editId}
+        defaultTheme={selectedArena}
+        onSave={(spec) => {
+          setCustomArenas((prev) => {
+            const next = [spec, ...prev.filter((a) => a.id !== spec.id)];
+            saveCustomArenas(next);
+            return next;
+          });
+          setActiveCustomArenaId(spec.id);
+        }}
+        onDelete={(id) => {
+          setCustomArenas((prev) => {
+            const next = prev.filter((a) => a.id !== id);
+            saveCustomArenas(next);
+            return next;
+          });
+          if (activeCustomArenaId === id) setActiveCustomArenaId(null);
+        }}
+        onPlay={(spec) => {
+          setActiveCustomArenaId(spec.id);
+          setArenaBuilder({ open: false, editId: null });
+          pendingCustomPlayRef.current = spec.id;
+        }}
+        onClose={() => setArenaBuilder({ open: false, editId: null })}
       />
 
       {/* Simple Mobile-First Settings Hub Modal */}

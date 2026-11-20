@@ -1,4 +1,89 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries as mergeBotGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { grimeRoughnessTexture, tireTreadTexture } from './proceduralTextures';
+
+/** Box with real rounded edges so every part catches a highlight instead of reading as a cube. */
+function rbox(w: number, h: number, d: number, ..._segments: number[]): THREE.BufferGeometry {
+  const r = Math.min(0.06, Math.min(w, h, d) * 0.2);
+  if (r < 0.004) return new THREE.BoxGeometry(w, h, d);
+  return new RoundedBoxGeometry(w, h, d, 3, r);
+}
+
+/** Tire: lathed profile with rounded shoulders and a bulged sidewall; axle along X. */
+function makeTireGeometry(radius: number, width: number): THREE.BufferGeometry {
+  const pts: THREE.Vector2[] = [];
+  const hw = width / 2;
+  const inner = radius * 0.64;
+  const shoulder = Math.min(radius * 0.22, hw * 0.75);
+  // Profile from inner bead on one side, over the tread, back to the other bead (x=radius, y=axial)
+  pts.push(new THREE.Vector2(inner, -hw * 0.92));
+  for (let i = 0; i <= 6; i++) {
+    const t = i / 6;
+    pts.push(new THREE.Vector2(inner + (radius - shoulder - inner) * t + Math.sin(t * Math.PI) * width * 0.06, -hw));
+  }
+  for (let i = 0; i <= 6; i++) {
+    const a = -Math.PI / 2 + (i / 6) * (Math.PI / 2);
+    pts.push(new THREE.Vector2(radius - shoulder + Math.cos(a) * shoulder, -hw + shoulder + Math.sin(a) * shoulder));
+  }
+  for (let i = 0; i <= 6; i++) {
+    const a = (i / 6) * (Math.PI / 2);
+    pts.push(new THREE.Vector2(radius - shoulder + Math.cos(a) * shoulder, hw - shoulder + Math.sin(a) * shoulder));
+  }
+  for (let i = 0; i <= 6; i++) {
+    const t = 1 - i / 6;
+    pts.push(new THREE.Vector2(inner + (radius - shoulder - inner) * t + Math.sin(t * Math.PI) * width * 0.06, hw));
+  }
+  pts.push(new THREE.Vector2(inner, hw * 0.92));
+  const geo = new THREE.LatheGeometry(pts, 32);
+  geo.rotateZ(Math.PI / 2);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/** Five-spoke alloy rim with hub cap and lug bolts, merged into one mesh. */
+function makeRimGeometry(radius: number, width: number): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const rimR = radius * 0.64;
+  const barrel = new THREE.CylinderGeometry(rimR, rimR, width * 0.8, 28, 1, true);
+  parts.push(barrel);
+  const lip = new THREE.TorusGeometry(rimR * 0.98, 0.018, 8, 28);
+  lip.rotateX(Math.PI / 2);
+  const lipA = lip.clone();
+  lipA.translate(0, width * 0.4, 0);
+  const lipB = lip.clone();
+  lipB.translate(0, -width * 0.4, 0);
+  parts.push(lipA, lipB);
+  for (const side of [-1, 1]) {
+    const face = new THREE.CylinderGeometry(rimR * 0.92, rimR * 0.92, 0.012, 28);
+    face.translate(0, side * width * 0.32, 0);
+    parts.push(face);
+    for (let k = 0; k < 5; k++) {
+      const spoke = new RoundedBoxGeometry(rimR * 0.18, 0.04, rimR * 0.85, 2, 0.012);
+      spoke.translate(0, side * width * 0.36, rimR * 0.45);
+      spoke.rotateY((k / 5) * Math.PI * 2);
+      parts.push(spoke);
+    }
+    const cap = new THREE.SphereGeometry(rimR * 0.26, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+    if (side < 0) cap.rotateX(Math.PI);
+    cap.translate(0, side * width * 0.38, 0);
+    parts.push(cap);
+  }
+  // Strip uv2/normal mismatches: merge needs identical attribute sets
+  const clean = parts.map((g) => {
+    const ng = g.index ? g.toNonIndexed() : g;
+    for (const key of Object.keys(ng.attributes)) {
+      if (key !== 'position' && key !== 'normal' && key !== 'uv') ng.deleteAttribute(key);
+    }
+    return ng;
+  });
+  const merged = mergeBotGeometries(clean, false) ?? new THREE.CylinderGeometry(rimR, rimR, width * 0.8, 16);
+  clean.forEach((g) => g.dispose());
+  parts.forEach((g) => g.dispose());
+  merged.rotateZ(Math.PI / 2);
+  merged.computeVertexNormals();
+  return merged;
+}
 import {
   type ArmorZones,
   type BotConfig,
@@ -81,9 +166,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 4,
       depth: 1.38,
       bevelEnabled: true,
-      bevelThickness: 0.06,
-      bevelSize: 0.05,
-      bevelSegments: 3,
+      bevelThickness: 0.102,
+      bevelSize: 0.085,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.translate(0, 0, -0.69);
@@ -106,9 +191,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 3,
       depth: 0.44,
       bevelEnabled: true,
-      bevelThickness: 0.06,
-      bevelSize: 0.06,
-      bevelSegments: 3,
+      bevelThickness: 0.102,
+      bevelSize: 0.102,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -133,9 +218,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 3,
       depth: 0.44,
       bevelEnabled: true,
-      bevelThickness: 0.05,
-      bevelSize: 0.05,
-      bevelSegments: 3,
+      bevelThickness: 0.085,
+      bevelSize: 0.085,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -179,9 +264,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 3,
       depth: 0.36,
       bevelEnabled: true,
-      bevelThickness: 0.05,
-      bevelSize: 0.04,
-      bevelSegments: 3,
+      bevelThickness: 0.085,
+      bevelSize: 0.068,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -201,8 +286,8 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 2,
       depth: 0.28,
       bevelEnabled: true,
-      bevelThickness: 0.04,
-      bevelSize: 0.04,
+      bevelThickness: 0.068,
+      bevelSize: 0.068,
       bevelSegments: 2,
       curveSegments: 6,
     });
@@ -226,9 +311,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 4,
       depth: 0.56,
       bevelEnabled: true,
-      bevelThickness: 0.07,
-      bevelSize: 0.06,
-      bevelSegments: 3,
+      bevelThickness: 0.110,
+      bevelSize: 0.102,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -270,9 +355,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 3,
       depth: 0.36,
       bevelEnabled: true,
-      bevelThickness: 0.05,
-      bevelSize: 0.04,
-      bevelSegments: 3,
+      bevelThickness: 0.085,
+      bevelSize: 0.068,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -295,9 +380,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 5,
       depth: 0.98,
       bevelEnabled: true,
-      bevelThickness: 0.06,
-      bevelSize: 0.05,
-      bevelSegments: 3,
+      bevelThickness: 0.102,
+      bevelSize: 0.085,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -326,9 +411,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 3,
       depth: 0.38,
       bevelEnabled: true,
-      bevelThickness: 0.05,
-      bevelSize: 0.05,
-      bevelSegments: 3,
+      bevelThickness: 0.085,
+      bevelSize: 0.085,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -354,9 +439,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 3,
       depth: 0.42,
       bevelEnabled: true,
-      bevelThickness: 0.05,
-      bevelSize: 0.05,
-      bevelSegments: 3,
+      bevelThickness: 0.085,
+      bevelSize: 0.085,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -380,9 +465,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 4,
       depth: 0.54,
       bevelEnabled: true,
-      bevelThickness: 0.06,
-      bevelSize: 0.06,
-      bevelSegments: 3,
+      bevelThickness: 0.102,
+      bevelSize: 0.102,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -406,9 +491,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 2,
       depth: 0.34,
       bevelEnabled: true,
-      bevelThickness: 0.06,
-      bevelSize: 0.07,
-      bevelSegments: 3,
+      bevelThickness: 0.102,
+      bevelSize: 0.110,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -436,9 +521,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 3,
       depth: 0.4,
       bevelEnabled: true,
-      bevelThickness: 0.05,
-      bevelSize: 0.05,
-      bevelSegments: 3,
+      bevelThickness: 0.085,
+      bevelSize: 0.085,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -462,9 +547,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
       steps: 3,
       depth: 0.44,
       bevelEnabled: true,
-      bevelThickness: 0.06,
-      bevelSize: 0.05,
-      bevelSegments: 3,
+      bevelThickness: 0.102,
+      bevelSize: 0.085,
+      bevelSegments: 5,
       curveSegments: 8,
     });
     geo.rotateX(-Math.PI / 2);
@@ -487,9 +572,9 @@ function makeChassisGeometry(chassis: ChassisId): THREE.BufferGeometry {
     steps: 3,
     depth: 0.42,
     bevelEnabled: true,
-    bevelThickness: 0.06,
-    bevelSize: 0.05,
-    bevelSegments: 3,
+    bevelThickness: 0.102,
+    bevelSize: 0.085,
+    bevelSegments: 5,
     curveSegments: 8,
   });
   geo.rotateX(-Math.PI / 2);
@@ -513,8 +598,8 @@ function makeToothedDiscGeometry(radius: number, teeth: number, thickness: numbe
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth: thickness,
     bevelEnabled: true,
-    bevelThickness: 0.02,
-    bevelSize: 0.02,
+    bevelThickness: 0.034,
+    bevelSize: 0.034,
     bevelSegments: 1,
   });
   geo.translate(0, 0, -thickness / 2);
@@ -533,7 +618,7 @@ function appendHybridChassisStyle(
   damageableMeshes: THREE.Mesh[],
 ) {
   if (style === 'wedge') {
-    const prowGeo = new THREE.BoxGeometry(1.24, 0.18, 0.42, 6, 2, 3);
+    const prowGeo = rbox(1.24, 0.18, 0.42, 6, 2, 3);
     geometriesToDispose.push(prowGeo);
     const prow = new THREE.Mesh(prowGeo, armorTrimMat);
     prow.position.set(0, 0.22, 0.96);
@@ -542,8 +627,8 @@ function appendHybridChassisStyle(
     bodyPivot.add(prow);
     damageableMeshes.push(prow);
   } else if (style === 'rammer') {
-    const forkGeoL = new THREE.BoxGeometry(0.24, 0.22, 0.62, 3, 2, 4);
-    const forkGeoR = new THREE.BoxGeometry(0.24, 0.22, 0.62, 3, 2, 4);
+    const forkGeoL = rbox(0.24, 0.22, 0.62, 3, 2, 4);
+    const forkGeoR = rbox(0.24, 0.22, 0.62, 3, 2, 4);
     geometriesToDispose.push(forkGeoL, forkGeoR);
     const forkL = new THREE.Mesh(forkGeoL, armorTrimMat);
     forkL.position.set(-0.62, 0.26, 0.98);
@@ -579,8 +664,8 @@ function appendHybridChassisStyle(
     bodyPivot.add(shell);
     damageableMeshes.push(shell);
   } else if (style === 'spider') {
-    const wingGeoL = new THREE.BoxGeometry(0.46, 0.12, 0.66, 4, 2, 4);
-    const wingGeoR = new THREE.BoxGeometry(0.46, 0.12, 0.66, 4, 2, 4);
+    const wingGeoL = rbox(0.46, 0.12, 0.66, 4, 2, 4);
+    const wingGeoR = rbox(0.46, 0.12, 0.66, 4, 2, 4);
     geometriesToDispose.push(wingGeoL, wingGeoR);
     const wingL = new THREE.Mesh(wingGeoL, bareSteelMat);
     wingL.position.set(-1.04, 0.34, 0.04);
@@ -593,7 +678,7 @@ function appendHybridChassisStyle(
     bodyPivot.add(wingL, wingR);
     damageableMeshes.push(wingL, wingR);
   } else if (style === 'micro') {
-    const finGeo = new THREE.BoxGeometry(0.32, 0.08, 0.56, 3, 2, 3);
+    const finGeo = rbox(0.32, 0.08, 0.56, 3, 2, 3);
     geometriesToDispose.push(finGeo);
     [-0.76, 0.76].forEach((fx, idx) => {
       const fin = new THREE.Mesh(finGeo, bareSteelMat);
@@ -604,7 +689,7 @@ function appendHybridChassisStyle(
       damageableMeshes.push(fin);
     });
   } else if (style === 'behemoth' || style === 'juggernaut') {
-    const blockGeo = new THREE.BoxGeometry(0.46, 0.34, 1.56, 3, 3, 6);
+    const blockGeo = rbox(0.46, 0.34, 1.56, 3, 3, 6);
     geometriesToDispose.push(blockGeo);
     [-1.02, 1.02].forEach((bx) => {
       const blk = new THREE.Mesh(blockGeo, armorTrimMat);
@@ -626,7 +711,7 @@ function appendHybridChassisStyle(
     bodyPivot.add(ring);
     damageableMeshes.push(ring);
   } else if (style === 'tripod') {
-    const mandGeo = new THREE.BoxGeometry(0.2, 0.18, 0.78, 2, 2, 4);
+    const mandGeo = rbox(0.2, 0.18, 0.78, 2, 2, 4);
     geometriesToDispose.push(mandGeo);
     [-0.74, 0.74].forEach((mx, idx) => {
       const mand = new THREE.Mesh(mandGeo, armorTrimMat);
@@ -637,7 +722,7 @@ function appendHybridChassisStyle(
       damageableMeshes.push(mand);
     });
   } else if (style === 'monolith' || style === 'scorpion') {
-    const spireGeo = new THREE.BoxGeometry(0.48, 0.56, 0.74, 4, 4, 4);
+    const spireGeo = rbox(0.48, 0.56, 0.74, 4, 4, 4);
     geometriesToDispose.push(spireGeo);
     const spire = new THREE.Mesh(spireGeo, chassisDarkMat);
     spire.position.set(0, 0.74, -0.22);
@@ -646,7 +731,7 @@ function appendHybridChassisStyle(
     bodyPivot.add(spire);
     damageableMeshes.push(spire);
   } else if (style === 'claw' || style === 'hydra') {
-    const clawGeo = new THREE.BoxGeometry(0.28, 0.22, 0.74, 3, 2, 4);
+    const clawGeo = rbox(0.28, 0.22, 0.74, 3, 2, 4);
     geometriesToDispose.push(clawGeo);
     [-0.84, 0.84].forEach((cx, idx) => {
       const pincer = new THREE.Mesh(clawGeo, armorTrimMat);
@@ -657,8 +742,8 @@ function appendHybridChassisStyle(
       damageableMeshes.push(pincer);
     });
   } else {
-    const railGeoL = new THREE.BoxGeometry(0.14, 0.16, 1.56, 2, 2, 6);
-    const railGeoR = new THREE.BoxGeometry(0.14, 0.16, 1.56, 2, 2, 6);
+    const railGeoL = rbox(0.14, 0.16, 1.56, 2, 2, 6);
+    const railGeoR = rbox(0.14, 0.16, 1.56, 2, 2, 6);
     geometriesToDispose.push(railGeoL, railGeoR);
     const railL = new THREE.Mesh(railGeoL, bareSteelMat);
     railL.position.set(-0.92, 0.48, 0);
@@ -698,6 +783,7 @@ export function buildBotRig(
     bumpMap: metalBrushBump,
     bumpScale: 0.01,
     roughness: 0.36,
+    roughnessMap: grimeRoughnessTexture(),
     metalness: 0.72,
     envMapIntensity: 1.35,
     clearcoat: 0.45,
@@ -714,10 +800,14 @@ export function buildBotRig(
     clearcoatRoughness: 0.1,
     anisotropy: 0.85,
   });
+  const treadTex = tireTreadTexture();
   const rubberMat = new THREE.MeshStandardMaterial({
-    color: 0x121418,
-    roughness: 0.88,
-    metalness: 0.06,
+    color: 0x2a2d32,
+    map: treadTex,
+    bumpMap: treadTex,
+    bumpScale: 0.6,
+    roughness: 0.92,
+    metalness: 0.0,
   });
   const visorMat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(config.accentColor),
@@ -768,7 +858,7 @@ export function buildBotRig(
   coreMesh.castShadow = castShadow;
   bodyPivot.add(coreMesh);
 
-  const visorGeo = new THREE.BoxGeometry(0.74, 0.08, 0.12);
+  const visorGeo = rbox(0.74, 0.08, 0.12);
   geometriesToDispose.push(visorGeo);
   const visorMesh = new THREE.Mesh(visorGeo, visorMat);
   visorMesh.position.set(
@@ -835,10 +925,10 @@ export function buildBotRig(
   }
   Object.values(armorMaterials).forEach((m) => materialsToDispose.push(m));
 
-  const frontPlateGeo = new THREE.BoxGeometry(1.32, 0.22, 0.18, 8, 3, 2);
-  const leftPlateGeo = new THREE.BoxGeometry(0.16, 0.28, 1.38, 2, 3, 8);
-  const rightPlateGeo = new THREE.BoxGeometry(0.16, 0.28, 1.38, 2, 3, 8);
-  const rearPlateGeo = new THREE.BoxGeometry(1.36, 0.32, 0.16, 8, 3, 2);
+  const frontPlateGeo = rbox(1.32, 0.22, 0.18, 8, 3, 2);
+  const leftPlateGeo = rbox(0.16, 0.28, 1.38, 2, 3, 8);
+  const rightPlateGeo = rbox(0.16, 0.28, 1.38, 2, 3, 8);
+  const rearPlateGeo = rbox(1.36, 0.32, 0.16, 8, 3, 2);
   geometriesToDispose.push(frontPlateGeo, leftPlateGeo, rightPlateGeo, rearPlateGeo);
 
   const frontPlate = new THREE.Mesh(frontPlateGeo, armorMaterials.front);
@@ -959,7 +1049,7 @@ export function buildBotRig(
     });
   } else if (config.drive === 'tracks' || config.drive === 'crawler_nuclear') {
     const trackX = wheelLayout === 'outboard' ? 1.12 : wheelLayout === '4wd_tucked' ? 0.84 : 0.98;
-    const trackGeo = new THREE.BoxGeometry(0.26, 0.34, 1.62);
+    const trackGeo = new RoundedBoxGeometry(0.28, 0.36, 1.64, 4, 0.16);
     const treadRollerGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.3, 12);
     treadRollerGeo.rotateZ(Math.PI / 2);
     geometriesToDispose.push(trackGeo, treadRollerGeo);
@@ -990,16 +1080,14 @@ export function buildBotRig(
     const wheelRadius =
       config.drive === 'turbo' ? 0.28 : config.drive === 'heavy_torque' ? 0.31 : 0.25;
     const wheelWidth = config.drive === 'heavy_torque' ? 0.28 : 0.22;
-    const wheelGeo = new THREE.CylinderGeometry(wheelRadius, wheelRadius, wheelWidth, 16);
-    wheelGeo.rotateZ(Math.PI / 2);
+    const wheelGeo = makeTireGeometry(wheelRadius, wheelWidth);
     const hubMat =
       config.drive === 'turbo'
         ? weaponAccentMat
         : config.drive === 'mecanum' || config.drive === 'maglev'
           ? visorMat
           : bareSteelMat;
-    const hubGeo = new THREE.CylinderGeometry(wheelRadius * 0.54, wheelRadius * 0.54, wheelWidth + 0.02, 8);
-    hubGeo.rotateZ(Math.PI / 2);
+    const hubGeo = makeRimGeometry(wheelRadius, wheelWidth);
     const strutGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.45, 8);
     strutGeo.rotateZ(Math.PI / 2);
     geometriesToDispose.push(wheelGeo, hubGeo, strutGeo);
@@ -1133,7 +1221,7 @@ export function buildBotRig(
       accGroup.add(halo);
     } else if (accessory === 'twin_flags') {
       const poleGeo = new THREE.CylinderGeometry(0.02, 0.025, 0.72, 6);
-      const bannerGeo = new THREE.BoxGeometry(0.02, 0.26, 0.38);
+      const bannerGeo = rbox(0.02, 0.26, 0.38);
       geometriesToDispose.push(poleGeo, bannerGeo);
       [-0.48, 0.48].forEach((fx) => {
         const pole = new THREE.Mesh(poleGeo, bareSteelMat);
@@ -1152,7 +1240,7 @@ export function buildBotRig(
       dish.position.y = 0.18;
       accGroup.add(mast, dish);
     } else if (accessory === 'thruster_wings') {
-      const wingGeo = new THREE.BoxGeometry(0.68, 0.06, 0.38);
+      const wingGeo = rbox(0.68, 0.06, 0.38);
       const jetGeo = new THREE.CylinderGeometry(0.09, 0.12, 0.28, 10);
       jetGeo.rotateX(Math.PI / 2);
       geometriesToDispose.push(wingGeo, jetGeo);
@@ -1251,7 +1339,7 @@ export function buildBotRig(
         const axle = new THREE.Mesh(axleGeo, bareSteelMat);
         pivot.add(disc, axle);
 
-        const forkGeo = new THREE.BoxGeometry(0.1, 0.22, 0.45);
+        const forkGeo = rbox(0.1, 0.22, 0.45);
         geometriesToDispose.push(forkGeo);
         [-0.26, 0.26].forEach((fx) => {
           const fork = new THREE.Mesh(forkGeo, bareSteelMat);
@@ -1295,8 +1383,8 @@ export function buildBotRig(
       const zPos = centerFrontTaken ? 1.12 : 1.05;
       centerFrontTaken = true;
       pivot.position.set(0, yPos, zPos);
-      const barGeo = new THREE.BoxGeometry(1.78, 0.1, 0.26);
-      const tipBladeGeo = new THREE.BoxGeometry(0.28, 0.14, 0.32);
+      const barGeo = rbox(1.78, 0.1, 0.26);
+      const tipBladeGeo = rbox(0.28, 0.14, 0.32);
       const hubGeo = new THREE.CylinderGeometry(0.22, 0.24, 0.24, 12);
       geometriesToDispose.push(barGeo, tipBladeGeo, hubGeo);
 
@@ -1315,7 +1403,7 @@ export function buildBotRig(
       outerShellGeo.rotateX(Math.PI / 2);
       const upperRingGeo = makeToothedDiscGeometry(1.12, 8, 0.09);
       upperRingGeo.rotateX(Math.PI / 2);
-      const toothBlockGeo = new THREE.BoxGeometry(0.28, 0.22, 0.18);
+      const toothBlockGeo = rbox(0.28, 0.22, 0.18);
       geometriesToDispose.push(outerShellGeo, upperRingGeo, toothBlockGeo);
 
       const outerShell = new THREE.Mesh(outerShellGeo, weaponAccentMat);
@@ -1342,7 +1430,7 @@ export function buildBotRig(
       pivot.position.set(0, wideWing ? 0.38 : 0.32, wideWing ? 0.78 : 1.06);
       const sawGeo = makeToothedDiscGeometry(wideWing ? 0.32 : 0.36, 14, 0.07);
       sawGeo.rotateX(Math.PI / 2);
-      const mountGeo = new THREE.BoxGeometry(wideWing ? 1.78 : 1.12, 0.1, 0.28);
+      const mountGeo = rbox(wideWing ? 1.78 : 1.12, 0.1, 0.28);
       geometriesToDispose.push(sawGeo, mountGeo);
 
       const mount = new THREE.Mesh(mountGeo, chassisDarkMat);
@@ -1360,8 +1448,8 @@ export function buildBotRig(
     } else if (wId === 'flipper') {
       centerFrontTaken = true;
       pivot.position.set(0, 0.22, 0.48);
-      const armGeo = new THREE.BoxGeometry(1.12, 0.1, 0.95);
-      const wedgeTipGeo = new THREE.BoxGeometry(1.12, 0.06, 0.36);
+      const armGeo = rbox(1.12, 0.1, 0.95);
+      const wedgeTipGeo = rbox(1.12, 0.06, 0.36);
       geometriesToDispose.push(armGeo, wedgeTipGeo);
 
       const arm = new THREE.Mesh(armGeo, weaponAccentMat);
@@ -1375,7 +1463,7 @@ export function buildBotRig(
       // Twin hydraulic crushing pincer jaws
       centerFrontTaken = true;
       pivot.position.set(0, 0.32, 0.82);
-      const jawArmGeo = new THREE.BoxGeometry(0.18, 0.18, 0.78);
+      const jawArmGeo = rbox(0.18, 0.18, 0.78);
       const fangGeo = new THREE.ConeGeometry(0.12, 0.36, 6);
       fangGeo.rotateZ(Math.PI / 2);
       geometriesToDispose.push(jawArmGeo, fangGeo);
@@ -1471,7 +1559,7 @@ export function buildBotRig(
     } else if (wId === 'laser') {
       // Twin-lens Aether Ruby Laser Beam Emitter
       pivot.position.set(0, deckTopY + 0.06, 0.24);
-      const housingGeo = new THREE.BoxGeometry(0.46, 0.22, 0.66);
+      const housingGeo = rbox(0.46, 0.22, 0.66);
       const barrelGeo = new THREE.CylinderGeometry(0.055, 0.07, 0.88, 12);
       barrelGeo.rotateX(Math.PI / 2);
       const lensRingGeo = new THREE.TorusGeometry(0.068, 0.016, 8, 20);
@@ -1506,9 +1594,9 @@ export function buildBotRig(
     } else if (wId === 'railgun') {
       // Long-barrel electromagnetic Gauss Railgun
       pivot.position.set(0, deckTopY + 0.06, 0.18);
-      const breechGeo = new THREE.BoxGeometry(0.42, 0.24, 0.68);
-      const railGeo = new THREE.BoxGeometry(0.07, 0.1, 1.48);
-      const coreGlowGeo = new THREE.BoxGeometry(0.1, 0.05, 1.38);
+      const breechGeo = rbox(0.42, 0.24, 0.68);
+      const railGeo = rbox(0.07, 0.1, 1.48);
+      const coreGlowGeo = rbox(0.1, 0.05, 1.38);
       geometriesToDispose.push(breechGeo, railGeo, coreGlowGeo);
 
       const breech = new THREE.Mesh(breechGeo, chassisDarkMat);
@@ -1523,7 +1611,7 @@ export function buildBotRig(
     } else if (wId === 'mortar') {
       // Dorsal dual-barrel plasma artillery mortar
       pivot.position.set(0, deckTopY + 0.08, -0.18);
-      const baseGeo = new THREE.BoxGeometry(0.56, 0.18, 0.52);
+      const baseGeo = rbox(0.56, 0.18, 0.52);
       const tubeGeo = new THREE.CylinderGeometry(0.14, 0.17, 0.62, 12);
       tubeGeo.rotateX(Math.PI * 0.28);
       geometriesToDispose.push(baseGeo, tubeGeo);
@@ -1538,7 +1626,7 @@ export function buildBotRig(
     } else if (wId === 'missiles') {
       // Shoulder rocket pod: 2x3 launch tubes angled slightly skyward
       pivot.position.set(-0.5, deckTopY + 0.04, -0.12);
-      const podGeo = new THREE.BoxGeometry(0.46, 0.32, 0.62);
+      const podGeo = rbox(0.46, 0.32, 0.62);
       const tubeGeo = new THREE.CylinderGeometry(0.065, 0.065, 0.66, 10, 1, true);
       tubeGeo.rotateX(Math.PI / 2);
       const noseGeo = new THREE.ConeGeometry(0.05, 0.12, 8);
@@ -1595,7 +1683,7 @@ export function buildBotRig(
       const side = centerFrontTaken;
       centerFrontTaken = true;
       pivot.position.set(side ? 0.62 : 0, side ? 0.6 : 0.5, side ? 0.66 : 0.96);
-      const armGeo = new THREE.BoxGeometry(0.12, 0.12, 0.42);
+      const armGeo = rbox(0.12, 0.12, 0.42);
       const dishGeo = new THREE.CylinderGeometry(0.3, 0.24, 0.12, 20);
       dishGeo.rotateX(Math.PI / 2);
       const faceGeo = new THREE.CircleGeometry(0.24, 20);
@@ -1659,11 +1747,11 @@ export function buildBotRig(
     } else if (wId === 'bomb_drop') {
       // Dorsal Aerial Bomb Bay Ordnance Rack with twin heavy finned bombs
       pivot.position.set(0, deckTopY + 0.06, -0.14);
-      const rackGeo = new THREE.BoxGeometry(0.76, 0.12, 0.58);
+      const rackGeo = rbox(0.76, 0.12, 0.58);
       const bombBodyGeo = new THREE.CylinderGeometry(0.11, 0.11, 0.48, 12);
       bombBodyGeo.rotateX(Math.PI / 2);
       const bombNoseGeo = new THREE.SphereGeometry(0.11, 12, 10);
-      const finGeo = new THREE.BoxGeometry(0.26, 0.24, 0.04);
+      const finGeo = rbox(0.26, 0.24, 0.04);
       geometriesToDispose.push(rackGeo, bombBodyGeo, bombNoseGeo, finGeo);
 
       const warheadMat = new THREE.MeshStandardMaterial({
@@ -1701,8 +1789,8 @@ export function buildBotRig(
             ? 0.76
             : 0.64;
       pivot.position.set(0, hammerY, 0.08);
-      const shaftGeo = new THREE.BoxGeometry(0.14, 0.14, 1.08);
-      const headGeo = new THREE.BoxGeometry(0.54, 0.34, 0.34);
+      const shaftGeo = rbox(0.14, 0.14, 1.08);
+      const headGeo = rbox(0.54, 0.34, 0.34);
       const spikeGeo = new THREE.ConeGeometry(0.12, 0.26, 6);
       spikeGeo.rotateX(Math.PI);
       geometriesToDispose.push(shaftGeo, headGeo, spikeGeo);

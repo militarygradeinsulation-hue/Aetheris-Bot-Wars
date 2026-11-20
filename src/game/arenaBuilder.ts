@@ -1,5 +1,16 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import {
+  arenaWearTexture,
+  lightShaftTexture,
+  softDotTexture,
+  brushedMetalTexture,
+  concreteTexture,
+  grimeRoughnessTexture,
+  hazardStripeTexture,
+  woodCrateTexture,
+} from './proceduralTextures';
 import {
   ARENA_CATALOG,
   type ArenaId,
@@ -170,15 +181,20 @@ export function buildArenaEnvironment(
   // 2. Shiny Reflective BattleBox Floor Deck
   const floorGeo = new THREE.PlaneGeometry(half * 2, half * 2);
   floorGeo.rotateX(-Math.PI / 2);
+  // Worn steel deck: satin, not mirror. Roughness varies with grime so lights break up naturally.
+  const floorRough = grimeRoughnessTexture().clone();
+  floorRough.repeat.set(5, 5);
+  floorRough.needsUpdate = true;
   const floorMat = new THREE.MeshPhysicalMaterial({
     map: textures.arenaFloor,
     bumpMap: textures.metalBrushBump,
     bumpScale: 0.012,
-    roughness: arenaId === 'cryo' ? 0.14 : 0.28,
-    metalness: arenaId === 'cryo' ? 0.35 : 0.84,
-    envMapIntensity: 1.4,
-    clearcoat: arenaId === 'cryo' ? 0.9 : 0.52,
-    clearcoatRoughness: 0.16,
+    roughness: arenaId === 'cryo' ? 0.18 : 0.52,
+    roughnessMap: arenaId === 'cryo' ? null : floorRough,
+    metalness: arenaId === 'cryo' ? 0.35 : 0.7,
+    envMapIntensity: 1.0,
+    clearcoat: arenaId === 'cryo' ? 0.9 : 0.18,
+    clearcoatRoughness: 0.35,
   });
   geometries.push(floorGeo);
   materials.push(floorMat);
@@ -186,6 +202,27 @@ export function buildArenaEnvironment(
   floorMesh.position.y = 0;
   floorMesh.receiveShadow = true;
   group.add(floorMesh);
+
+  // Battle wear overlay: skid marks, scorch rings, gouges from earlier fights
+  const wearGeo = new THREE.PlaneGeometry(half * 2, half * 2);
+  wearGeo.rotateX(-Math.PI / 2);
+  const wearMat = new THREE.MeshStandardMaterial({
+    map: arenaWearTexture(arenaId.length + arenaId.charCodeAt(0)),
+    transparent: true,
+    roughness: 0.85,
+    metalness: 0.2,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  geometries.push(wearGeo);
+  materials.push(wearMat);
+  const wearMesh = new THREE.Mesh(wearGeo, wearMat);
+  wearMesh.position.y = 0.006;
+  wearMesh.receiveShadow = true;
+  wearMesh.renderOrder = 1;
+  group.add(wearMesh);
 
   // 3. Recessed Center Battle Ring Decal + Arena Floor Branding Murals
   const ringGeo = new THREE.RingGeometry(5.2, 5.75, 64);
@@ -1073,17 +1110,70 @@ export function buildArenaEnvironment(
   const hazardMeshes = new Map<string, HazardMeshEntry>();
   const propMeshes = new Map<string, THREE.Group>();
 
-  const crateGeo = new THREE.BoxGeometry(1.3, 1.1, 1.3);
-  const crateFrameGeo = new THREE.BoxGeometry(1.38, 0.2, 1.38);
-  const barrelGeo = new THREE.CylinderGeometry(0.55, 0.55, 1.35, 16);
-  const barrelBandGeo = new THREE.CylinderGeometry(0.57, 0.57, 0.24, 16);
-  const pillarGeo = new THREE.CylinderGeometry(0.82, 0.96, 2.3, 8);
-  const pillarCapGeo = new THREE.CylinderGeometry(0.95, 0.95, 0.22, 8);
+  const crateGeo = new RoundedBoxGeometry(1.3, 1.1, 1.3, 3, 0.06);
+  const crateFrameGeo = new RoundedBoxGeometry(1.38, 0.16, 1.38, 2, 0.05);
+  // Ribbed steel drum: lathe profile with rolling hoops
+  const barrelGeo = (() => {
+    const pts: THREE.Vector2[] = [];
+    const h = 1.35;
+    for (let i = 0; i <= 40; i++) {
+      const y = (i / 40) * h;
+      const t = y / h;
+      let rad = 0.54 + Math.sin(t * Math.PI) * 0.025;
+      if (Math.abs(t - 0.33) < 0.02 || Math.abs(t - 0.67) < 0.02) rad += 0.022;
+      if (t < 0.02 || t > 0.98) rad -= 0.02;
+      pts.push(new THREE.Vector2(rad, y - h / 2));
+    }
+    pts.unshift(new THREE.Vector2(0, -h / 2));
+    pts.push(new THREE.Vector2(0, h / 2));
+    return new THREE.LatheGeometry(pts, 28);
+  })();
+  const barrelBandGeo = new THREE.TorusGeometry(0.56, 0.035, 8, 32);
+  barrelBandGeo.rotateX(Math.PI / 2);
+  const pillarGeo = new THREE.CylinderGeometry(0.84, 0.96, 2.3, 32, 4);
+  const pillarCapGeo = new THREE.CylinderGeometry(0.98, 1.0, 0.22, 32);
+  // Jersey-style concrete blast wall: sloped profile, bevelled, 1.6m long
+  const barrierGeo = (() => {
+    const sh = new THREE.Shape();
+    sh.moveTo(-0.42, 0);
+    sh.lineTo(0.42, 0);
+    sh.lineTo(0.36, 0.22);
+    sh.lineTo(0.17, 0.42);
+    sh.lineTo(0.13, 0.95);
+    sh.lineTo(-0.13, 0.95);
+    sh.lineTo(-0.17, 0.42);
+    sh.lineTo(-0.36, 0.22);
+    sh.closePath();
+    const g = new THREE.ExtrudeGeometry(sh, { depth: 1.5, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.03, bevelSegments: 3, curveSegments: 4 });
+    g.translate(0, 0, -0.75);
+    g.computeVertexNormals();
+    return g;
+  })();
+  const barrierStripeGeo = new THREE.PlaneGeometry(1.45, 0.16);
+  geometries.push(barrierGeo, barrierStripeGeo);
   const pickupCoreGeo = new THREE.OctahedronGeometry(0.52, 0);
   const pickupRingGeo = new THREE.TorusGeometry(0.65, 0.06, 8, 24);
   pickupRingGeo.rotateX(Math.PI / 2);
 
-  const crateMat = new THREE.MeshStandardMaterial({ color: 0x926239, roughness: 0.72, metalness: 0.15 });
+  const crateMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: woodCrateTexture(),
+    roughness: 0.82,
+    metalness: 0.02,
+  });
+  const barrierMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: concreteTexture('#9a9da1'),
+    roughness: 0.92,
+    metalness: 0.0,
+  });
+  const barrierStripeMat = new THREE.MeshStandardMaterial({
+    map: hazardStripeTexture(),
+    roughness: 0.6,
+    metalness: 0.05,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+  });
   const crateTrimMat = new THREE.MeshPhysicalMaterial({
     color: 0x475569,
     roughness: 0.25,
@@ -1091,13 +1181,23 @@ export function buildArenaEnvironment(
     envMapIntensity: 1.4,
   });
   const barrelMat = new THREE.MeshPhysicalMaterial({
-    color: 0xdc2626,
-    roughness: 0.26,
-    metalness: 0.75,
-    clearcoat: 0.5,
-    envMapIntensity: 1.4,
+    color: 0xb91c1c,
+    roughness: 0.42,
+    roughnessMap: grimeRoughnessTexture(),
+    metalness: 0.55,
+    clearcoat: 0.35,
+    clearcoatRoughness: 0.4,
+    envMapIntensity: 1.2,
   });
-  const pillarMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.82, metalness: 0.18 });
+  const pillarMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: concreteTexture('#6b7280'),
+    roughness: 0.9,
+    metalness: 0.05,
+  });
+  crateTrimMat.map = brushedMetalTexture('#6b7686');
+  crateTrimMat.roughnessMap = grimeRoughnessTexture();
+  crateTrimMat.needsUpdate = true;
   const repairMat = new THREE.MeshStandardMaterial({
     color: 0x10b981,
     emissive: 0x10b981,
@@ -1137,7 +1237,7 @@ export function buildArenaEnvironment(
     pickupCoreGeo,
     pickupRingGeo,
   );
-  materials.push(crateMat, crateTrimMat, barrelMat, pillarMat, repairMat, energyMat, overchargeMat, shieldPickupMat);
+  materials.push(crateMat, crateTrimMat, barrelMat, pillarMat, barrierMat, barrierStripeMat, repairMat, energyMat, overchargeMat, shieldPickupMat);
 
   const sawBladeGeo = new THREE.CylinderGeometry(1.35, 1.35, 0.1, 18);
   const sawBaseGeo = new THREE.CylinderGeometry(1.5, 1.5, 0.06, 20);
@@ -1276,13 +1376,29 @@ export function buildArenaEnvironment(
       const botRim = new THREE.Mesh(crateFrameGeo, crateTrimMat);
       botRim.position.y = 0.1;
       pGroup.add(box, topRim, botRim);
+    } else if (prop.kind === 'barrier') {
+      const block = new THREE.Mesh(barrierGeo, barrierMat);
+      block.castShadow = castShadow;
+      block.receiveShadow = true;
+      pGroup.add(block);
+      for (const side of [-1, 1]) {
+        const stripe = new THREE.Mesh(barrierStripeGeo, barrierStripeMat);
+        stripe.position.set(side * 0.155, 0.78, 0);
+        stripe.rotation.y = side * (Math.PI / 2);
+        stripe.rotation.x = side * 0.04;
+        pGroup.add(stripe);
+      }
+      pGroup.rotation.y = prop.yaw ?? 0;
     } else if (prop.kind === 'barrel') {
       const cyl = new THREE.Mesh(barrelGeo, barrelMat);
       cyl.position.y = 0.675;
       cyl.castShadow = castShadow;
-      const band = new THREE.Mesh(barrelBandGeo, bumperMat);
-      band.position.y = 0.68;
-      pGroup.add(cyl, band);
+      cyl.receiveShadow = true;
+      const bandTop = new THREE.Mesh(barrelBandGeo, bumperMat);
+      bandTop.position.y = 0.675 + 0.225;
+      const bandBot = new THREE.Mesh(barrelBandGeo, bumperMat);
+      bandBot.position.y = 0.675 - 0.225;
+      pGroup.add(cyl, bandTop, bandBot);
     } else if (prop.kind === 'pillar') {
       const col = new THREE.Mesh(pillarGeo, pillarMat);
       col.position.y = 1.15;
@@ -1732,6 +1848,79 @@ export function buildArenaEnvironment(
     return entry;
   }
 
+  // Atmosphere: haze-lit light shafts from the roof rig and camera flashes in the stands
+  const shaftGeo = new THREE.CylinderGeometry(0.6, 4.2, 20, 24, 1, true);
+  shaftGeo.translate(0, -10, 0);
+  const shaftMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(spec.accentHex).lerp(new THREE.Color(0xffffff), 0.7),
+    map: lightShaftTexture(),
+    transparent: true,
+    opacity: 0.075,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  geometries.push(shaftGeo);
+  materials.push(shaftMat);
+  const shafts: THREE.Mesh[] = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.3;
+    const shaft = new THREE.Mesh(shaftGeo, shaftMat);
+    shaft.position.set(Math.cos(a) * 9, 20, Math.sin(a) * 9);
+    // Tilt toward the arena center
+    shaft.lookAt(Math.cos(a) * 3, 0, Math.sin(a) * 3);
+    shaft.rotateX(-Math.PI / 2);
+    shaft.renderOrder = 2;
+    group.add(shaft);
+    shafts.push(shaft);
+  }
+
+  const flashCount = 48;
+  const flashGeo = new THREE.BufferGeometry();
+  const flashPos = new Float32Array(flashCount * 3);
+  const flashSeeds = crowdSeeds.length > 0 ? crowdSeeds : [{ x: 0, baseY: 3, z: half + 4 } as CrowdMemberSeed];
+  for (let i = 0; i < flashCount; i++) {
+    const c = flashSeeds[Math.floor((i * 7919) % flashSeeds.length)];
+    flashPos[i * 3] = c.x;
+    flashPos[i * 3 + 1] = c.baseY + 1.6;
+    flashPos[i * 3 + 2] = c.z;
+  }
+  flashGeo.setAttribute('position', new THREE.BufferAttribute(flashPos, 3));
+  const flashSize = new Float32Array(flashCount);
+  flashGeo.setAttribute('size', new THREE.BufferAttribute(flashSize, 1));
+  const flashMat = new THREE.PointsMaterial({
+    map: softDotTexture(),
+    color: 0xffffff,
+    size: 0.9,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    sizeAttenuation: true,
+  });
+  geometries.push(flashGeo);
+  materials.push(flashMat);
+  const flashes = new THREE.Points(flashGeo, flashMat);
+  group.add(flashes);
+  let flashTimer = 0;
+  const baseSyncCrowd = updateCrowdTransforms;
+  const syncCrowdWithAtmosphere = (time: number, excitement: number) => {
+    baseSyncCrowd(time, excitement);
+    // Camera flashes pop more often when the crowd is excited
+    flashTimer -= 1 / 60;
+    if (flashTimer <= 0) {
+      flashTimer = 0.05 + Math.random() * (0.6 - excitement * 0.5);
+      const i = Math.floor(Math.random() * flashCount);
+      flashPos[i * 3 + 1] = flashSeeds[(i * 7919) % flashSeeds.length].baseY + 1.6 + Math.random() * 0.3;
+      flashGeo.attributes.position.needsUpdate = true;
+      flashMat.opacity = 1;
+      flashes.geometry.setDrawRange(i, 1);
+    } else {
+      flashMat.opacity *= 0.82;
+    }
+    shaftMat.opacity = 0.06 + Math.sin(time * 0.7) * 0.012 + excitement * 0.02;
+  };
+
   return {
     group,
     propMeshes,
@@ -1918,9 +2107,10 @@ export function buildArenaEnvironment(
         }
       }
     },
-    syncCrowd: updateCrowdTransforms,
+    syncCrowd: syncCrowdWithAtmosphere,
     dispose: () => {
       disposeCrowdTextures();
+      floorRough.dispose();
       geometries.forEach((g) => g.dispose());
       materials.forEach((m) => m.dispose());
     },

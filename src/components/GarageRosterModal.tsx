@@ -21,6 +21,8 @@ import {
   type RivalArchetypePreset,
 } from '../shared/physicsEngine';
 import { BotPortraitPreview } from './BotPortraitPreview';
+import { BotThumb } from './BotThumb';
+import { BotPickerStrip } from './BotPickerStrip';
 import { BotFusion3DStage } from './BotFusion3DStage';
 import {
   ARMOR_CATALOG,
@@ -269,6 +271,14 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
     });
   }, [allEntries, searchQuery, weightFilter, skills, profile?.partUpgrades]);
 
+  const pickerEntries = useMemo(
+    () =>
+      allEntries.map((e) => {
+        const st = computeBotStats(e.config, skills, profile?.partUpgrades);
+        return { id: e.id, clanTag: e.clanTag, config: e.config, subtitle: `${st.weightClass} · PWR ${st.powerScore}` };
+      }),
+    [allEntries, skills, profile?.partUpgrades],
+  );
   const parentAEntry =
     allEntries.find((e) => e.id === fusionParentAId) ?? allEntries[0];
   const parentBEntry =
@@ -516,7 +526,9 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                     {/* Left Column: Bot Portrait Image, Clan Badge, Name & Weapons */}
                     <div className="flex items-start gap-3 min-w-0 flex-1">
                       <div className="flex flex-col items-center gap-1 shrink-0">
-                        <BotPortraitPreview config={entry.config} size="md" />
+                        <div className="h-[84px] w-[112px] overflow-hidden rounded-xl border border-slate-700/80 bg-gradient-to-b from-[#1b2230] to-[#0b0f15]">
+                          <BotThumb config={entry.config} className="h-full w-full" />
+                        </div>
                         <div className="flex items-center gap-1.5">
                           <span
                             className="rounded px-1.5 py-0.5 font-mono-tabular text-[9px] font-extrabold text-white border"
@@ -738,27 +750,18 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                 <div className="text-xs font-extrabold uppercase tracking-wider text-amber-300">
                   1. Choose Left Donor Bot A (Hull, Core Drive & Primary Weapons)
                 </div>
-                <select
-                  value={fusionParentAId}
-                  onChange={(e) => {
-                    pushFusionState({ parentAId: e.target.value, overrideArmor: undefined, overrideDrive: undefined }, true);
-                  }}
-                  className="mt-2 w-full rounded-xl border border-slate-700 bg-[#0D1014] px-3 py-2.5 text-sm font-bold text-white focus:border-amber-400 focus:outline-none"
-                >
-                  {allEntries.map((e) => {
-                    const st = computeBotStats(e.config, skills, profile?.partUpgrades);
-                    return (
-                      <option key={e.id} value={e.id}>
-                        [{e.clanTag}] {e.config.name} — {st.weightClass} (PWR {st.powerScore}) ·{' '}
-                        {getBotWeapons(e.config)
-                          .map((w) => WEAPON_CATALOG[w]?.label)
-                          .join(' + ')}
-                      </option>
-                    );
-                  })}
-                </select>
+                <BotPickerStrip
+                  entries={pickerEntries}
+                  selectedId={fusionParentAId}
+                  accent="amber"
+                  label="Donor bot A"
+                  onSelect={(id) => pushFusionState({ parentAId: id, overrideArmor: undefined, overrideDrive: undefined }, true)}
+                />
                 {parentAEntry && (
                   <div className="mt-3 flex items-center gap-3 rounded-xl border border-slate-800 bg-[#0D1014] p-3 text-xs text-slate-300">
+                    <div className="h-20 w-28 shrink-0 overflow-hidden rounded-lg bg-gradient-to-b from-[#1b2230] to-[#0b0f15]">
+                      <BotThumb config={parentAEntry.config} className="h-full w-full" />
+                    </div>
                     <div className="space-y-1 min-w-0">
                       <div className="font-bold text-amber-300">3D Left Pedestal: {parentAEntry.config.name}</div>
                       <div>
@@ -781,27 +784,18 @@ export const GarageRosterModal: React.FC<GarageRosterModalProps> = ({
                 <div className="text-xs font-extrabold uppercase tracking-wider text-sky-300">
                   2. Choose Right Donor Bot B (Hybrid Hull Geometry, Armor & Extra Weapons)
                 </div>
-                <select
-                  value={fusionParentBId}
-                  onChange={(e) => {
-                    pushFusionState({ parentBId: e.target.value, overrideArmor: undefined, overrideDrive: undefined }, true);
-                  }}
-                  className="mt-2 w-full rounded-xl border border-slate-700 bg-[#0D1014] px-3 py-2.5 text-sm font-bold text-white focus:border-sky-400 focus:outline-none"
-                >
-                  {allEntries.map((e) => {
-                    const st = computeBotStats(e.config, skills, profile?.partUpgrades);
-                    return (
-                      <option key={e.id} value={e.id}>
-                        [{e.clanTag}] {e.config.name} — {st.weightClass} (PWR {st.powerScore}) ·{' '}
-                        {getBotWeapons(e.config)
-                          .map((w) => WEAPON_CATALOG[w]?.label)
-                          .join(' + ')}
-                      </option>
-                    );
-                  })}
-                </select>
+                <BotPickerStrip
+                  entries={pickerEntries}
+                  selectedId={fusionParentBId}
+                  accent="sky"
+                  label="Donor bot B"
+                  onSelect={(id) => pushFusionState({ parentBId: id, overrideArmor: undefined, overrideDrive: undefined }, true)}
+                />
                 {parentBEntry && (
                   <div className="mt-3 flex items-center gap-3 rounded-xl border border-slate-800 bg-[#0D1014] p-3 text-xs text-slate-300">
+                    <div className="h-20 w-28 shrink-0 overflow-hidden rounded-lg bg-gradient-to-b from-[#1b2230] to-[#0b0f15]">
+                      <BotThumb config={parentBEntry.config} className="h-full w-full" />
+                    </div>
                     <div className="space-y-1 min-w-0">
                       <div className="font-bold text-sky-300">3D Right Pedestal: {parentBEntry.config.name}</div>
                       <div>
